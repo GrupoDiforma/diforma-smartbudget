@@ -1,43 +1,31 @@
 # 🧠 CONTEXTO MAESTRO: SmartBudget Diforma
 
 ## 1. Resumen del Proyecto
-**SmartBudget Diforma** es una aplicación web (PWA Serverless) de uso interno y exclusivo para Grupo Diforma S.A. Su objetivo es la estimación de costos industriales, generación de presupuestos, integración con el CRM Odoo y asistencia inteligente mediante Gemini AI.
+**SmartBudget Diforma** es una PWA Serverless de uso interno y exclusivo para Grupo Diforma S.A. Su objetivo es la estimación de costos industriales, generación de presupuestos, integración con el CRM Odoo, módulo futuro de Logística & Cotizaciones y asistencia inteligente con Gemini AI.
 
-## 2. Arquitectura del Sistema
-* **Frontend (100% Cliente):** HTML5, CSS3 (Bootstrap 5), Vanilla JS (ES6+). Alojado en **GitHub Pages** (`smartbudget.grupodiforma.com`). No hay backend en Node.js ni Python.
-* **Backend Proxy (Serverless):** Google Apps Script (GAS). Actúa como un puente seguro para conectarse a las bases de datos y APIs externas sin exponer credenciales en el Frontend. La URL de ejecución pública (V2) termina en `...38kMYa9j7Ddaa8p/exec`.
-* **Base de Datos:** Google Sheets (Gestionada a través del Proxy de GAS).
-* **Integraciones Externas (Vía GAS):** 
-  * Odoo ERP (Consultas XML-RPC a `crm.lead` y `product.product`).
-  * Gemini AI (Análisis de imágenes/planos y chat de reajuste).
+## 2. Arquitectura del Sistema (100% Serverless)
+* **Frontend:** HTML5, CSS3 (Bootstrap 5), Vanilla JS (ES6+). Alojado en **GitHub Pages** (`smartbudget.grupodiforma.com`). Sin servidores backend de pago (Node/Python).
+* **Backend Proxy (Serverless):** Google Apps Script (GAS) actuando como puente seguro de conexión con Google Sheets, Odoo ERP y Gemini AI.
+* **Base de Datos Persistente:** Google Sheets (Gestionado a través del Proxy de GAS).
+  * Hoja `Presupuestos`: Historial de proyectos guardados.
+  * Hoja `Configuracion_Global`: Matriz maestra con tarifas, topes, márgenes y prompts oficiales para todos los usuarios.
 
-## 3. Seguridad y Autenticación (Sistema Híbrido OTP)
-Debido a bloqueos de CORS y "Cookies de terceros" en navegadores (especialmente en Modo Incógnito), se implementó una arquitectura **Passwordless OTP (One-Time Password)**:
-1. **Frontend Bloqueado:** Al abrir la app, un overlay bloquea el uso exigiendo un correo.
-2. **Validación de Dominio:** Solo se permiten correos terminados en `@grupodiforma.com`.
-3. **Envío de Código:** El frontend envía el correo al backend GAS (`action: solicitar_otp`). GAS envía un código de 6 dígitos vía Gmail y lo guarda en caché por 10 minutos.
-4. **Desbloqueo:** El usuario ingresa el código. Si es correcto, el backend devuelve el token corporativo maestro (`authKey: Diforma_SmartBudget_2026_Secure_Key`).
-5. **Persistencia y Consumo:** El frontend guarda el `authKey` en `LocalStorage` (`smartbudget_token`). TODAS las peticiones HTTP posteriores hacia GAS deben incluir esta `authKey` en el payload JSON; de lo contrario, el servidor las rechaza inmediatamente.
+## 3. Seguridad, Autenticación y Control de Acceso (OTP + RBAC)
+1. **Acceso Seguro OTP:** Bloqueo de pantalla inicial. El usuario ingresa su correo `@grupodiforma.com`, el backend valida el dominio y le envía un código de 6 dígitos por Gmail. Al validar el OTP, el usuario recibe el token corporativo (`authKey`) para autorizar sus peticiones.
+2. **Control de Roles (RBAC - Role Based Access Control):**
+   * **Usuarios Estándar (@grupodiforma.com):** Tienen acceso completo al cotizador, historial y consultas de Odoo/Gemini, pero **NO ven ni tienen acceso al botón de ⚙️ Ajustes**.
+   * **Usuarios Administradores (Lista Blanca de Correos):** Son los únicos a quienes se les renderiza el botón de **⚙️ Ajustes**. Al modificar cualquier valor (prompts, márgenes, tarifas), la actualización se guarda en la hoja `Configuracion_Global` de Google Sheets, reflejándose instantáneamente para todos los usuarios de la empresa.
 
-## 4. Flujo de Trabajo y Despliegue (CI/CD)
-El proyecto utiliza un flujo de Git estricto:
-* **Entorno Local:** GitHub Codespaces (Rama `desarrollo`).
-* **Despliegue a Producción (GitHub Pages):** Se realiza **exclusivamente** mediante el script bash `./desplegar.sh`.
-* **Automatización del Script:** 
-  1. Lee `index.html` y hace un auto-incremento de la versión (ej. V1.0.2 -> V1.0.3).
-  2. Hace commit en la rama `desarrollo`.
-  3. Cambia a la rama `main`, sincroniza exactamente con `desarrollo` (Merge/Reset).
-  4. Sube a `main` (desencadenando la acción de GitHub Pages) y regresa a `desarrollo`.
+## 4. Prompts IA de Negocio
+* **Prompt Presupuestos y Costos (Fase 1):** Mega-prompt de ingeniería de valor para extracción de materiales, mermas, desglose de mano de obra y auditoría matemática de planos/renders.
+* **Prompt Logístico (Fase 2 - Futura):** Instrucciones especializadas para calcular volumen, empaque, fletes y estructuración de cotizaciones en PDF entregables.
 
-## 5. Estructura de Archivos Clave
-* `index.html`: UI principal, modales y bloqueos de pantalla.
-* `app.js`: Lógica de UI, sistema OTP de login, y funciones de guardado/historial.
-* `config.json`: Variables globales (tarifas, topes, márgenes, prompts) modificables desde el panel de Ajustes (Admin). *Ojo: Ya no contiene la authKey expuesta.*
-* `backend.gs` (En Google Apps Script): Recibe POST/GET, maneja envío de correos OTP, valida el `authKey` y ejecuta funciones `proxy` hacia Odoo y Sheets.
-* `desplegar.sh`: Script ejecutable de CI/CD para despliegues a producción en 1 clic.
+## 5. Flujo de Trabajo y CI/CD
+* **Entorno de Pruebas:** GitHub Codespaces (Rama `desarrollo`).
+* **Despliegue a Producción:** Se ejecuta exclusivamente mediante `./desplegar.sh` tras la validación y confirmación explícita del usuario.
+* **Automatización del Script:** Auto-incrementa la versión en `index.html` (ej. V1.0.4 -> V1.0.5) y sincroniza la rama `main` con `desarrollo`.
 
-## 6. Instrucciones para la Inteligencia Artificial
-* **Rol:** Actuar como Arquitecto de Software Web Senior.
-* **Regla de Código:** Todo código debe entregarse empaquetado en comandos bash usando `cat << 'EOF' > archivo.ext` para ser ejecutado en la terminal de Codespaces.
-* **Regla de Despliegue:** NUNCA incluir comandos `git push origin main` a menos que el usuario indique explícitamente "Publicar a producción" tras haber probado en el entorno local de Codespaces.
-* **Paradigma:** Mantener la filosofía Serverless/Cliente. No sugerir bases de datos SQL tradicionales, servidores Node/Express ni requerimientos de instalación npm que rompan la naturaleza estática de GitHub Pages.
+## 6. Reglas Inviolables para Desarrolladores / IA
+1. **Entregas Exclusivas por Terminal:** Todo código o modificación se entrega empaquetado en bloques `cat << 'EOF' > archivo.ext`.
+2. **Pruebas Locales Primero:** Todo cambio se prueba en la vista previa de Codespaces. NUNCA ejecutar `git push` o `./desplegar.sh` sin visto bueno explícito.
+3. **Configuraciones Globales:** Ninguna regla de negocio o variable del Panel Admin debe depender de `LocalStorage` individual; todo cambio administrativo debe viajar a la hoja `Configuracion_Global` en Google Sheets.
