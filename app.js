@@ -7,9 +7,8 @@ async function cargarConfiguracionGlobal() {
         const localDataStr = localStorage.getItem('smartbudget_admin');
         if (localDataStr) {
             let localData = JSON.parse(localDataStr);
-            if (!localData.gasUrl && baseConfig.gasUrl) {
-                localData.gasUrl = baseConfig.gasUrl;
-            }
+            if (!localData.gasUrl && baseConfig.gasUrl) localData.gasUrl = baseConfig.gasUrl;
+            if (!localData.authKey && baseConfig.authKey) localData.authKey = baseConfig.authKey;
             CONFIG_GLOBAL = { ...baseConfig, ...localData };
         } else {
             CONFIG_GLOBAL = baseConfig;
@@ -44,27 +43,6 @@ function mostrarAlertaOdoo(mensaje, tipo, cargando = false) {
     alertBox.innerHTML = `<div>${icon} <span>${mensaje}</span></div>`;
     alertBox.classList.remove('d-none');
     if (!cargando && tipo !== 'danger') setTimeout(() => alertBox.classList.add('d-none'), 6000);
-}
-
-function mostrarAlertaOdooLogin(gasUrl) {
-    const alertBox = document.getElementById('odooAlert');
-    if (!alertBox) return;
-    alertBox.className = `alert alert-warning py-3 px-3 mt-2 mb-0 d-flex flex-column gap-2 shadow-sm border-warning`;
-    alertBox.innerHTML = `
-        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-            <div>
-                <i class="bi bi-shield-lock-fill me-2 fs-5 text-warning"></i>
-                <strong>Sesión de Google no detectada o bloqueada</strong>
-            </div>
-            <a href="${gasUrl}" target="_blank" class="btn btn-sm btn-primary fw-bold px-3">
-                <i class="bi bi-box-arrow-up-right me-1"></i> 1. Iniciar Sesión Google
-            </a>
-        </div>
-        <div class="small text-dark mt-1 p-2 bg-white rounded border">
-            <strong>¿Ya iniciaste sesión y sigue saliendo este error?</strong><br>
-            El navegador (especialmente en <b>Modo Incógnito</b>) está bloqueando las <i>Cookies de Terceros</i>. Para que funcione, debes permitir las cookies de terceros en el ícono del ojo/escudo de tu barra de direcciones, o usar la aplicación en una pestaña normal de Chrome.
-        </div>`;
-    alertBox.classList.remove('d-none');
 }
 
 function abrirModalAdmin() {
@@ -115,6 +93,7 @@ function guardarConfiguracion() {
 
     const data = {
         gasUrl: document.getElementById('cfgGasUrl')?.value.trim() || '',
+        authKey: CONFIG_GLOBAL?.authKey || "Diforma_SmartBudget_2026_Secure_Key",
         tarifasFijas: document.getElementById('cfgTarifas')?.value || '',
         unidades: document.getElementById('cfgUnidades')?.value || '',
         promptMaestro: document.getElementById('cfgPrompt')?.value || '',
@@ -161,15 +140,16 @@ async function realizarPeticionBD(payload) {
         mostrarNotificacion("Configura la URL de Google Script en Ajustes.", "danger");
         throw new Error("URL_MISSING");
     }
+    
+    // Adjuntar token de autenticación corporativa
+    payload.authKey = CONFIG_GLOBAL?.authKey || "Diforma_SmartBudget_2026_Secure_Key";
+
     try {
         const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload) });
         if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
         return await res.json();
     } catch (err) {
-        if (err.name === 'TypeError' || (err.message && (err.message.includes('fetch') || err.message.includes('Failed')))) {
-            mostrarAlertaOdooLogin(url);
-            throw new Error("Conexión bloqueada. Verifica tu sesión de Google o permite las cookies de terceros.");
-        }
+        mostrarNotificacion("Error de conexión al servidor Proxy.", "danger");
         throw err;
     }
 }

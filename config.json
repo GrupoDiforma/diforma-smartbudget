@@ -1,5 +1,6 @@
 {
-  "gasUrl": "https://script.google.com/a/macros/grupodiforma.com/s/AKfycbwfVgHQuXdopwPxyyYVWT2eUjVHj-KwZcVUTkV-CBjj5rvN_sCHaECbfUOu6hYUu7yB/exec",
+  "gasUrl": "https://script.google.com/a/macros/grupodiforma.com/s/AKfycbwuAaCodxVFzmjqmRDXBSVffTeIO-RlG-9zNnpzR4pEoEmTZv4Z-38kMYa9j7Ddaa8p/exec",
+  "authKey": "Diforma_SmartBudget_2026_Secure_Key",
   "tarifasFijas": "Corte Láser 1mm: 12000\nPlegado 2mm: 8000\nPintura Electroestática m2: 25000",
   "unidades": "UND\nMetros\nkg\nm2\nJuego",
   "promptMaestro": "Eres un experto presupuestador industrial de Grupo Diforma S.A. Analiza la imagen/PDF y desglosa los materiales y procesos en formato JSON plano.",
