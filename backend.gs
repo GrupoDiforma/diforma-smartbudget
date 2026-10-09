@@ -1,3 +1,16 @@
+function doGet(e) {
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Autenticación SmartBudget</title>' +
+    '<style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;}' +
+    '.card{background:white;padding:35px 40px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,0.08);text-align:center;max-width:460px;border-top:5px solid #d32f2f;}' +
+    'h2{color:#0f172a;margin-top:0;margin-bottom:12px;font-size:1.4rem;}p{color:#64748b;font-size:0.95rem;line-height:1.5;margin:8px 0;}</style></head><body>' +
+    '<div class="card"><div style="font-size:2.5rem;margin-bottom:10px;">✅</div>' +
+    '<h2>Sesión Corporativa Verificada</h2>' +
+    '<p>Tu cuenta <strong>@grupodiforma.com</strong> se ha autenticado con éxito en el servidor de Google Apps Script.</p>' +
+    '<p style="margin-top:20px;font-weight:600;color:#059669;">Ya puedes cerrar esta pestaña y regresar a la aplicación SmartBudget Diforma.</p>' +
+    '</div></body></html>';
+  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
 function doPost(e) {
   try {
     var params = JSON.parse(e.postData.contents);
@@ -19,6 +32,9 @@ function doPost(e) {
   }
 }
 
+// ==========================================
+// PROXY ODOO ERP
+// ==========================================
 function rpcCallGAS(service, method, args) {
   var props = PropertiesService.getScriptProperties();
   var pwd = props.getProperty("ODOO_PWD"); 
@@ -53,6 +69,9 @@ function proxyOdooProductos(query) {
   return {exito: true, data: records};
 }
 
+// ==========================================
+// PROXY DINÁMICO GEMINI AI
+// ==========================================
 function obtenerModelosDinamicos(apiKey) {
   var cache = CacheService.getScriptCache();
   var cachedModels = cache.get("GEMINI_MODELS_V41"); 
@@ -170,6 +189,9 @@ function proxyGeminiChat(params) {
   return ejecutarGeminiDinamico(apiKey, payload, params.forzarPro);
 }
 
+// ==========================================
+// BASE DE DATOS SHEETS
+// ==========================================
 function obtenerHojaBD() {
   var props = PropertiesService.getScriptProperties();
   var sheetId = props.getProperty("DB_SHEET_ID_V28"); 

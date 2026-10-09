@@ -49,16 +49,21 @@ function mostrarAlertaOdoo(mensaje, tipo, cargando = false) {
 function mostrarAlertaOdooLogin(gasUrl) {
     const alertBox = document.getElementById('odooAlert');
     if (!alertBox) return;
-    alertBox.className = `alert alert-warning py-2 px-3 mt-2 mb-0 d-flex align-items-center justify-content-between flex-wrap gap-2 shadow-sm border-warning`;
+    alertBox.className = `alert alert-warning py-3 px-3 mt-2 mb-0 d-flex flex-column gap-2 shadow-sm border-warning`;
     alertBox.innerHTML = `
-        <div>
-            <i class="bi bi-shield-lock-fill me-2 fs-5 text-warning"></i>
-            <strong>Sesión de Google no detectada (@grupodiforma.com)</strong>
-            <div class="small text-muted mt-1">Si estás en modo incógnito o no has iniciado sesión en Google con tu correo corporativo, la conexión se bloquea.</div>
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+                <i class="bi bi-shield-lock-fill me-2 fs-5 text-warning"></i>
+                <strong>Sesión de Google no detectada o bloqueada</strong>
+            </div>
+            <a href="${gasUrl}" target="_blank" class="btn btn-sm btn-primary fw-bold px-3">
+                <i class="bi bi-box-arrow-up-right me-1"></i> 1. Iniciar Sesión Google
+            </a>
         </div>
-        <a href="${gasUrl}" target="_blank" class="btn btn-sm btn-primary fw-bold px-3">
-            <i class="bi bi-box-arrow-up-right me-1"></i> Iniciar Sesión en Google
-        </a>`;
+        <div class="small text-dark mt-1 p-2 bg-white rounded border">
+            <strong>¿Ya iniciaste sesión y sigue saliendo este error?</strong><br>
+            El navegador (especialmente en <b>Modo Incógnito</b>) está bloqueando las <i>Cookies de Terceros</i>. Para que funcione, debes permitir las cookies de terceros en el ícono del ojo/escudo de tu barra de direcciones, o usar la aplicación en una pestaña normal de Chrome.
+        </div>`;
     alertBox.classList.remove('d-none');
 }
 
@@ -163,7 +168,7 @@ async function realizarPeticionBD(payload) {
     } catch (err) {
         if (err.name === 'TypeError' || (err.message && (err.message.includes('fetch') || err.message.includes('Failed')))) {
             mostrarAlertaOdooLogin(url);
-            throw new Error("Sesión no detectada en Google. Inicia sesión con tu correo @grupodiforma.com.");
+            throw new Error("Conexión bloqueada. Verifica tu sesión de Google o permite las cookies de terceros.");
         }
         throw err;
     }
