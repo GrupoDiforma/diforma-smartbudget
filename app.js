@@ -8,6 +8,14 @@ async function cargarConfiguracionGlobal() {
         if (localDataStr) {
             let localData = JSON.parse(localDataStr);
             if (!localData.gasUrl && baseConfig.gasUrl) localData.gasUrl = baseConfig.gasUrl;
+            
+            // Regla de autosanación: Si los prompts están vacíos en LocalStorage, restaurar desde config.json
+            if (!localData.promptMaestro && baseConfig.promptMaestro) localData.promptMaestro = baseConfig.promptMaestro;
+            if (!localData.promptLogistico && baseConfig.promptLogistico) localData.promptLogistico = baseConfig.promptLogistico;
+
+            localData.operativos = { ...baseConfig.operativos, ...(localData.operativos || {}) };
+            localData.utilidadNal = { ...baseConfig.utilidadNal, ...(localData.utilidadNal || {}) };
+            localData.utilidadExp = { ...baseConfig.utilidadExp, ...(localData.utilidadExp || {}) };
             CONFIG_GLOBAL = { ...baseConfig, ...localData };
         } else {
             CONFIG_GLOBAL = baseConfig;
@@ -37,29 +45,78 @@ function mostrarNotificacion(mensaje, tipo = 'info') {
 function abrirModalAdmin() {
     if(!CONFIG_GLOBAL) return;
     const d = CONFIG_GLOBAL;
+    
     if(document.getElementById('cfgGasUrl')) document.getElementById('cfgGasUrl').value = d.gasUrl || '';
     if(document.getElementById('cfgTarifas')) document.getElementById('cfgTarifas').value = d.tarifasFijas || '';
     if(document.getElementById('cfgUnidades')) document.getElementById('cfgUnidades').value = d.unidades || '';
     if(document.getElementById('cfgPrompt')) document.getElementById('cfgPrompt').value = d.promptMaestro || '';
     if(document.getElementById('cfgPromptLogistico')) document.getElementById('cfgPromptLogistico').value = d.promptLogistico || '';
     if(document.getElementById('cfgComisiones')) document.getElementById('cfgComisiones').value = d.comisiones || '';
+    
+    if(d.operativos) {
+        if(document.getElementById('cfgTopeOpFab')) document.getElementById('cfgTopeOpFab').value = d.operativos.topeFab || 0;
+        if(document.getElementById('cfgTopeOpCom')) document.getElementById('cfgTopeOpCom').value = d.operativos.topeCom || 0;
+        if(document.getElementById('cfgImpFabMax')) document.getElementById('cfgImpFabMax').value = d.operativos.impFab?.max || 0;
+        if(document.getElementById('cfgImpFabMin')) document.getElementById('cfgImpFabMin').value = d.operativos.impFab?.min || 0;
+        if(document.getElementById('cfgIndFabMax')) document.getElementById('cfgIndFabMax').value = d.operativos.indFab?.max || 0;
+        if(document.getElementById('cfgIndFabMin')) document.getElementById('cfgIndFabMin').value = d.operativos.indFab?.min || 0;
+        if(document.getElementById('cfgIndComMax')) document.getElementById('cfgIndComMax').value = d.operativos.indCom?.max || 0;
+        if(document.getElementById('cfgIndComMin')) document.getElementById('cfgIndComMin').value = d.operativos.indCom?.min || 0;
+    }
+
+    if(d.utilidadNal) {
+        if(document.getElementById('n_fabTope')) document.getElementById('n_fabTope').value = d.utilidadNal.fab?.tope || 0;
+        if(document.getElementById('n_fabMax')) document.getElementById('n_fabMax').value = d.utilidadNal.fab?.max || 0;
+        if(document.getElementById('n_fabMin')) document.getElementById('n_fabMin').value = d.utilidadNal.fab?.min || 0;
+        if(document.getElementById('n_comTope')) document.getElementById('n_comTope').value = d.utilidadNal.com?.tope || 0;
+        if(document.getElementById('n_comMax')) document.getElementById('n_comMax').value = d.utilidadNal.com?.max || 0;
+        if(document.getElementById('n_comMin')) document.getElementById('n_comMin').value = d.utilidadNal.com?.min || 0;
+    }
+
+    if(d.utilidadExp) {
+        if(document.getElementById('e_fabTope')) document.getElementById('e_fabTope').value = d.utilidadExp.fab?.tope || 0;
+        if(document.getElementById('e_fabMax')) document.getElementById('e_fabMax').value = d.utilidadExp.fab?.max || 0;
+        if(document.getElementById('e_fabMin')) document.getElementById('e_fabMin').value = d.utilidadExp.fab?.min || 0;
+        if(document.getElementById('e_comTope')) document.getElementById('e_comTope').value = d.utilidadExp.com?.tope || 0;
+        if(document.getElementById('e_comMax')) document.getElementById('e_comMax').value = d.utilidadExp.com?.max || 0;
+        if(document.getElementById('e_comMin')) document.getElementById('e_comMin').value = d.utilidadExp.com?.min || 0;
+    }
+
     new bootstrap.Modal(document.getElementById('modalAdmin')).show();
 }
 
 function guardarConfiguracion() {
+    const getVal = id => { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; };
+
     const data = {
         gasUrl: document.getElementById('cfgGasUrl')?.value.trim() || '',
         tarifasFijas: document.getElementById('cfgTarifas')?.value || '',
         unidades: document.getElementById('cfgUnidades')?.value || '',
         promptMaestro: document.getElementById('cfgPrompt')?.value || '',
         promptLogistico: document.getElementById('cfgPromptLogistico')?.value || '',
-        comisiones: document.getElementById('cfgComisiones')?.value || ''
+        comisiones: document.getElementById('cfgComisiones')?.value || '',
+        operativos: {
+            topeFab: getVal('cfgTopeOpFab'), topeCom: getVal('cfgTopeOpCom'),
+            impFab: { max: getVal('cfgImpFabMax'), min: getVal('cfgImpFabMin') },
+            indFab: { max: getVal('cfgIndFabMax'), min: getVal('cfgIndFabMin') },
+            indCom: { max: getVal('cfgIndComMax'), min: getVal('cfgIndComMin') }
+        },
+        utilidadNal: {
+            fab: { tope: getVal('n_fabTope'), max: getVal('n_fabMax'), min: getVal('n_fabMin') },
+            com: { tope: getVal('n_comTope'), max: getVal('n_comMax'), min: getVal('n_comMin') }
+        },
+        utilidadExp: {
+            fab: { tope: getVal('e_fabTope'), max: getVal('e_fabMax'), min: getVal('e_fabMin') },
+            com: { tope: getVal('e_comTope'), max: getVal('e_comMax'), min: getVal('e_comMin') }
+        }
     };
+    
     localStorage.setItem('smartbudget_admin', JSON.stringify(data));
     CONFIG_GLOBAL = { ...CONFIG_GLOBAL, ...data };
     poblarSelectComisiones();
     mostrarNotificacion("Ajustes guardados exitosamente.", "success");
     bootstrap.Modal.getInstance(document.getElementById('modalAdmin'))?.hide();
+    if(typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
 }
 
 function poblarSelectComisiones() {
@@ -77,15 +134,12 @@ function poblarSelectComisiones() {
 async function realizarPeticionBD(payload) {
     const url = CONFIG_GLOBAL?.gasUrl;
     if (!url) throw new Error("Falta URL del proxy backend.");
-    
-    // Inyectar secret key que el usuario ganó al verificar el OTP
     payload.authKey = localStorage.getItem('smartbudget_token') || "";
 
     const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload) });
     if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
     const data = await res.json();
     
-    // Si el backend rechaza por token inválido, destruir sesión local
     if(data.mensaje && data.mensaje.includes("Acceso no autorizado")) {
         localStorage.removeItem('smartbudget_token');
         location.reload();
@@ -97,7 +151,7 @@ async function realizarPeticionBD(payload) {
 // UI DE AUTENTICACIÓN OTP (BLOQUEO DE PANTALLA)
 // ----------------------------------------------------
 function verificarAccesoCorporativo() {
-    if (localStorage.getItem('smartbudget_token')) return; // Usuario validado
+    if (localStorage.getItem('smartbudget_token')) return;
     
     document.body.insertAdjacentHTML('beforeend', `
         <div id="authOverlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(241, 245, 249, 0.98);backdrop-filter:blur(10px);z-index:9999;display:flex;align-items:center;justify-content:center;">
