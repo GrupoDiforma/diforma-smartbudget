@@ -1,0 +1,66 @@
+:root {
+    --diforma-red: #d32f2f;
+    --diforma-red-dark: #b71c1c;
+    --diforma-bg: #f8fafc;
+}
+body {
+    background-color: var(--diforma-bg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.erp-top-bar {
+    background-color: var(--diforma-red);
+    color: white;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+}
+.main-container {
+    padding: 10px 20px;
+}
+.card-header-main {
+    background-color: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 12px 20px;
+}
+.step-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background-color: #0284c7;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: bold;
+    margin-right: 6px;
+}
+.badge-version { background-color: #64748b; color: white; }
+.badge-nacional { background-color: #059669; color: white; }
+.badge-odoo { background-color: #714B67; color: white; }
+.badge-ia { background-color: #d97706; color: white; }
+.badge-tarifa { background-color: #7c3aed; color: white; }
+.badge-base { background-color: #475569; color: white; }
+.badge-manual { background-color: #334155; color: white; }
+.prearmado-box {
+    border: 2px dashed #cbd5e1;
+    border-radius: 8px;
+    background-color: #ffffff;
+    transition: all 0.2s ease;
+}
+.prearmado-box:hover, .prearmado-box.dragover {
+    border-color: #6366f1;
+    background-color: #f5f3ff;
+}
+.cursor-pointer { cursor: pointer; }
+.table-items input, .table-items select { font-size: 0.8rem; }
+.inline-override {
+    width: 65px;
+    text-align: right;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 0.75rem;
+}
+.bg-fab { background-color: #f0f9ff; border: 1px solid #bae6fd; }
+.bg-com { background-color: #fffbeb; border: 1px solid #fde68a; }

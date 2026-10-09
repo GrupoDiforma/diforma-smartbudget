@@ -1,0 +1,23 @@
+{
+  "gasUrl": "",
+  "tarifasFijas": "Corte Láser 1mm: 12000\nPlegado 2mm: 8000\nPintura Electroestática m2: 25000",
+  "unidades": "UND\nMetros\nkg\nm2\nJuego",
+  "promptMaestro": "Eres un experto presupuestador industrial de Grupo Diforma S.A. Analiza la imagen/PDF y desglosa los materiales y procesos en formato JSON plano.",
+  "promptLogistico": "Calcular volumen y embalaje para despacho.",
+  "comisiones": "Ejecutiva Estándar: 3.0\nEjecutiva Senior: 5.0\nSin Comisión: 0.0",
+  "operativos": {
+    "topeFab": 50000000,
+    "topeCom": 20000000,
+    "impFab": { "max": 5.0, "min": 2.0 },
+    "indFab": { "max": 12.0, "min": 5.0 },
+    "indCom": { "max": 8.0, "min": 3.0 }
+  },
+  "utilidadNal": {
+    "fab": { "tope": 50000000, "max": 35.0, "min": 20.0 },
+    "com": { "tope": 20000000, "max": 25.0, "min": 15.0 }
+  },
+  "utilidadExp": {
+    "fab": { "tope": 50000000, "max": 40.0, "min": 25.0 },
+    "com": { "tope": 20000000, "max": 30.0, "min": 20.0 }
+  }
+}
