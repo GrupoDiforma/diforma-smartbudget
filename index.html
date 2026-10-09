@@ -3,108 +3,232 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SmartBudget Diforma | Minimalista</title>
-  
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" crossorigin="anonymous">
-  <link rel="stylesheet" href="css/styles.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <title>SmartBudget Diforma</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
 
-  <!-- FRANJA ROJA CORPORATIVA (Estilo Odoo Diforma) -->
   <div class="erp-top-bar">
     <i class="bi bi-grid-3x3-gap-fill me-2 fs-5"></i>
-    <span class="fw-bold" style="font-size: 0.9rem; letter-spacing: 0.5px;">GRUPO DIFORMA S.A. - SmartBudget</span>
+    <span class="fw-bold" style="font-size: 0.9rem;">GRUPO DIFORMA S.A. - SmartBudget</span>
   </div>
 
   <div class="main-container">
     <div class="card mb-4 mt-2">
-      
-      <!-- HEADER GLOBAL MINIMALISTA -->
       <div class="card-header-main d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-2">
-          <div style="background-color: var(--diforma-red); color: white; padding: 6px 10px; border-radius: 8px;">
-            <i class="bi bi-calculator-fill fs-5"></i>
-          </div>
-          <span class="fs-5 fw-bold" style="letter-spacing: -0.5px;">Presupuestos y Costos</span>
+          <div style="background-color: var(--diforma-red); color: white; padding: 6px 10px; border-radius: 8px;"><i class="bi bi-calculator-fill fs-5"></i></div>
+          <span class="fs-5 fw-bold">Presupuestos y Costos</span>
         </div>
         <div class="d-flex align-items-center gap-2">
-          <button class="btn btn-outline-secondary btn-sm bg-white" onclick="alert('Panel Admin se migrará pronto')">
-            <i class="bi bi-gear me-1"></i>Ajustes
-          </button>
-          <span class="badge badge-version px-2 py-1" id="appVersionBadge">V-Local</span>
+          <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirModalAdmin()"><i class="bi bi-gear me-1"></i>Ajustes</button>
+          <span class="badge badge-version px-2 py-1" id="appVersionBadge">V1.0</span>
           <span id="badgeTipo" class="badge badge-nacional px-2 py-1">NACIONAL</span>
         </div>
       </div>
       
       <div class="card-body p-4">
-        <!-- NAVEGACIÓN PRINCIPAL (TABS) -->
-        <ul class="nav nav-tabs mb-4" id="mainAppTabs" role="tablist">
-          <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="tab-ingenieria" data-bs-toggle="tab" data-bs-target="#pane-ingenieria" type="button" role="tab">
-              Ingeniería de Costos
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-comercial" data-bs-toggle="tab" data-bs-target="#pane-comercial" type="button" role="tab" disabled>
-              Comercial y Logística (Próximamente)
-            </button>
-          </li>
+        <ul class="nav nav-tabs mb-4" id="mainAppTabs">
+          <li class="nav-item"><button class="nav-link active">Ingeniería de Costos</button></li>
         </ul>
 
-        <div class="tab-content" id="mainAppTabsContent">
-          <!-- PESTAÑA 1: INGENIERÍA DE COSTOS -->
-          <div class="tab-pane fade show active" id="pane-ingenieria" role="tabpanel">
+        <!-- P1: CRM -->
+        <div class="mb-5">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="fw-bold mb-0"><span class="step-badge">1</span> Datos Base del Proyecto</h6>
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirHistorial()"><i class="bi bi-clock-history me-1"></i>Historial</button>
+              <button class="btn btn-primary btn-sm" onclick="guardarProyectoBD()"><i class="bi bi-cloud-upload me-1"></i>Guardar en Nube</button>
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label text-uppercase">Cód. Oportunidad</label>
+              <div class="input-group input-group-sm">
+                <input type="text" id="inputCodigo" class="form-control" placeholder="Ej: 17652-A">
+                <button type="button" class="btn btn-primary" onclick="buscarProyectoOdooServerless()">Buscar</button>
+              </div>
+            </div>
+            <div class="col-md-9"><div id="odooAlert" class="d-none"></div></div>
+            <div class="col-md-4"><label class="form-label text-uppercase">No. Proyecto</label><input type="text" id="noProyecto" class="form-control form-control-sm"></div>
+            <div class="col-md-5"><label class="form-label text-uppercase">Cliente</label><input type="text" id="cliente" class="form-control form-control-sm"></div>
+            <div class="col-md-3"><label class="form-label text-uppercase">Fecha</label><input type="date" id="fecha" class="form-control form-control-sm"></div>
+            <div class="col-md-4"><label class="form-label text-uppercase">Ejecutiva</label><input type="text" id="ejecutiva" class="form-control form-control-sm"></div>
+            <div class="col-md-4"><label class="form-label text-uppercase">Diseñador</label><input type="text" id="disenador" class="form-control form-control-sm"></div>
+            <div class="col-md-4"><label class="form-label text-uppercase">Analista</label><input type="text" id="analista" class="form-control form-control-sm"></div>
+          </div>
+        </div>
+
+        <!-- P2: IA -->
+        <div class="mb-5">
+          <h6 class="fw-bold mb-3"><span class="step-badge" style="background:#6366f1; border-color:#6366f1; color:white;">2</span> Pre-Armado IA & Asistente</h6>
+          <div class="row g-3">
+            <div class="col-md-4 d-flex flex-column">
+              <input type="file" id="fileRender" accept="image/*,application/pdf" multiple class="d-none" onchange="window.procesarArchivosNativos(this.files); this.value='';">
+              <label for="fileRender" id="dropzoneBox" class="prearmado-box py-4 text-center d-flex flex-column justify-content-center p-3 flex-grow-1" style="cursor:pointer; margin:0;">
+                <i class="bi bi-cloud-arrow-up fs-1 text-primary" style="pointer-events:none;"></i>
+                <h6 class="fw-bold mb-1" style="font-size:0.9rem; pointer-events:none;">Clic o arrastra planos aquí</h6>
+                <p class="text-muted mb-0" id="dropzoneStatusText" style="font-size:0.75rem; pointer-events:none;">JPG, PNG o PDF</p>
+              </label>
+              <div id="listaArchivosContainer" class="mt-2" style="max-height: 80px; overflow-y:auto;"></div>
+            </div>
+
+            <div class="col-md-4">
+              <div class="border rounded p-3 h-100 bg-white">
+                <label class="form-label text-primary"><i class="bi bi-card-text me-1"></i>Instrucción Inicial</label>
+                <textarea id="txtPromptParticular" class="form-control form-control-sm mb-2" rows="3" placeholder="Ej: Extraer lista de materiales..."></textarea>
+                <div class="form-check form-switch mb-3">
+                  <input class="form-check-input cursor-pointer" type="checkbox" id="togglePro" checked>
+                  <label class="form-check-label text-muted" style="font-size: 0.8rem; cursor:pointer;" for="togglePro">Forzar modelo Gemini PRO</label>
+                </div>
+                <button type="button" id="btnEjecutarIA" class="btn btn-sm w-100 text-white fw-bold" style="background-color: #6366f1;" onclick="procesarPlanoIA()"><i class="bi bi-magic me-1"></i>Analizar Renders</button>
+              </div>
+            </div>
             
-            <!-- PASO 1: ODOO CRM -->
-            <div class="mb-5">
-              <div class="d-flex justify-content-between align-items-center mb-3">
-                <h6 class="fw-bold mb-0" style="color: var(--w11-text);"><span class="step-badge">1</span> Información del Proyecto</h6>
-                <div class="d-flex gap-2">
-                  <button class="btn btn-outline-secondary btn-sm bg-white"><i class="bi bi-clock-history me-1"></i>Historial</button>
-                  <button class="btn btn-primary btn-sm"><i class="bi bi-cloud-check me-1"></i>Guardar Local</button>
+            <div class="col-md-4">
+              <div class="border rounded p-3 h-100 bg-white d-flex flex-column">
+                <label class="form-label text-primary"><i class="bi bi-chat-dots me-1"></i>Chat Asistente (Re-ajustes)</label>
+                <div id="chatBox" class="chat-box mb-2 border rounded p-2 flex-grow-1" style="background: #fbfbfb; overflow-y:auto; max-height:130px;">
+                  <div class="text-center text-muted" style="font-size:0.75rem; margin-top:20px;">Analiza un render o saluda a la IA.</div>
                 </div>
-              </div>
-              <div class="row g-3">
-                <div class="col-md-3">
-                  <label class="form-label">Oportunidad Odoo</label>
-                  <div class="input-group input-group-sm">
-                    <input type="text" id="inputCodigo" class="form-control" placeholder="Ej: 17652-A">
-                    <button type="button" class="btn btn-outline-secondary bg-white"><i class="bi bi-search"></i></button>
-                  </div>
+                <div class="input-group input-group-sm mt-auto">
+                  <input type="text" id="chatInput" class="form-control" placeholder="Ej: Cambia las ruedas a 4..." onkeypress="if(event.key==='Enter') enviarMensajeChat()">
+                  <button type="button" id="btnChat" class="btn btn-outline-secondary" onclick="enviarMensajeChat()"><i class="bi bi-send"></i></button>
                 </div>
-                <div class="col-md-3"><label class="form-label">No. Proyecto</label><input type="text" class="form-control form-control-sm" readonly value="PRE-001"></div>
-                <div class="col-md-6"><label class="form-label">Cliente</label><input type="text" class="form-control form-control-sm" readonly value="Buscando cliente..."></div>
               </div>
             </div>
+          </div>
+        </div>
 
-            <!-- PASO 3: MATRIZ COSTOS -->
-            <div class="mb-4">
-              <div class="d-flex justify-content-between align-items-center mb-3">
-                <h6 class="fw-bold mb-0" style="color: var(--w11-text);"><span class="step-badge">2</span> Matriz de Costos Directos</h6>
-                <div class="d-flex gap-2 align-items-center">
-                  <button type="button" class="btn btn-outline-secondary btn-sm bg-white"><i class="bi bi-plus-lg me-1"></i>Fila Manual</button>
-                </div>
-              </div>
-              <div class="table-responsive border rounded" style="background: var(--w11-card); border-color: var(--w11-border);">
-                <table class="table table-hover table-items mb-0">
-                  <thead id="theadItems">
-                    <tr><th class="text-center py-4 text-muted" style="background: white; border: none; font-weight: 400;">La matriz conectada a IndexedDB se renderizará aquí</th></tr>
-                  </thead>
-                  <tbody id="tbodyItems"></tbody>
-                </table>
-              </div>
+        <!-- P3 & P4: Matriz y Simulador -->
+        <div class="mb-5">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="fw-bold mb-0"><span class="step-badge" style="background-color:#059669; border-color:#059669; color:white;">3</span> Matriz de Costos Directos (Escalas)</h6>
+            <div>
+              <button class="btn btn-outline-success btn-sm bg-white fw-bold text-success border-success" onclick="agregarLote()">+ Agregar Rango</button>
+              <button class="btn btn-outline-primary btn-sm bg-white fw-bold text-primary border-primary" onclick="abrirModalOdooMateriales()"><i class="bi bi-search me-1"></i> Odoo</button>
+              <button class="btn btn-outline-secondary btn-sm bg-white" onclick="agregarItemTemporal()">+ Manual</button>
             </div>
+          </div>
+          <div class="table-responsive border rounded bg-white" style="max-height: 500px; overflow-y: auto;">
+            <table class="table table-hover table-items mb-0" style="min-width: 1100px;">
+                <thead id="theadItems" class="sticky-top bg-white" style="z-index: 10;"></thead>
+                <tbody id="tbodyItems"></tbody>
+            </table>
+          </div>
+        </div>
 
-          </div> 
-        </div> 
+        <div class="mb-4 border-top pt-4">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="fw-bold mb-0"><span class="step-badge" style="background-color:#f59e0b; border-color:#f59e0b; color:white;">4</span> Simulador AIU</h6>
+            <div class="input-group input-group-sm w-auto"><span class="input-group-text text-success bg-white fw-bold">TRM Hoy</span><input type="number" id="simTRM" class="form-control text-center fw-bold" style="width:100px;" value="4150"></div>
+          </div>
+          <div class="row g-3 bg-white p-3 rounded border mb-3">
+            <div class="col-md-6"><label class="form-label">Comisión Venta</label><select id="simComision" class="form-select form-select-sm"></select></div>
+            <div class="col-md-6"><label class="form-label">Fee Libre (%)</label><input type="number" id="simFee" value="0" class="form-control form-control-sm text-end"></div>
+          </div>
+          <div class="row g-3" id="panelFinanciero"><div class="col-12 text-center py-4 border rounded text-muted">Agrega materiales.</div></div>
+        </div>
+
       </div>
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
-  <script src="js/core/app.js"></script>
-<script src="js/core/simulador.js"></script>
+  <!-- MODAL HISTORIAL BD -->
+  <div class="modal fade" id="modalHistorial" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header text-white" style="background-color: var(--diforma-red);">
+            <h5 class="modal-title fs-6"><i class="bi bi-clock-history me-2"></i>Histórico de Proyectos (Nube)</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-0">
+          <div class="table-responsive" style="max-height: 400px;">
+            <table class="table table-hover align-middle mb-0" style="font-size:0.85rem;">
+              <thead class="table-light sticky-top"><tr><th>No. Proyecto</th><th>Cliente</th><th>Nombre</th><th>Tipo</th><th>Fecha Act.</th><th class="text-center">Acción</th></tr></thead>
+              <tbody id="tbodyHistorial"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL NUEVO RANGO -->
+  <div class="modal fade" id="modalNuevoRango" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content"><div class="modal-body text-center"><label>Cantidad (Q):</label><input type="number" id="inputModalCantidadRango" class="form-control mt-2 text-center" placeholder="Ej: 40"></div><div class="modal-footer"><button class="btn btn-primary w-100" onclick="confirmarNuevoRango()">Agregar</button></div></div></div></div>
+  
+  <!-- MODAL ODOO -->
+  <div class="modal fade" id="modalOdooMateriales" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header text-white" style="background-color: var(--diforma-red);">
+            <h5 class="modal-title fs-6"><i class="bi bi-box-seam me-2"></i>Catálogo de Materiales Odoo ERP</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="input-group mb-3">
+            <input type="text" id="inputBusquedaMat" class="form-control" placeholder="Buscar por código o nombre..." onkeypress="if(event.key==='Enter') buscarProductosOdooServerless()">
+            <button type="button" class="btn btn-primary fw-bold" onclick="buscarProductosOdooServerless()"><i class="bi bi-search me-1"></i> Buscar</button>
+          </div>
+          <div class="table-responsive border rounded" style="max-height: 350px;">
+            <table class="table table-sm table-hover align-middle mb-0"><thead class="table-light sticky-top"><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th class="text-end">Costo</th><th class="text-center">Añadir</th></tr></thead><tbody id="tbodyResultadosOdoo"><tr><td colspan="5" class="text-center text-muted py-3">Ingresa un término y busca.</td></tr></tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL ADMIN -->
+  <div class="modal fade" id="modalAdmin" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header text-white" style="background-color: var(--diforma-red);">
+          <h5 class="modal-title fs-6"><i class="bi bi-gear-fill me-2"></i>Panel Administrativo</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body bg-light">
+          <ul class="nav nav-tabs mb-3" role="tablist">
+            <li class="nav-item"><button class="nav-link active fw-bold" data-bs-toggle="tab" data-bs-target="#panel-credenciales" type="button">Conexiones & Nube</button></li>
+            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-tarifas" type="button">Catálogos Fijos</button></li>
+            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-gema" type="button">Prompts IA</button></li>
+            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-operativos" type="button">Motor AIU</button></li>
+            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-utilidades" type="button">Márgenes</button></li>
+            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-comisiones" type="button">Comisiones</button></li>
+          </ul>
+          <div class="tab-content bg-white p-3 border rounded shadow-sm">
+            <div class="tab-pane fade show active" id="panel-credenciales">
+              <div class="row g-3">
+                <div class="col-12 mb-3">
+                  <label class="form-label text-success fw-bold"><i class="bi bi-cloud-check-fill me-1"></i>URL Base de Datos (Servidor Oculto Apps Script)</label>
+                  <input type="url" id="cfgGasUrl" class="form-control border-success" placeholder="https://script.google.com/macros/s/.../exec">
+                  <small class="text-muted">Pega aquí la URL que generaste en Google Apps Script para conectar Odoo, Gemini y guardar proyectos.</small>
+                </div>
+              </div>
+            </div>
+            <div class="tab-pane fade" id="panel-tarifas"><div class="row g-3"><div class="col-md-8"><label class="form-label text-primary fw-bold">TARIFAS FIJAS</label><textarea id="cfgTarifas" class="form-control font-monospace" rows="8" style="font-size: 0.8rem;"></textarea></div><div class="col-md-4"><label class="form-label text-primary fw-bold">UNIDADES DE MEDIDA</label><textarea id="cfgUnidades" class="form-control font-monospace" rows="8" style="font-size: 0.8rem;"></textarea></div></div></div>
+            <div class="tab-pane fade" id="panel-gema"><label class="fw-bold text-primary">Prompt Maestro</label><textarea id="cfgPrompt" class="form-control mb-3" rows="6" style="font-size: 0.85rem;"></textarea><label class="fw-bold text-info">Prompt Logístico</label><textarea id="cfgPromptLogistico" class="form-control" rows="3" style="font-size: 0.85rem;"></textarea></div>
+            <div class="tab-pane fade" id="panel-operativos"><h6 class="fw-bold text-primary border-bottom pb-1">Fabricación (Operativos)</h6><div class="row g-2 mb-3"><div class="col-md-4"><label class="small text-muted">Tope Max</label><input type="number" class="form-control fw-bold" id="cfgTopeOpFab"></div><div class="col-md-4"><label class="small text-muted">Imprevistos (Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="cfgImpFabMax"><input type="number" class="form-control" id="cfgImpFabMin"></div></div><div class="col-md-4"><label class="small text-muted">Indirectos (Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="cfgIndFabMax"><input type="number" class="form-control" id="cfgIndFabMin"></div></div></div><h6 class="fw-bold text-warning border-bottom pb-1">Comercialización (Operativos)</h6><div class="row g-2"><div class="col-md-6"><label class="small text-muted">Tope Max</label><input type="number" class="form-control fw-bold" id="cfgTopeOpCom"></div><div class="col-md-6"><label class="small text-muted">Indirectos (Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="cfgIndComMax"><input type="number" class="form-control" id="cfgIndComMin"></div></div></div></div>
+            <div class="tab-pane fade" id="panel-utilidades"><h6 class="fw-bold text-success border-bottom pb-1">Nacional</h6><div class="row g-2 mb-3"><div class="col-6"><label class="small text-primary">Fab (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="n_fabTope"><input type="number" class="form-control" id="n_fabMax"><input type="number" class="form-control" id="n_fabMin"></div></div><div class="col-6"><label class="small text-warning">Com (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="n_comTope"><input type="number" class="form-control" id="n_comMax"><input type="number" class="form-control" id="n_comMin"></div></div></div><h6 class="fw-bold text-info border-bottom pb-1">Exportación</h6><div class="row g-2"><div class="col-6"><label class="small text-primary">Fab (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="e_fabTope"><input type="number" class="form-control" id="e_fabMax"><input type="number" class="form-control" id="e_fabMin"></div></div><div class="col-6"><label class="small text-warning">Com (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="e_comTope"><input type="number" class="form-control" id="e_comMax"><input type="number" class="form-control" id="e_comMin"></div></div></div></div>
+            <div class="tab-pane fade" id="panel-comisiones"><label class="form-label text-primary fw-bold">LISTA DE COMISIONES</label><textarea id="cfgComisiones" class="form-control font-monospace" rows="6" style="font-size: 0.85rem;"></textarea></div>
+          </div>
+        </div>
+        <div class="modal-footer bg-light">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+          <button type="button" class="btn btn-primary btn-sm fw-bold" onclick="guardarConfiguracion()">Guardar Configuración</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  
+  <script src="app.js"></script>
+  <script src="engine.js"></script>
+  <script src="connectors.js"></script>
 </body>
 </html>
