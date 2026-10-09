@@ -3,20 +3,20 @@ set -e
 
 MSG="${1:-Actualización automática de producción}"
 
-echo "🚀 Iniciando despliegue a Producción en 1 solo paso..."
+echo "🚀 Sincronizando y desplegando a Producción..."
 
-# Guardar cambios en desarrollo
+# 1. Guardar y subir desarrollo
+git checkout desarrollo
 git add .
 git commit -m "$MSG" || true
 git push origin desarrollo
 
-# Sincronizar y publicar directamente en la rama main (Producción)
+# 2. Forzar alineación exacta de main con desarrollo
 git checkout main
-git pull origin main || true
-git merge desarrollo -m "Merge automático: $MSG"
+git reset --hard desarrollo
 git push origin main
 
-# Regresar automáticamente a la rama de trabajo
+# 3. Regresar a desarrollo
 git checkout desarrollo
 
-echo "✅ ¡Publicación a Producción completada con éxito!"
+echo "✅ ¡Publicación a Producción completada sin conflictos!"
