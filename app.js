@@ -31,7 +31,7 @@ function mostrarNotificacion(mensaje, tipo = 'info') {
         </div>`;
     container.insertAdjacentHTML('beforeend', toastHtml);
     const toastEl = document.getElementById(toastId);
-    const toast = new bootstrap.Toast(toastEl, { delay: 4000 });
+    const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
     toast.show();
     toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
 }
@@ -40,10 +40,26 @@ function mostrarAlertaOdoo(mensaje, tipo, cargando = false) {
     const alertBox = document.getElementById('odooAlert');
     if (!alertBox) return;
     let icon = cargando ? '<span class="spinner-border spinner-border-sm me-2"></span>' : '';
-    alertBox.className = `alert alert-${tipo} py-2 px-3 mt-2 mb-0 d-flex align-items-center`;
-    alertBox.innerHTML = `${icon} <span>${mensaje}</span>`;
+    alertBox.className = `alert alert-${tipo} py-2 px-3 mt-2 mb-0 d-flex align-items-center justify-content-between`;
+    alertBox.innerHTML = `<div>${icon} <span>${mensaje}</span></div>`;
     alertBox.classList.remove('d-none');
-    if (!cargando && tipo !== 'danger') setTimeout(() => alertBox.classList.add('d-none'), 5000);
+    if (!cargando && tipo !== 'danger') setTimeout(() => alertBox.classList.add('d-none'), 6000);
+}
+
+function mostrarAlertaOdooLogin(gasUrl) {
+    const alertBox = document.getElementById('odooAlert');
+    if (!alertBox) return;
+    alertBox.className = `alert alert-warning py-2 px-3 mt-2 mb-0 d-flex align-items-center justify-content-between flex-wrap gap-2 shadow-sm border-warning`;
+    alertBox.innerHTML = `
+        <div>
+            <i class="bi bi-shield-lock-fill me-2 fs-5 text-warning"></i>
+            <strong>Sesión de Google no detectada (@grupodiforma.com)</strong>
+            <div class="small text-muted mt-1">Si estás en modo incógnito o no has iniciado sesión en Google con tu correo corporativo, la conexión se bloquea.</div>
+        </div>
+        <a href="${gasUrl}" target="_blank" class="btn btn-sm btn-primary fw-bold px-3">
+            <i class="bi bi-box-arrow-up-right me-1"></i> Iniciar Sesión en Google
+        </a>`;
+    alertBox.classList.remove('d-none');
 }
 
 function abrirModalAdmin() {
@@ -140,9 +156,17 @@ async function realizarPeticionBD(payload) {
         mostrarNotificacion("Configura la URL de Google Script en Ajustes.", "danger");
         throw new Error("URL_MISSING");
     }
-    const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload) });
-    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-    return await res.json();
+    try {
+        const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        return await res.json();
+    } catch (err) {
+        if (err.name === 'TypeError' || (err.message && (err.message.includes('fetch') || err.message.includes('Failed')))) {
+            mostrarAlertaOdooLogin(url);
+            throw new Error("Sesión no detectada en Google. Inicia sesión con tu correo @grupodiforma.com.");
+        }
+        throw err;
+    }
 }
 
 async function guardarProyectoBD() {
@@ -171,7 +195,7 @@ async function guardarProyectoBD() {
         const data = await realizarPeticionBD({ action: 'guardar', payload: payloadProyecto });
         if(data.exito) mostrarNotificacion(data.mensaje, "success");
         else mostrarNotificacion("Error BD: " + data.mensaje, "danger");
-    } catch(e) { if(e.message !== "URL_MISSING") mostrarNotificacion("Fallo de conexión: " + e.message, "danger"); }
+    } catch(e) { if(e.message !== "URL_MISSING") mostrarNotificacion(e.message, "danger"); }
 }
 
 async function abrirHistorial() {
@@ -200,7 +224,7 @@ async function abrirHistorial() {
         } else {
             tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No hay proyectos en la base de datos.</td></tr>';
         }
-    } catch(e) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-4">Error de conexión: ${e.message}</td></tr>`; }
+    } catch(e) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-4">${e.message}</td></tr>`; }
 }
 
 async function cargarProyectoBD(idProyecto) {
@@ -232,7 +256,7 @@ async function cargarProyectoBD(idProyecto) {
             bootstrap.Modal.getInstance(document.getElementById('modalHistorial'))?.hide();
             mostrarNotificacion(`Proyecto ${idProyecto} cargado con éxito.`, "success");
         } else { mostrarNotificacion("Error al descargar: " + data.mensaje, "danger"); }
-    } catch(e) { mostrarNotificacion("Fallo conexión: " + e.message, "danger"); }
+    } catch(e) { mostrarNotificacion(e.message, "danger"); }
 }
 
 async function eliminarProyectoBD(idProyecto) {
@@ -241,12 +265,10 @@ async function eliminarProyectoBD(idProyecto) {
         const data = await realizarPeticionBD({ action: 'eliminar', id: idProyecto });
         if(data.exito) { mostrarNotificacion(data.mensaje, "success"); abrirHistorial(); } 
         else { mostrarNotificacion("Error: " + data.mensaje, "danger"); }
-    } catch(e) { mostrarNotificacion("Fallo de red: " + e.message, "danger"); }
+    } catch(e) { mostrarNotificacion(e.message, "danger"); }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    const badge = document.getElementById('appVersionBadge');
-    if(badge) badge.innerText = `V1.0`;
     await cargarConfiguracionGlobal();
     poblarSelectComisiones();
     if(typeof obtenerTRMOficial === "function") await obtenerTRMOficial();
