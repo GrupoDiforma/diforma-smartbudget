@@ -1,6 +1,5 @@
 {
   "gasUrl": "https://script.google.com/a/macros/grupodiforma.com/s/AKfycbwuAaCodxVFzmjqmRDXBSVffTeIO-RlG-9zNnpzR4pEoEmTZv4Z-38kMYa9j7Ddaa8p/exec",
-  "authKey": "Diforma_SmartBudget_2026_Secure_Key",
   "tarifasFijas": "Corte Láser 1mm: 12000\nPlegado 2mm: 8000\nPintura Electroestática m2: 25000",
   "unidades": "UND\nMetros\nkg\nm2\nJuego",
   "promptMaestro": "Eres un experto presupuestador industrial de Grupo Diforma S.A. Analiza la imagen/PDF y desglosa los materiales y procesos en formato JSON plano.",
@@ -9,16 +8,41 @@
   "operativos": {
     "topeFab": 50000000,
     "topeCom": 20000000,
-    "impFab": { "max": 5.0, "min": 2.0 },
-    "indFab": { "max": 12.0, "min": 5.0 },
-    "indCom": { "max": 8.0, "min": 3.0 }
+    "impFab": {
+      "max": 5,
+      "min": 2
+    },
+    "indFab": {
+      "max": 12,
+      "min": 5
+    },
+    "indCom": {
+      "max": 8,
+      "min": 3
+    }
   },
   "utilidadNal": {
-    "fab": { "tope": 50000000, "max": 35.0, "min": 20.0 },
-    "com": { "tope": 20000000, "max": 25.0, "min": 15.0 }
+    "fab": {
+      "tope": 50000000,
+      "max": 35,
+      "min": 20
+    },
+    "com": {
+      "tope": 20000000,
+      "max": 25,
+      "min": 15
+    }
   },
   "utilidadExp": {
-    "fab": { "tope": 50000000, "max": 40.0, "min": 25.0 },
-    "com": { "tope": 20000000, "max": 30.0, "min": 20.0 }
+    "fab": {
+      "tope": 50000000,
+      "max": 40,
+      "min": 25
+    },
+    "com": {
+      "tope": 20000000,
+      "max": 30,
+      "min": 20
+    }
   }
 }
