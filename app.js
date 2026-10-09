@@ -6,7 +6,11 @@ async function cargarConfiguracionGlobal() {
         let baseConfig = res.ok ? await res.json() : {};
         const localDataStr = localStorage.getItem('smartbudget_admin');
         if (localDataStr) {
-            CONFIG_GLOBAL = { ...baseConfig, ...JSON.parse(localDataStr) };
+            let localData = JSON.parse(localDataStr);
+            if (!localData.gasUrl && baseConfig.gasUrl) {
+                localData.gasUrl = baseConfig.gasUrl;
+            }
+            CONFIG_GLOBAL = { ...baseConfig, ...localData };
         } else {
             CONFIG_GLOBAL = baseConfig;
         }
@@ -175,7 +179,7 @@ async function abrirHistorial() {
     const tbody = document.getElementById('tbodyHistorial');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Cargando historial de la nube...</td>处/td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Cargando historial de la nube...</td></tr>';
     new bootstrap.Modal(document.getElementById('modalHistorial')).show();
 
     try {
