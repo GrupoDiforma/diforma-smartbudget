@@ -5,6 +5,11 @@ function aplicarControlDeRoles() {
 }
 
 function verificarAccesoCorporativo() {
+    if (localStorage.getItem('smartbudget_token') === 'DEV_LOCAL') {
+        localStorage.removeItem('smartbudget_token');
+        localStorage.removeItem('smartbudget_email');
+        localStorage.removeItem('smartbudget_rol');
+    }
     if (localStorage.getItem('smartbudget_token')) { aplicarControlDeRoles(); return; }
     document.body.insertAdjacentHTML('beforeend', `
         <div id="authOverlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(241, 245, 249, 0.98);backdrop-filter:blur(10px);z-index:9999;display:flex;align-items:center;justify-content:center;">
@@ -55,6 +60,7 @@ async function ui_verificarOTP() {
             document.getElementById('authOverlay').remove();
             if(typeof mostrarNotificacion === "function") mostrarNotificacion(`Acceso corporativo validado (${data.rol}).`, "success");
             aplicarControlDeRoles();
+            if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
         } else { alert(data.mensaje); }
     } catch(e) { alert("Error validando el código."); }
     document.getElementById('btnVerificar').innerHTML = '2. Validar y Entrar';

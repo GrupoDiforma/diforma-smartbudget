@@ -1,8 +1,13 @@
 {
   "gasUrl": "https://script.google.com/a/macros/grupodiforma.com/s/AKfycbwuAaCodxVFzmjqmRDXBSVffTeIO-RlG-9zNnpzR4pEoEmTZv4Z-38kMYa9j7Ddaa8p/exec",
-  "tarifasFijas": "Corte Láser 1mm: 12000\nPlegado 2mm: 8000\nPintura Electroestática m2: 25000",
-  "unidades": "UND\nMetros\nkg\nm2\nJuego",
-  "promptMaestro": "Eres un experto presupuestador industrial de Grupo Diforma S.A. Analiza la imagen/PDF y desglosa los materiales y procesos en formato JSON plano.",
+  "tarifasFijas": "[{\"nombre\":\"Mesa de corte x cm lineal\",\"um\":\"Cml\",\"costo\":12000,\"es_global\":false},{\"nombre\":\"Transporte local estandar\",\"um\":\"UND\",\"costo\":150000,\"es_global\":true},{\"nombre\":\"Pintura Electroestática m2\",\"um\":\"m2\",\"costo\":18000,\"es_global\":false}]",
+  "unidades": "[{\"um\":\"UND\",\"um_catalogo\":\"Unidades\",\"factor\":1,\"regla\":\"1 UND = 1 pieza en Odoo (Unidades). Perfiles/tubos: 1 UND = tira de 6 m. Láminas: 1 UND = 1 placa, nunca Hojas.\"},{\"um\":\"Metros\",\"um_catalogo\":\"Metros\",\"factor\":1,\"regla\":\"1 = 1 metro lineal. cantidad = metros + merma.\"},{\"um\":\"kg\",\"um_catalogo\":\"kg\",\"factor\":1,\"regla\":\"1 = 1 kilogramo.\"},{\"um\":\"m2\",\"um_catalogo\":\"m2\",\"factor\":1,\"regla\":\"Precio por m² (pintura, impresión, área). Si el maestro vende la lámina en UND, calcula placas; no cambies la UM del maestro.\"},{\"um\":\"Juego\",\"um_catalogo\":\"Unidades\",\"factor\":1,\"regla\":\"1 Juego = 1 kit. Odoo lo compra en Unidades.\"},{\"um\":\"Cml\",\"um_catalogo\":\"Metros\",\"factor\":0.01,\"regla\":\"1 Cml = 1 cm lineal de corte (mesa/router). 100 Cml = 1 Metro.\"}]",
+  "diasVigencia": { "materiales": 180, "procesos": 90 },
+  "geminiCupoTokens": 2000000,
+  "geminiCupoUsd": 20,
+  "geminiUsdPor1MIn": 1.25,
+  "geminiUsdPor1MOut": 10,
+  "promptMaestro": "ROL Y OBJETIVO\nActúa como especialista senior en costeo industrial de Diformainstore. Analizas renders/PDF (sin planos) como diseñador e ingeniero industrial: interpretas lo visible y la estructura oculta para fabricar al mejor costo sin perder la esencia del cliente.\n\nPREGUNTAS: solo las que cambian el costo. Nada obvio. Máximo 3-5 en el primer turno. Rangos: si no vienen en el PDF, pregunta; si no responden, usa 1, 50 y 100.\n\nFUENTES: [Matriz Drive] > [Tarifa Fija] > [Odoo ERP] (<6 meses) > [Estimado IA] (COP sin IVA) > [Manual] (costo 0).\n\nFASE 1 entrevista: NO JSON. FASE 2 cuando el analista diga listo/cotizar: JSON {rangos, items}. FASE 3 el mismo chat ajusta ítems.\n\nREGLAS A-D: cubicación en nombre; MO Externa e Interna; categorías Materias Primas / Procesos Externos / Procesos Internos / Mano de Obra / Empaque y Fletes / Comercialización; fletes es_global; TRM +100 import / -100 export.",
   "promptLogistico": "Calcular volumen y embalaje para despacho.",
   "comisiones": "Ejecutiva Estándar: 3.0\nEjecutiva Senior: 5.0\nSin Comisión: 0.0",
   "operativos": {

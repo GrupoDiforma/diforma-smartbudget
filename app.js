@@ -1,13 +1,13 @@
 function mostrarNotificacion(mensaje, tipo = 'info') {
     const container = document.getElementById('toastContainer');
     if (!container) return;
-    const bgMap = { 'success': 'text-bg-success', 'danger': 'text-bg-danger', 'warning': 'text-bg-warning', 'info': 'text-bg-primary' };
-    const iconMap = { 'success': 'bi-check-circle-fill', 'danger': 'bi-exclamation-octagon-fill', 'warning': 'bi-exclamation-triangle-fill', 'info': 'bi-info-circle-fill' };
+    const iconMap = { 'success': 'bi-check-circle', 'danger': 'bi-exclamation-octagon', 'warning': 'bi-exclamation-triangle', 'info': 'bi-info-circle' };
     const toastId = 'toast_' + Date.now();
     const toastHtml = `
-        <div id="${toastId}" class="toast align-items-center ${bgMap[tipo]} border-0 shadow-lg" role="alert" aria-live="assertive" aria-atomic="true">
-            <div class="d-flex"><div class="toast-body d-flex align-items-center gap-2"><i class="bi ${iconMap[tipo]} fs-5"></i><div>${mensaje}</div></div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>
+        <div id="${toastId}" class="toast sb-toast sb-toast-${tipo}" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="sb-toast-bar"></div>
+            <div class="toast-body"><i class="bi ${iconMap[tipo] || iconMap.info}"></i><div>${mensaje}</div></div>
+            <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Cerrar"></button>
         </div>`;
     container.insertAdjacentHTML('beforeend', toastHtml);
     const toastEl = document.getElementById(toastId);
@@ -26,15 +26,33 @@ function mostrarAlertaOdoo(mensaje, tipo, cargando = false) {
     if (!cargando && tipo !== 'danger') setTimeout(() => alertBox.classList.add('d-none'), 6000);
 }
 
-async function realizarPeticionBD(payload) {
+async function realizarPeticionBD(payload, opts) {
+    opts = opts || {};
     const url = CONFIG_GLOBAL?.gasUrl;
     if (!url) throw new Error("Falta URL del proxy backend.");
     payload.authKey = localStorage.getItem('smartbudget_token') || "";
-    const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload) });
-    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-    const data = await res.json();
-    if(data.mensaje && data.mensaje.includes("Acceso no autorizado")) { localStorage.removeItem('smartbudget_token'); location.reload(); }
-    return data;
+    const ctrl = new AbortController();
+    const ms = opts.timeoutMs || 45000;
+    const timer = setTimeout(function () { ctrl.abort(); }, ms);
+    try {
+        const res = await fetch(url, { method: "POST", body: JSON.stringify(payload), signal: ctrl.signal });
+        if (!res.ok) throw new Error("HTTP Error: " + res.status);
+        const data = await res.json();
+        if (data.mensaje && data.mensaje.includes("Acceso no autorizado")) {
+            localStorage.removeItem("smartbudget_token");
+            location.reload();
+        }
+        return data;
+    } catch (e) {
+        if (e.name === "AbortError") throw new Error("El servidor tardó demasiado. Vuelve a intentar.");
+        const m = String(e.message || e);
+        if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
+            throw new Error("No se pudo conectar con el historial. Reintenta; si sigue, pega el backend.gs actualizado.");
+        }
+        throw e;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 // === FUNCIONES DE NEGOCIO RESTAURADAS ===
@@ -64,14 +82,215 @@ async function buscarOportunidadOdoo() {
     if(btn) { btn.disabled = false; btn.innerText = btnOriginalText; }
 }
 
+function compactarChatNube(chat, n, maxLen) {
+    return (chat || []).slice(-n).map(function (h) {
+        return { role: h.role, text: String(h.text || "").slice(0, maxLen) };
+    });
+}
+
+function compactarPayloadNube(payload) {
+    const recortar = function (n, maxLen) {
+        payload.historialChat = compactarChatNube(payload.historialChat, n, maxLen);
+        (payload.versiones || []).forEach(function (v) {
+            v.historialChat = compactarChatNube(v.historialChat, n, maxLen);
+        });
+    };
+    let json = JSON.stringify(payload);
+    if (json.length < 48000) return payload;
+    recortar(16, 2500);
+    json = JSON.stringify(payload);
+    if (json.length < 48000) return payload;
+    recortar(8, 1200);
+    return payload;
+}
+
+function clonarJson_(o) {
+    return JSON.parse(JSON.stringify(o == null ? null : o));
+}
+
+function versionVacia_(id, comentario) {
+    return {
+        id: id || "V1",
+        comentario: comentario || "",
+        creado: new Date().toISOString(),
+        tipoPresupuesto: typeof mercadoActual === "function" ? mercadoActual() : "NACIONAL",
+        datosAdicionales: {
+            fecha: document.getElementById("fecha")?.value || "",
+            comercial: document.getElementById("comercial")?.value || "",
+            disenador: document.getElementById("disenador")?.value || "",
+            analista: document.getElementById("analista")?.value || ""
+        },
+        matrizItems: [],
+        escalas: [{ id: "l1", q: 1 }],
+        historialChat: [],
+        faseIA: "idle"
+    };
+}
+
+function snapshotDesdeUI_(id, comentario) {
+    const prev = (window.versionesPresupuesto || []).find(function (v) { return v.id === id; });
+    return {
+        id: id,
+        comentario: comentario != null ? comentario : (prev ? prev.comentario : ""),
+        creado: prev && prev.creado ? prev.creado : new Date().toISOString(),
+        tipoPresupuesto: typeof mercadoActual === "function" ? mercadoActual() : "NACIONAL",
+        datosAdicionales: {
+            fecha: document.getElementById("fecha")?.value || "",
+            comercial: document.getElementById("comercial")?.value || "",
+            disenador: document.getElementById("disenador")?.value || "",
+            analista: document.getElementById("analista")?.value || ""
+        },
+        matrizItems: clonarJson_(typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []),
+        escalas: clonarJson_(typeof lotesSimulacion !== "undefined" && lotesSimulacion.length ? lotesSimulacion : [{ id: "l1", q: 1 }]),
+        historialChat: clonarJson_(window.historialChatIA || []),
+        faseIA: window.faseIA || "idle"
+    };
+}
+
+function asegurarV1_() {
+    if (!Array.isArray(window.versionesPresupuesto) || !window.versionesPresupuesto.length) {
+        window.versionesPresupuesto = [snapshotDesdeUI_("V1", "")];
+        window.versionActivaId = "V1";
+    }
+    if (!window.versionActivaId) window.versionActivaId = window.versionesPresupuesto[0].id;
+}
+
+function snapshotVersionActual() {
+    asegurarV1_();
+    const id = window.versionActivaId || "V1";
+    const snap = snapshotDesdeUI_(id);
+    const i = window.versionesPresupuesto.findIndex(function (v) { return v.id === id; });
+    if (i >= 0) window.versionesPresupuesto[i] = snap;
+    else window.versionesPresupuesto.push(snap);
+    return snap;
+}
+
+function siguienteIdVersion() {
+    let n = 0;
+    (window.versionesPresupuesto || []).forEach(function (v) {
+        const m = String(v.id || "").match(/^V(\d+)$/i);
+        if (m) n = Math.max(n, parseInt(m[1], 10));
+    });
+    return "V" + (n + 1);
+}
+
+function aplicarVersionEnUI(id, omitirSnapshot) {
+    if (!omitirSnapshot) snapshotVersionActual();
+    const ver = (window.versionesPresupuesto || []).find(function (v) { return v.id === id; });
+    if (!ver) return;
+    window.versionActivaId = id;
+    if (typeof itemsPresupuesto !== "undefined") itemsPresupuesto = clonarJson_(ver.matrizItems || []);
+    if (typeof lotesSimulacion !== "undefined") {
+        lotesSimulacion = clonarJson_(ver.escalas && ver.escalas.length ? ver.escalas : [{ id: "l1", q: 1 }]);
+    }
+    if (ver.datosAdicionales) {
+        ["fecha", "comercial", "disenador", "analista"].forEach(function (k) {
+            const el = document.getElementById(k);
+            if (el && ver.datosAdicionales[k] != null) el.value = ver.datosAdicionales[k];
+        });
+    }
+    if (typeof aplicarMercado === "function") aplicarMercado(ver.tipoPresupuesto || "NACIONAL");
+    if (typeof window.pintarHistorialChatIA === "function") {
+        window.pintarHistorialChatIA(ver.historialChat || [], ver.faseIA);
+    } else {
+        window.historialChatIA = ver.historialChat || [];
+        window.faseIA = ver.faseIA || "idle";
+    }
+    if (typeof renderizarTablaItems === "function") renderizarTablaItems();
+    pintarSelectorVersiones();
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+function hidratarVersionesDesdePayload(p) {
+    p = p || {};
+    if (Array.isArray(p.versiones) && p.versiones.length) {
+        window.versionesPresupuesto = clonarJson_(p.versiones);
+        window.versionActivaId = p.cabecera && p.cabecera.versionActiva
+            ? p.cabecera.versionActiva
+            : (p.versionActivaId || window.versionesPresupuesto[window.versionesPresupuesto.length - 1].id);
+    } else {
+        window.versionesPresupuesto = [{
+            id: "V1",
+            comentario: "",
+            creado: new Date().toISOString(),
+            tipoPresupuesto: p.cabecera && p.cabecera.tipoPresupuesto,
+            datosAdicionales: p.datosAdicionales || {},
+            matrizItems: p.matrizItems || p.items || [],
+            escalas: p.escalas || p.lotes || [{ id: "l1", q: 1 }],
+            historialChat: p.historialChat || p.chat || [],
+            faseIA: p.faseIA || p.fase || "idle"
+        }];
+        window.versionActivaId = "V1";
+    }
+    aplicarVersionEnUI(window.versionActivaId, true);
+}
+
+function resetearVersionesProyecto() {
+    window.versionesPresupuesto = [versionVacia_("V1", "")];
+    window.versionActivaId = "V1";
+    pintarSelectorVersiones();
+}
+
+function pintarSelectorVersiones() {
+    asegurarV1_();
+    const box = document.getElementById("chipsVersiones");
+    const nota = document.getElementById("comentarioVersionActiva");
+    if (!box) return;
+    const activa = window.versionActivaId;
+    box.innerHTML = window.versionesPresupuesto.map(function (v) {
+        const on = v.id === activa ? " is-on" : "";
+        const title = (v.comentario || "Sin comentario").replace(/"/g, "&quot;");
+        return '<button type="button" class="ver-chip' + on + '" title="' + title + '" onclick="aplicarVersionEnUI(\'' + v.id + '\')">' + v.id + "</button>";
+    }).join("");
+    const ver = window.versionesPresupuesto.find(function (v) { return v.id === activa; });
+    if (nota) nota.textContent = ver && ver.comentario ? ver.comentario : "";
+}
+
+function abrirModalNuevaVersion() {
+    snapshotVersionActual();
+    const next = siguienteIdVersion();
+    const tit = document.getElementById("tituloNuevaVersion");
+    if (tit) tit.textContent = "Nueva versión " + next;
+    const inp = document.getElementById("nuevaVersionComentario");
+    if (inp) inp.value = "";
+    const el = document.getElementById("modalNuevaVersion");
+    if (el) new bootstrap.Modal(el).show();
+}
+
+function confirmarNuevaVersion() {
+    snapshotVersionActual();
+    const id = siguienteIdVersion();
+    const comentario = (document.getElementById("nuevaVersionComentario")?.value || "").trim();
+    const nueva = snapshotDesdeUI_(id, comentario);
+    nueva.creado = new Date().toISOString();
+    window.versionesPresupuesto.push(nueva);
+    window.versionActivaId = id;
+    const modal = bootstrap.Modal.getInstance(document.getElementById("modalNuevaVersion"));
+    if (modal) modal.hide();
+    aplicarVersionEnUI(id, true);
+    mostrarNotificacion(id + " creada. Sigues sobre una copia de la anterior.", "success");
+}
+
+window.listarVersionesPresupuesto = function () {
+    snapshotVersionActual();
+    return clonarJson_(window.versionesPresupuesto || []);
+};
+
 async function guardarProyectoBD() {
     const codigo = document.getElementById('inputCodigo')?.value.trim();
     if (!codigo) return mostrarNotificacion("Ingresa un código de oportunidad (Paso 1).", "warning");
-    const payload = {
-        cabecera: { noProyecto: codigo, cliente: document.getElementById('cliente')?.value || '', nombreProyecto: document.getElementById('noProyecto')?.value || '', tipoPresupuesto: document.getElementById('badgeTipo')?.innerText || 'NACIONAL' },
+    snapshotVersionActual();
+    const activa = window.versionActivaId || "V1";
+    const payload = compactarPayloadNube({
+        cabecera: { noProyecto: codigo, cliente: document.getElementById('cliente')?.value || '', nombreProyecto: document.getElementById('noProyecto')?.value || '', tipoPresupuesto: (typeof mercadoActual === "function" ? mercadoActual() : (document.getElementById('badgeTipo')?.innerText || 'NACIONAL')), versionActiva: activa },
         datosAdicionales: { fecha: document.getElementById('fecha')?.value || '', comercial: document.getElementById('comercial')?.value || '', disenador: document.getElementById('disenador')?.value || '', analista: document.getElementById('analista')?.value || '' },
-        matrizItems: typeof itemsPresupuesto !== 'undefined' ? itemsPresupuesto : [], escalas: typeof lotesSimulacion !== 'undefined' ? lotesSimulacion : []
-    };
+        matrizItems: typeof itemsPresupuesto !== 'undefined' ? itemsPresupuesto : [],
+        escalas: typeof lotesSimulacion !== 'undefined' ? lotesSimulacion : [],
+        historialChat: window.historialChatIA || [],
+        faseIA: window.faseIA || "idle",
+        versiones: window.versionesPresupuesto || [],
+        versionActivaId: activa
+    });
     mostrarNotificacion("Guardando en la Nube...", "info");
     try { const data = await realizarPeticionBD({ action: 'guardar', payload: payload }); mostrarNotificacion(data.mensaje, data.exito ? "success" : "danger"); } catch(e) { mostrarNotificacion(e.message, "danger"); }
 }
@@ -84,9 +303,11 @@ async function abrirHistorial() {
     try {
         const data = await realizarPeticionBD({ action: 'listar' });
         if(data.exito && data.data.length > 0) {
-            tbody.innerHTML = data.data.map(p => `<tr><td class="text-danger fw-bold">${p.noProyecto}</td><td>${p.cliente || 'S/N'}</td><td>${p.requerimiento || 'S/N'}</td><td><span class="badge ${p.tipo==='EXPORTACION'?'bg-primary':'bg-danger'}">${p.tipo}</span></td><td class="text-muted" style="font-size:0.75rem;">${p.fechaGuardado}</td><td class="text-center"><button class="btn btn-sm btn-primary py-0 px-2 me-1" onclick="cargarProyectoBD('${p.id}')"><i class="bi bi-cloud-download"></i></button><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="eliminarProyectoBD('${p.id}')"><i class="bi bi-trash"></i></button></td></tr>`).join('');
+            tbody.innerHTML = data.data.map(p => `<tr><td class="text-danger fw-bold">${p.noProyecto}</td><td>${p.cliente || 'S/N'}</td><td>${p.requerimiento || 'S/N'}</td><td><span class="badge ${p.tipo==='EXPORTACION'?'bg-dark':'bg-primary'}">${p.tipo}</span></td><td class="text-muted" style="font-size:0.75rem;">${p.fechaGuardado}</td><td class="text-center"><button class="btn btn-sm btn-primary py-0 px-2 me-1" onclick="cargarProyectoBD('${p.id}')"><i class="bi bi-cloud-download"></i></button><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="eliminarProyectoBD('${p.id}')"><i class="bi bi-trash"></i></button></td></tr>`).join('');
         } else { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No hay proyectos.</td></tr>'; }
-    } catch(e) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-4">${e.message}</td></tr>`; }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4"><div class="text-danger mb-2">${e.message}</div><button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirHistorial()">Reintentar</button></td></tr>`;
+    }
 }
 
 async function cargarProyectoBD(idProyecto) {
@@ -95,14 +316,100 @@ async function cargarProyectoBD(idProyecto) {
         if (data.exito && data.data) {
             const p = data.data; const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
             setVal('inputCodigo', p.cabecera?.noProyecto); setVal('noProyecto', p.cabecera?.nombreProyecto); setVal('cliente', p.cabecera?.cliente);
-            if(p.datosAdicionales) { setVal('fecha', p.datosAdicionales.fecha); setVal('comercial', p.datosAdicionales.comercial); setVal('disenador', p.datosAdicionales.disenador); setVal('analista', p.datosAdicionales.analista); }
-            if (typeof itemsPresupuesto !== 'undefined') itemsPresupuesto = p.matrizItems || [];
-            if (typeof lotesSimulacion !== 'undefined') lotesSimulacion = p.escalas || [{ id: 'l1', q: 1 }];
-            if (typeof renderizarTablaItems === "function") renderizarTablaItems();
+            hidratarVersionesDesdePayload(p);
             bootstrap.Modal.getInstance(document.getElementById('modalHistorial'))?.hide();
-            mostrarNotificacion(`Proyecto cargado.`, "success");
+            const nVer = (window.versionesPresupuesto || []).length;
+            const nChat = (window.historialChatIA || []).length;
+            mostrarNotificacion((nVer > 1 ? (nVer + " versiones. ") : "") + (nChat ? "Proyecto y chat cargados." : "Proyecto cargado."), "success");
         }
     } catch(e) { mostrarNotificacion(e.message, "danger"); }
+}
+
+var SESION_TRABAJO_KEY = "smartbudget_sesion_v1";
+var _sesionGuardarT = null;
+
+function idsCabeceraSesion() {
+    return ["inputCodigo", "noProyecto", "cliente", "fecha", "comercial", "disenador", "analista", "simFee", "selMercado"];
+}
+
+function programarGuardarSesion() {
+    clearTimeout(_sesionGuardarT);
+    _sesionGuardarT = setTimeout(guardarSesionTrabajo, 450);
+}
+
+function guardarSesionTrabajo() {
+    try {
+        const cabecera = {};
+        idsCabeceraSesion().forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) cabecera[id] = el.value || "";
+        });
+        snapshotVersionActual();
+        const payload = {
+            cabecera: cabecera,
+            items: typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : [],
+            lotes: typeof lotesSimulacion !== "undefined" ? lotesSimulacion : [],
+            chat: window.historialChatIA || [],
+            fase: window.faseIA || "idle",
+            comision: document.getElementById("simComision")?.value || "",
+            archivos: window.archivosGemaBase64 || [],
+            versiones: window.versionesPresupuesto || [],
+            versionActivaId: window.versionActivaId || "V1"
+        };
+        let json = JSON.stringify(payload);
+        if (json.length > 4500000) {
+            payload.archivos = [];
+            json = JSON.stringify(payload);
+        }
+        localStorage.setItem(SESION_TRABAJO_KEY, json);
+    } catch (e) {
+        try {
+            const prev = JSON.parse(localStorage.getItem(SESION_TRABAJO_KEY) || "{}");
+            prev.archivos = [];
+            localStorage.setItem(SESION_TRABAJO_KEY, JSON.stringify(prev));
+        } catch (e2) {}
+    }
+}
+
+function restaurarSesionTrabajo() {
+    let s;
+    try { s = JSON.parse(localStorage.getItem(SESION_TRABAJO_KEY) || "null"); } catch (e) { return false; }
+    if (!s) return false;
+    const tiene =
+        (s.items && s.items.length) ||
+        (s.chat && s.chat.length) ||
+        (s.cabecera && s.cabecera.inputCodigo) ||
+        (s.cabecera && s.cabecera.noProyecto);
+    if (!tiene) return false;
+    idsCabeceraSesion().forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el && s.cabecera && s.cabecera[id] != null) el.value = s.cabecera[id];
+    });
+    if (Array.isArray(s.archivos) && s.archivos.length) {
+        window.archivosGemaBase64 = s.archivos;
+        if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
+    }
+    if (s.comision) {
+        const sel = document.getElementById("simComision");
+        if (sel) sel.value = s.comision;
+    }
+    hidratarVersionesDesdePayload({
+        cabecera: { tipoPresupuesto: s.cabecera && s.cabecera.selMercado, versionActiva: s.versionActivaId },
+        datosAdicionales: {
+            fecha: s.cabecera && s.cabecera.fecha,
+            comercial: s.cabecera && s.cabecera.comercial,
+            disenador: s.cabecera && s.cabecera.disenador,
+            analista: s.cabecera && s.cabecera.analista
+        },
+        matrizItems: s.items,
+        escalas: s.lotes,
+        historialChat: s.chat,
+        faseIA: s.fase,
+        versiones: s.versiones,
+        versionActivaId: s.versionActivaId
+    });
+    if (typeof mostrarNotificacion === "function") mostrarNotificacion("Se restauró el trabajo de esta sesión.", "info");
+    return true;
 }
 
 async function eliminarProyectoBD(idProyecto) {
@@ -119,9 +426,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 2. Ejecutar funciones externas (Si existen en otros archivos)
     if(typeof obtenerTRMOficial === "function") await obtenerTRMOficial();
+    restaurarSesionTrabajo();
+    asegurarV1_();
+    pintarSelectorVersiones();
     if(typeof renderizarTablaItems === "function") renderizarTablaItems();
     if(typeof inicializarDragAndDropArchivos === "function") inicializarDragAndDropArchivos();
+    if(typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
     
     // 3. Listeners
-    ['simTRM', 'simComision', 'simFee'].forEach(id => { const el = document.getElementById(id); if(el) el.onchange = () => typeof actualizarSimuladorFinanciero === "function" && actualizarSimuladorFinanciero(); });
+    ['simTRM', 'simComision', 'simFee'].forEach(id => { const el = document.getElementById(id); if(el) el.onchange = () => { if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero(); programarGuardarSesion(); }; });
+    idsCabeceraSesion().forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", programarGuardarSesion);
+        if (el) el.addEventListener("input", programarGuardarSesion);
+    });
 });

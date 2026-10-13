@@ -7,10 +7,10 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=1.0.18">
 </head>
 <body>
-  <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
+  <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
 
   <div class="erp-top-bar">
     <i class="bi bi-grid-3x3-gap-fill me-2 fs-5"></i>
@@ -25,25 +25,44 @@
           <span class="fs-5 fw-bold">Presupuestos y Costos</span>
         </div>
         <div class="d-flex align-items-center gap-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirCatalogoConsulta()"><i class="bi bi-book me-1"></i>Catálogo</button>
           <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirModalAdmin()"><i class="bi bi-gear me-1"></i>Ajustes</button>
-          <span class="badge badge-version px-2 py-1" id="appVersionBadge">V1.0.6</span>
-          <span id="badgeTipo" class="badge badge-nacional px-2 py-1">NACIONAL</span>
+          <span class="app-version" id="appVersionBadge" title="Versión de la app">V1.0.18</span>
         </div>
       </div>
       
       <div class="card-body p-4">
-        <ul class="nav nav-tabs mb-4" id="mainAppTabs">
-          <li class="nav-item"><button class="nav-link active">Ingeniería de Costos</button></li>
+        <ul class="nav nav-tabs app-tabs mb-4" id="mainAppTabs" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="tabBtnIngenieria" data-bs-toggle="tab" data-bs-target="#tabIngenieria" type="button" role="tab">
+              <i class="bi bi-tools me-1"></i>Ingeniería de Costos
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tabBtnLogistica" data-bs-toggle="tab" data-bs-target="#tabLogistica" type="button" role="tab">
+              <i class="bi bi-globe2 me-1"></i>Logística y consolidador comercial
+            </button>
+          </li>
         </ul>
+
+        <div class="tab-content">
+        <div class="tab-pane fade show active" id="tabIngenieria" role="tabpanel">
 
         <!-- P1: CRM -->
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0"><span class="step-badge">1</span> Datos Base del Proyecto</h6>
+            <h6 class="fw-bold mb-0"><span class="step-badge">1</span><i class="bi bi-folder2-open section-icon"></i> Datos Base del Proyecto</h6>
             <div class="d-flex gap-2">
               <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirHistorial()"><i class="bi bi-clock-history me-1"></i>Historial</button>
+              <button type="button" id="btnExportarExcel" class="btn btn-outline-secondary btn-sm bg-white" onclick="exportarPresupuestoExcel()"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
               <button class="btn btn-primary btn-sm" onclick="guardarProyectoBD()"><i class="bi bi-cloud-upload me-1"></i>Guardar en Nube</button>
             </div>
+          </div>
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-3" id="barraVersiones">
+            <span class="small text-muted mb-0">Versión</span>
+            <div id="chipsVersiones" class="d-flex gap-1 flex-wrap"></div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="abrirModalNuevaVersion()"><i class="bi bi-plus-lg me-1"></i>Nueva versión</button>
+            <span id="comentarioVersionActiva" class="small text-muted"></span>
           </div>
           <div class="row g-3">
             <div class="col-md-3">
@@ -54,8 +73,16 @@
               </div>
             </div>
             <div class="col-md-9"><div id="odooAlert" class="d-none"></div></div>
-            <div class="col-md-4"><label class="form-label text-uppercase">No. Proyecto</label><input type="text" id="noProyecto" class="form-control form-control-sm"></div>
-            <div class="col-md-5"><label class="form-label text-uppercase">Cliente</label><input type="text" id="cliente" class="form-control form-control-sm"></div>
+            <div class="col-md-3"><label class="form-label text-uppercase">No. Proyecto</label><input type="text" id="noProyecto" class="form-control form-control-sm"></div>
+            <div class="col-md-4"><label class="form-label text-uppercase">Cliente</label><input type="text" id="cliente" class="form-control form-control-sm"></div>
+            <div class="col-md-2">
+              <label class="form-label text-uppercase"><i class="bi bi-globe2 me-1"></i>Mercado</label>
+              <select id="selMercado" class="form-select form-select-sm" title="Según el país del cliente. Más adelante define moneda e idioma." onchange="aplicarMercado(this.value)">
+                <option value="NACIONAL">Nacional</option>
+                <option value="EXPORTACION">Exportación</option>
+              </select>
+              <span id="badgeTipo" class="d-none">NACIONAL</span>
+            </div>
             <div class="col-md-3"><label class="form-label text-uppercase">Fecha</label><input type="date" id="fecha" class="form-control form-control-sm"></div>
             <div class="col-md-4"><label class="form-label text-uppercase">Comercial</label><input type="text" id="comercial" class="form-control form-control-sm"></div>
             <div class="col-md-4"><label class="form-label text-uppercase">Diseñador</label><input type="text" id="disenador" class="form-control form-control-sm"></div>
@@ -65,39 +92,48 @@
 
         <!-- P2: IA -->
         <div class="mb-5">
-          <h6 class="fw-bold mb-3"><span class="step-badge" style="background:#6366f1; border-color:#6366f1; color:white;">2</span> Pre-Armado IA & Asistente</h6>
+          <h6 class="fw-bold mb-3"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente</h6>
           <div class="row g-3">
             <div class="col-md-4 d-flex flex-column">
               <input type="file" id="fileRender" accept="image/*,application/pdf" multiple class="d-none" onchange="window.procesarArchivosNativos(this.files); this.value='';">
-              <label for="fileRender" id="dropzoneBox" class="prearmado-box py-4 text-center d-flex flex-column justify-content-center p-3 flex-grow-1" style="cursor:pointer; margin:0;">
-                <i class="bi bi-cloud-arrow-up fs-1 text-primary" style="pointer-events:none;"></i>
-                <h6 class="fw-bold mb-1" style="font-size:0.9rem; pointer-events:none;">Clic o arrastra planos aquí</h6>
-                <p class="text-muted mb-0" id="dropzoneStatusText" style="font-size:0.75rem; pointer-events:none;">JPG, PNG o PDF</p>
+              <label for="fileRender" id="dropzoneBox" class="prearmado-box text-center d-flex flex-column justify-content-center p-3 flex-grow-1">
+                <i class="bi bi-cloud-arrow-up fs-1 text-primary dropzone-icon" style="pointer-events:none;"></i>
+                <h6 class="fw-bold mb-1 dropzone-title">Clic o arrastra archivos aquí</h6>
+                <p class="text-muted mb-0" id="dropzoneStatusText" style="font-size:0.75rem; pointer-events:none;">Renders, planos, fichas, PDF, JPG o PNG</p>
               </label>
-              <div id="listaArchivosContainer" class="mt-2" style="max-height: 80px; overflow-y:auto;"></div>
+              <div id="listaArchivosContainer" class="lista-archivos mt-2"></div>
             </div>
 
-            <div class="col-md-4">
-              <div class="border rounded p-3 h-100 bg-white">
-                <label class="form-label text-primary"><i class="bi bi-card-text me-1"></i>Instrucción Inicial</label>
-                <textarea id="txtPromptParticular" class="form-control form-control-sm mb-2" rows="3" placeholder="Ej: Extraer lista de materiales..."></textarea>
-                <div class="form-check form-switch mb-3">
-                  <input class="form-check-input cursor-pointer" type="checkbox" id="togglePro" checked>
-                  <label class="form-check-label text-muted" style="font-size: 0.8rem; cursor:pointer;" for="togglePro">Forzar modelo Gemini PRO</label>
-                </div>
-                <button type="button" id="btnEjecutarIA" class="btn btn-sm w-100 text-white fw-bold" style="background-color: #6366f1;" onclick="procesarPlanoIA()"><i class="bi bi-magic me-1"></i>Analizar Renders</button>
-              </div>
-            </div>
-            
-            <div class="col-md-4">
+            <div class="col-md-8">
               <div class="border rounded p-3 h-100 bg-white d-flex flex-column">
-                <label class="form-label text-primary"><i class="bi bi-chat-dots me-1"></i>Chat Asistente (Re-ajustes)</label>
-                <div id="chatBox" class="chat-box mb-2 border rounded p-2 flex-grow-1" style="background: #fbfbfb; overflow-y:auto; max-height:130px;">
-                  <div class="text-center text-muted" style="font-size:0.75rem; margin-top:20px;">Analiza un render o saluda a la IA.</div>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                  <label class="form-label text-primary mb-0"><i class="bi bi-chat-dots me-1"></i>Asistente de costeo</label>
+                  <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <div id="geminiUsoWrap" class="gemini-uso ok" title="Estimado de SmartBudget vs tu recarga. Google no publica el saldo de la API.">
+                      <div class="gemini-uso-bar"><span id="geminiUsoFill"></span></div>
+                      <span id="geminiUsoTxt">Gemini —</span>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                      <input class="form-check-input cursor-pointer" type="checkbox" id="togglePro">
+                      <label class="form-check-label text-muted" style="font-size: 0.8rem; cursor:pointer;" for="togglePro">Gemini PRO</label>
+                    </div>
+                  </div>
                 </div>
-                <div class="input-group input-group-sm mt-auto">
-                  <input type="text" id="chatInput" class="form-control" placeholder="Ej: Cambia las ruedas a 4..." onkeypress="if(event.key==='Enter') enviarMensajeChat()">
-                  <button type="button" id="btnChat" class="btn btn-outline-secondary" onclick="enviarMensajeChat()"><i class="bi bi-send"></i></button>
+                <div id="geminiUsoAlerta" class="alert alert-danger py-1 px-2 mb-2 d-none" style="font-size:0.78rem;"></div>
+                <div class="d-flex gap-2 mb-2">
+                  <button type="button" id="btnEjecutarIA" class="btn btn-primary fw-bold flex-fill" onclick="procesarPlanoIA()"><i class="bi bi-magic me-1"></i>Analizar archivos</button>
+                  <button type="button" id="btnGenerarMatriz" class="btn btn-diforma-blue fw-bold flex-fill" onclick="generarMatrizIA()" disabled><i class="bi bi-table me-1"></i>Generar matriz</button>
+                </div>
+                <div id="hintGeminiPro" class="hint-gemini-pro d-none">Generar matriz ya está activo. Para un costeo más fiable (calibres, catálogo, cubicación), activa <b>Gemini PRO</b> arriba y luego pulsa el botón.</div>
+                <div id="chatBox" class="chat-box mb-2 border rounded p-2 flex-grow-1">
+                  <div class="text-center text-muted" style="font-size:0.75rem; margin-top:28px;">Sube archivos, pulsa Analizar archivos, conversa y cuando termines pulsa Generar matriz.</div>
+                </div>
+                <div id="chatAdjuntosBar" class="mb-1"></div>
+                <div class="d-flex gap-2 align-items-end">
+                  <input type="file" id="fileChat" accept="image/*,application/pdf" multiple class="d-none" onchange="window.procesarArchivosNativos(this.files); this.value='';">
+                  <button type="button" class="btn btn-outline-secondary" title="Adjuntar imagen o PDF" onclick="document.getElementById('fileChat').click()"><i class="bi bi-paperclip"></i></button>
+                  <textarea id="chatInput" class="form-control chat-input" rows="3" placeholder="Escribe aquí. Enter envía, Shift+Enter salto de línea."></textarea>
+                  <button type="button" id="btnChat" class="btn btn-primary" onclick="enviarMensajeChat()"><i class="bi bi-send-fill"></i></button>
                 </div>
               </div>
             </div>
@@ -107,15 +143,15 @@
         <!-- P3 & P4: Matriz y Simulador -->
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0"><span class="step-badge" style="background-color:#059669; border-color:#059669; color:white;">3</span> Matriz de Costos Directos (Escalas)</h6>
+            <h6 class="fw-bold mb-0"><span class="step-badge">3</span><i class="bi bi-table section-icon"></i> Matriz de Costos Directos (Escalas)</h6>
             <div>
-              <button class="btn btn-outline-success btn-sm bg-white fw-bold text-success border-success" onclick="agregarLote()">+ Agregar Rango</button>
+              <button class="btn btn-outline-success btn-sm bg-white fw-bold" onclick="agregarLote()">+ Agregar Rango</button>
               <button class="btn btn-outline-primary btn-sm bg-white fw-bold text-primary border-primary" onclick="abrirModalOdooMateriales()"><i class="bi bi-search me-1"></i> Odoo</button>
               <button class="btn btn-outline-secondary btn-sm bg-white" onclick="agregarItemTemporal()">+ Manual</button>
             </div>
           </div>
-          <div class="table-responsive border rounded bg-white" style="max-height: 500px; overflow-y: auto;">
-            <table class="table table-hover table-items mb-0" style="min-width: 1100px;">
+          <div class="matriz-scroll border rounded bg-white">
+            <table class="table table-hover table-items mb-0" id="tablaMatriz" style="min-width: 1100px; table-layout: fixed;">
                 <thead id="theadItems" class="sticky-top bg-white" style="z-index: 10;"></thead>
                 <tbody id="tbodyItems"></tbody>
             </table>
@@ -124,7 +160,7 @@
 
         <div class="mb-4 border-top pt-4">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0"><span class="step-badge" style="background-color:#f59e0b; border-color:#f59e0b; color:white;">4</span> Simulador AIU</h6>
+            <h6 class="fw-bold mb-0"><span class="step-badge">4</span><i class="bi bi-calculator section-icon"></i> Simulador AIU</h6>
             <div class="input-group input-group-sm w-auto"><span class="input-group-text text-success bg-white fw-bold">TRM Hoy</span><input type="number" id="simTRM" class="form-control text-center fw-bold" style="width:100px;" value="4150"></div>
           </div>
           <div class="row g-3 bg-white p-3 rounded border mb-3">
@@ -134,17 +170,58 @@
           <div class="row g-3" id="panelFinanciero"><div class="col-12 text-center py-4 border rounded text-muted">Agrega materiales.</div></div>
         </div>
 
+        </div><!-- /tabIngenieria -->
+
+        <div class="tab-pane fade" id="tabLogistica" role="tabpanel">
+          <div class="logistica-placeholder">
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <span class="step-badge">1</span>
+              <h6 class="fw-bold mb-0"><i class="bi bi-box-seam section-icon"></i> Logística y consolidador comercial</h6>
+            </div>
+            <p class="text-muted mb-0" style="max-width:62ch;">Este módulo viene después: volumen, embalaje, despacho y consolidado comercial. El mercado (Nacional / Exportación) de Ingeniería de Costos definirá moneda e idioma de la cotización.</p>
+          </div>
+        </div>
+        </div><!-- /tab-content -->
+
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="modalNuevaVersion" tabindex="-1">
+    <div class="modal-dialog sb-modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header sb-modal-header">
+          <div>
+            <h5 class="modal-title" id="tituloNuevaVersion">Nueva versión</h5>
+            <p class="sb-modal-sub mb-0">Se copia la versión actual. El comentario es opcional y va al Excel en Observaciones.</p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label" for="nuevaVersionComentario">¿Qué cambia en esta versión?</label>
+          <input type="text" id="nuevaVersionComentario" class="form-control" maxlength="180" placeholder="Ej. Sin gráficos, Q 80 y 160…">
+        </div>
+        <div class="modal-footer sb-modal-footer">
+          <button type="button" class="btn admin-btn" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn admin-btn admin-btn-primary" onclick="confirmarNuevaVersion()">Crear versión</button>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- MODAL HISTORIAL BD -->
   <div class="modal fade" id="modalHistorial" tabindex="-1">
-    <div class="modal-dialog modal-xl">
+    <div class="modal-dialog modal-xl sb-modal-dialog">
       <div class="modal-content">
-        <div class="modal-header text-white" style="background-color: var(--diforma-red);">
-            <h5 class="modal-title fs-6"><i class="bi bi-clock-history me-2"></i>Histórico de Proyectos (Nube)</h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        <div class="modal-header sb-modal-header">
+            <div class="d-flex align-items-start gap-2">
+              <i class="bi bi-grid-3x3-gap-fill sb-drag-grip" aria-hidden="true"></i>
+              <div>
+                <h5 class="modal-title"><i class="bi bi-clock-history me-1"></i>Histórico de proyectos</h5>
+                <p class="sb-modal-sub mb-0">Arrastra la barra para mover</p>
+              </div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body p-0">
           <div class="table-responsive" style="max-height: 400px;">
@@ -158,16 +235,91 @@
     </div>
   </div>
 
+  <div class="modal fade" id="modalCatalogoConsulta" tabindex="-1">
+    <div class="modal-dialog modal-xl sb-modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header sb-modal-header">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-grid-3x3-gap-fill sb-drag-grip" aria-hidden="true"></i>
+            <div>
+              <h5 class="modal-title"><i class="bi bi-book me-1"></i>Catálogo de precios</h5>
+              <p class="sb-modal-sub mb-0">Arrastra la barra para mover</p>
+            </div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted mb-2">Precios vigentes del maestro. Solo consulta; la edición y la sync están en Ajustes (administradores).</p>
+          <div class="row g-2 mb-2">
+            <div class="col-md-4"><input type="search" id="catCBuscar" class="form-control form-control-sm" placeholder="Buscar nombre…" oninput="programarBusquedaCatalogoConsulta()"></div>
+            <div class="col-md-2"><select id="catCFiltroCategoria" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogoConsulta()"><option value="">Categoría: todas</option></select></div>
+            <div class="col-md-2"><select id="catCFiltroProveedor" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogoConsulta()"><option value="">Proveedor: todos</option></select></div>
+            <div class="col-md-2"><select id="catCFiltroVig" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogoConsulta()"><option value="S">Vig: S</option><option value="">Vig: todas</option><option value="N">Vig: N</option></select></div>
+            <div class="col-md-2"><select id="catCFiltroRev" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogoConsulta()"><option value="">Rev: todas</option><option value="S">Rev: S</option><option value="N">Rev: N</option></select></div>
+          </div>
+          <div class="catalogo-tabla-wrap">
+            <table class="table table-sm table-hover align-middle mb-1 catalogo-tabla">
+              <thead class="table-light"><tr><th>Categoría</th><th>Proveedor</th><th>Nombre</th><th>UM</th><th>Costo COP</th><th title="Dentro de la ventana de días configurada">Vig.</th></tr></thead>
+              <tbody id="catalogoConsultaBody"><tr><td colspan="6" class="text-muted">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="catalogo-pager mt-2">
+            <div class="small text-muted" id="catalogoConsultaInfo">Mostrando 0 de 0 registros</div>
+            <nav class="catalogo-pager-nav" id="catalogoConsultaNums" aria-label="Paginación consulta"></nav>
+            <div class="d-flex justify-content-between align-items-center mt-1 flex-wrap gap-2">
+              <label class="small text-muted mb-0">Filas por página
+                <select id="catCFilasPagina" class="form-select form-select-sm d-inline-block ms-1" style="width:auto;" onchange="cambiarTamanoPaginaCatalogo('consulta', this.value)">
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="80">80</option>
+                </select>
+              </label>
+              <small class="text-muted" id="catalogoConsultaPagina">Página 1 de 1</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL NUEVO RANGO -->
-  <div class="modal fade" id="modalNuevoRango" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content"><div class="modal-body text-center"><label>Cantidad (Q):</label><input type="number" id="inputModalCantidadRango" class="form-control mt-2 text-center" placeholder="Ej: 40"></div><div class="modal-footer"><button class="btn btn-primary w-100" onclick="confirmarNuevoRango()">Agregar</button></div></div></div></div>
+  <div class="modal fade" id="modalNuevoRango" tabindex="-1">
+    <div class="modal-dialog modal-sm sb-modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header sb-modal-header">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-grid-3x3-gap-fill sb-drag-grip" aria-hidden="true"></i>
+            <div>
+              <h5 class="modal-title">Nuevo rango</h5>
+              <p class="sb-modal-sub mb-0">Arrastra la barra para mover</p>
+            </div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body text-center">
+          <label>Cantidad (Q):</label>
+          <input type="number" id="inputModalCantidadRango" class="form-control mt-2 text-center" placeholder="Ej: 40">
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary w-100" onclick="confirmarNuevoRango()">Agregar</button>
+        </div>
+      </div>
+    </div>
+  </div>
   
   <!-- MODAL ODOO -->
   <div class="modal fade" id="modalOdooMateriales" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg sb-modal-dialog">
       <div class="modal-content">
-        <div class="modal-header text-white" style="background-color: var(--diforma-red);">
-            <h5 class="modal-title fs-6"><i class="bi bi-box-seam me-2"></i>Catálogo de Materiales Odoo ERP</h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        <div class="modal-header sb-modal-header">
+            <div class="d-flex align-items-start gap-2">
+              <i class="bi bi-grid-3x3-gap-fill sb-drag-grip" aria-hidden="true"></i>
+              <div>
+                <h5 class="modal-title"><i class="bi bi-box-seam me-1"></i>Materiales Odoo</h5>
+                <p class="sb-modal-sub mb-0">Arrastra la barra para mover</p>
+              </div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
           <div class="input-group mb-3">
@@ -184,41 +336,307 @@
 
   <!-- MODAL ADMIN -->
   <div class="modal fade" id="modalAdmin" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-      <div class="modal-content border-0 shadow-lg">
-        <div class="modal-header text-white" style="background-color: var(--diforma-red);">
-          <h5 class="modal-title fs-6"><i class="bi bi-gear-fill me-2"></i>Panel Administrativo</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body bg-light">
-          <ul class="nav nav-tabs mb-3" role="tablist">
-            <li class="nav-item"><button class="nav-link active fw-bold" data-bs-toggle="tab" data-bs-target="#panel-credenciales" type="button">Conexiones & Nube</button></li>
-            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-tarifas" type="button">Catálogos Fijos</button></li>
-            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-gema" type="button">Prompts IA</button></li>
-            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-operativos" type="button">Motor AIU</button></li>
-            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-utilidades" type="button">Márgenes</button></li>
-            <li class="nav-item"><button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#panel-comisiones" type="button">Comisiones</button></li>
-          </ul>
-          <div class="tab-content bg-white p-3 border rounded shadow-sm">
-            <div class="tab-pane fade show active" id="panel-credenciales">
-              <div class="row g-3">
-                <div class="col-12 mb-3">
-                  <label class="form-label text-success fw-bold"><i class="bi bi-cloud-check-fill me-1"></i>URL Base de Datos (Servidor Oculto Apps Script)</label>
-                  <input type="url" id="cfgGasUrl" class="form-control border-success" placeholder="https://script.google.com/macros/s/.../exec">
-                  <small class="text-muted">Pega aquí la URL que generaste en Google Apps Script para conectar Odoo, Gemini y guardar proyectos.</small>
-                </div>
-              </div>
+    <div class="modal-dialog modal-xl modal-dialog-scrollable sb-modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header sb-modal-header">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-grid-3x3-gap-fill sb-drag-grip" aria-hidden="true"></i>
+            <div>
+              <h5 class="modal-title"><i class="bi bi-gear me-1"></i>Ajustes</h5>
+              <p class="sb-modal-sub mb-0">Arrastra la barra para mover</p>
             </div>
-            <div class="tab-pane fade" id="panel-tarifas"><div class="row g-3"><div class="col-md-8"><label class="form-label text-primary fw-bold">TARIFAS FIJAS</label><textarea id="cfgTarifas" class="form-control font-monospace" rows="8" style="font-size: 0.8rem;"></textarea></div><div class="col-md-4"><label class="form-label text-primary fw-bold">UNIDADES DE MEDIDA</label><textarea id="cfgUnidades" class="form-control font-monospace" rows="8" style="font-size: 0.8rem;"></textarea></div></div></div>
-            <div class="tab-pane fade" id="panel-gema"><label class="fw-bold text-primary">Prompt Presupuestos y Costos</label><textarea id="cfgPrompt" class="form-control mb-3" rows="6" style="font-size: 0.85rem;"></textarea><label class="fw-bold text-info">Prompt Logístico</label><textarea id="cfgPromptLogistico" class="form-control" rows="3" style="font-size: 0.85rem;"></textarea></div>
-            <div class="tab-pane fade" id="panel-operativos"><h6 class="fw-bold text-primary border-bottom pb-1">Fabricación (Operativos)</h6><div class="row g-2 mb-3"><div class="col-md-4"><label class="small text-muted">Tope Max</label><input type="number" class="form-control fw-bold" id="cfgTopeOpFab"></div><div class="col-md-4"><label class="small text-muted">Imprevistos (Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="cfgImpFabMax"><input type="number" class="form-control" id="cfgImpFabMin"></div></div><div class="col-md-4"><label class="small text-muted">Indirectos (Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="cfgIndFabMax"><input type="number" class="form-control" id="cfgIndFabMin"></div></div></div><h6 class="fw-bold text-warning border-bottom pb-1">Comercialización (Operativos)</h6><div class="row g-2"><div class="col-md-6"><label class="small text-muted">Tope Max</label><input type="number" class="form-control fw-bold" id="cfgTopeOpCom"></div><div class="col-md-6"><label class="small text-muted">Indirectos (Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="cfgIndComMax"><input type="number" class="form-control" id="cfgIndComMin"></div></div></div></div>
-            <div class="tab-pane fade" id="panel-utilidades"><h6 class="fw-bold text-success border-bottom pb-1">Nacional</h6><div class="row g-2 mb-3"><div class="col-6"><label class="small text-primary">Fab (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="n_fabTope"><input type="number" class="form-control" id="n_fabMax"><input type="number" class="form-control" id="n_fabMin"></div></div><div class="col-6"><label class="small text-warning">Com (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="n_comTope"><input type="number" class="form-control" id="n_comMax"><input type="number" class="form-control" id="n_comMin"></div></div></div><h6 class="fw-bold text-info border-bottom pb-1">Exportación</h6><div class="row g-2"><div class="col-6"><label class="small text-primary">Fab (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="e_fabTope"><input type="number" class="form-control" id="e_fabMax"><input type="number" class="form-control" id="e_fabMin"></div></div><div class="col-6"><label class="small text-warning">Com (Tope/Max/Min)</label><div class="input-group"><input type="number" class="form-control" id="e_comTope"><input type="number" class="form-control" id="e_comMax"><input type="number" class="form-control" id="e_comMin"></div></div></div></div>
-            <div class="tab-pane fade" id="panel-comisiones"><label class="form-label text-primary fw-bold">LISTA DE COMISIONES</label><textarea id="cfgComisiones" class="form-control font-monospace" rows="6" style="font-size: 0.85rem;"></textarea></div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body sb-modal-body">
+          <ul class="nav admin-nav" role="tablist">
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#panel-catalogo" type="button">Catálogo maestro</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-tarifas" type="button">Catálogos fijos</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-gema" type="button">Prompts IA</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-operativos" type="button">Motor AIU</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-utilidades" type="button">Márgenes</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-comisiones" type="button">Comisiones</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-credenciales" type="button">Conexiones</button></li>
+          </ul>
+          <div class="tab-content">
+            <div class="tab-pane fade show active admin-stack" id="panel-catalogo">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Sincronización</h3>
+                    <p class="admin-card-desc">Drive es el buzón de listados. El costeo lee la hoja Catalogo_Maestro. Un precio editado aquí manda sobre un PDF viejo.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div id="catalogoEstadoBox" class="admin-banner is-info mb-3">Abre esta pestaña para ver el estado del catálogo.</div>
+                  <div class="progress mb-2" style="height: 6px;" id="catalogoProgressWrap" hidden>
+                    <div class="progress-bar" id="catalogoProgressBar" style="width: 0%; background:var(--diforma-red);"></div>
+                  </div>
+                  <p class="small text-muted mb-3" id="catalogoMetaLinea">Última sync: —</p>
+                  <div class="admin-actions mb-3">
+                    <button type="button" id="btnSyncCatalogo" class="btn admin-btn" onclick="sincronizarCatalogoMaestroUI()"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar Drive</button>
+                    <button type="button" id="btnSyncOdooCatalogo" class="btn admin-btn" onclick="sincronizarCatalogoOdooUI()"><i class="bi bi-box-seam me-1"></i>Alimentar Odoo</button>
+                    <button type="button" id="btnCronCatalogo" class="btn admin-btn" onclick="activarCronCatalogoUI()">Activar sync cada 7 días</button>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-md-3 admin-field">
+                      <label>Vigencia materiales (días)</label>
+                      <input type="number" id="cfgDiasVigMat" class="form-control form-control-sm" min="1" value="180">
+                    </div>
+                    <div class="col-md-3 admin-field">
+                      <label>Vigencia procesos (días)</label>
+                      <input type="number" id="cfgDiasVigProc" class="form-control form-control-sm" min="1" value="90">
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                      <small class="text-muted" id="catalogoVigAyuda">Vig. = S si el precio de Odoo está dentro de la ventana. Se recalcula al alimentar Odoo.</small>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Ítems del maestro</h3>
+                    <p class="admin-card-desc">Filtra, edita o da de alta. Hasta 6 archivos por clic en Drive; Odoo es incremental.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body pb-2">
+                  <div class="row g-2 mb-2">
+                    <div class="col-md-4"><input type="search" id="catalogoBuscar" class="form-control form-control-sm" placeholder="Buscar nombre…" oninput="programarBusquedaCatalogo()"></div>
+                    <div class="col-md-2"><select id="catFiltroCategoria" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogo()"><option value="">Categoría: todas</option></select></div>
+                    <div class="col-md-2"><select id="catFiltroProveedor" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogo()"><option value="">Proveedor: todos</option></select></div>
+                    <div class="col-md-2"><select id="catFiltroVig" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogo()"><option value="">Vig: todas</option><option value="S">Vig: S</option><option value="N">Vig: N</option></select></div>
+                    <div class="col-md-2"><select id="catFiltroRev" class="form-select form-select-sm" onchange="aplicarFiltrosCatalogo()"><option value="">Rev: todas</option><option value="S">Rev: S</option><option value="N">Rev: N</option></select></div>
+                  </div>
+                  <div class="row g-2 align-items-end">
+                    <div class="col-md-2"><input id="catNuevoCat" class="form-control form-control-sm" placeholder="Categoría"></div>
+                    <div class="col-md-2"><input id="catNuevoProv" class="form-control form-control-sm" placeholder="Proveedor"></div>
+                    <div class="col-md-3"><input id="catNuevoNombre" class="form-control form-control-sm" placeholder="Nombre (alta manual)"></div>
+                    <div class="col-md-1"><select id="catNuevoUm" class="form-select form-select-sm"></select></div>
+                    <div class="col-md-2"><input id="catNuevoCosto" type="number" class="form-control form-control-sm" placeholder="Costo COP"></div>
+                    <div class="col-md-2"><button type="button" class="btn admin-btn admin-btn-primary w-100" onclick="crearFilaCatalogoUI()">Agregar ítem</button></div>
+                  </div>
+                </div>
+                <div class="admin-card-table">
+                  <div class="catalogo-tabla-wrap" style="border:0; border-radius:0;">
+                    <table class="table table-sm table-hover align-middle mb-0 catalogo-tabla admin-table">
+                      <thead><tr><th>Categoría</th><th>Proveedor</th><th>Nombre</th><th>UM</th><th>Costo COP</th><th title="Dentro de la ventana de días (materiales/procesos)">Vig.</th><th title="Costo 0 o fuera de vigencia">Rev.</th><th></th></tr></thead>
+                      <tbody id="catalogoTablaBody"><tr><td colspan="8" class="text-muted">Cargando…</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="admin-card-body pt-2">
+                  <div class="catalogo-pager">
+                    <div class="small text-muted" id="catalogoPaginacionInfo">Mostrando 0 de 0 registros</div>
+                    <nav class="catalogo-pager-nav" id="catalogoPagerNums" aria-label="Paginación catálogo"></nav>
+                    <div class="d-flex justify-content-between align-items-center mt-1 flex-wrap gap-2">
+                      <label class="small text-muted mb-0">Filas por página
+                        <select id="catFilasPagina" class="form-select form-select-sm d-inline-block ms-1" style="width:auto;" onchange="cambiarTamanoPaginaCatalogo('admin', this.value)">
+                          <option value="25" selected>25</option>
+                          <option value="50">50</option>
+                          <option value="80">80</option>
+                        </select>
+                      </label>
+                      <small class="text-muted" id="catalogoPagerPagina">Página 1 de 1</small>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-tarifas">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Tarifas fijas</h3>
+                    <p class="admin-card-desc">Procesos internos. Si el concepto coincide, [Tarifa Fija] manda sobre el catálogo. La UM solo puede ser una del diccionario de abajo.</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="agregarTarifaFijaUI()"><i class="bi bi-plus-lg me-1"></i>Agregar tarifa</button>
+                </header>
+                <div class="admin-card-table">
+                  <table class="table admin-table align-middle">
+                    <thead><tr><th>Concepto</th><th style="width:140px;">UM</th><th style="width:130px;">Costo COP</th><th style="width:80px;" title="Se diluye Costo/Q">Global</th><th style="width:44px;"></th></tr></thead>
+                    <tbody id="tarifasFijasBody"></tbody>
+                  </table>
+                </div>
+              </section>
+              <textarea id="cfgTarifas" class="d-none" aria-hidden="true"></textarea>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Unidades de la matriz</h3>
+                    <p class="admin-card-desc">UM matriz es el código de la cotización. Equivale es cómo lo compra Odoo o Drive. Factor: 1 UM matriz = N de esa UM de catálogo (ej. 1 Cml = 0,01 Metros).</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="agregarUnidadMatrizUI()"><i class="bi bi-plus-lg me-1"></i>Agregar unidad</button>
+                </header>
+                <div class="admin-card-table">
+                  <table class="table admin-table align-middle">
+                    <thead><tr><th style="width:110px;">UM matriz</th><th style="width:150px;">Equivale (Odoo/Drive)</th><th style="width:90px;">Factor</th><th>Regla de conversión</th><th style="width:44px;"></th></tr></thead>
+                    <tbody id="unidadesMatrizBody"></tbody>
+                  </table>
+                </div>
+              </section>
+              <textarea id="cfgUnidades" class="d-none" aria-hidden="true"></textarea>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-gema">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Prompt de presupuestos y costos</h3>
+                    <p class="admin-card-desc">Oficio y reglas de fabricación. Las fases, el JSON, las UM y la prioridad de precios las fija el código.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <textarea id="cfgPrompt" class="form-control" rows="8" style="font-size: 0.85rem;"></textarea>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Presupuesto Gemini (recarga)</h3>
+                    <p class="admin-card-desc">Google no publica el saldo de la API. Pon aquí lo que sueles recargar en USD y las tarifas por millón de tokens. El medidor estima el gasto de SmartBudget este mes para recargar con anticipación. Si Gemini responde sin crédito, la barra se pone en rojo.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div class="row g-3">
+                    <div class="col-md-3 admin-field"><label>Presupuesto USD / mes</label><input type="number" id="cfgGeminiCupoUsd" class="form-control" min="1" step="1" value="20"></div>
+                    <div class="col-md-3 admin-field"><label>USD / 1M tokens entrada</label><input type="number" id="cfgGeminiUsdIn" class="form-control" min="0" step="0.01" value="1.25"></div>
+                    <div class="col-md-3 admin-field"><label>USD / 1M tokens salida</label><input type="number" id="cfgGeminiUsdOut" class="form-control" min="0" step="0.01" value="10"></div>
+                    <div class="col-md-3 admin-field"><label>Tope tokens (respaldo)</label><input type="number" id="cfgGeminiCupo" class="form-control" min="100000" step="100000" value="2000000"></div>
+                  </div>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Prompt logístico</h3>
+                    <p class="admin-card-desc">Volumen, embalaje y despacho.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <textarea id="cfgPromptLogistico" class="form-control" rows="4" style="font-size: 0.85rem;"></textarea>
+                </div>
+              </section>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-operativos">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Fabricación</h3>
+                    <p class="admin-card-desc">Topes e incidencias del AIU de fabricación.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div class="row g-3">
+                    <div class="col-md-4 admin-field"><label>Tope máx.</label><input type="number" class="form-control" id="cfgTopeOpFab"></div>
+                    <div class="col-md-4 admin-field"><label>Imprevistos (máx. / mín.)</label><div class="input-group"><input type="number" class="form-control" id="cfgImpFabMax"><input type="number" class="form-control" id="cfgImpFabMin"></div></div>
+                    <div class="col-md-4 admin-field"><label>Indirectos (máx. / mín.)</label><div class="input-group"><input type="number" class="form-control" id="cfgIndFabMax"><input type="number" class="form-control" id="cfgIndFabMin"></div></div>
+                  </div>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Comercialización</h3>
+                    <p class="admin-card-desc">Topes e indirectos del AIU comercial.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div class="row g-3">
+                    <div class="col-md-6 admin-field"><label>Tope máx.</label><input type="number" class="form-control" id="cfgTopeOpCom"></div>
+                    <div class="col-md-6 admin-field"><label>Indirectos (máx. / mín.)</label><div class="input-group"><input type="number" class="form-control" id="cfgIndComMax"><input type="number" class="form-control" id="cfgIndComMin"></div></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-utilidades">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Nacional</h3>
+                    <p class="admin-card-desc">Tope, máximo y mínimo de utilidad (fabricación y comercialización).</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div class="row g-3">
+                    <div class="col-md-6 admin-field"><label>Fabricación (tope / máx. / mín.)</label><div class="input-group"><input type="number" class="form-control" id="n_fabTope"><input type="number" class="form-control" id="n_fabMax"><input type="number" class="form-control" id="n_fabMin"></div></div>
+                    <div class="col-md-6 admin-field"><label>Comercialización (tope / máx. / mín.)</label><div class="input-group"><input type="number" class="form-control" id="n_comTope"><input type="number" class="form-control" id="n_comMax"><input type="number" class="form-control" id="n_comMin"></div></div>
+                  </div>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Exportación</h3>
+                    <p class="admin-card-desc">Misma estructura, tasas de mercado internacional.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div class="row g-3">
+                    <div class="col-md-6 admin-field"><label>Fabricación (tope / máx. / mín.)</label><div class="input-group"><input type="number" class="form-control" id="e_fabTope"><input type="number" class="form-control" id="e_fabMax"><input type="number" class="form-control" id="e_fabMin"></div></div>
+                    <div class="col-md-6 admin-field"><label>Comercialización (tope / máx. / mín.)</label><div class="input-group"><input type="number" class="form-control" id="e_comTope"><input type="number" class="form-control" id="e_comMax"><input type="number" class="form-control" id="e_comMin"></div></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-comisiones">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Lista de comisiones</h3>
+                    <p class="admin-card-desc">Arrastra las filas: ese orden es el del desplegable Comisión venta.</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="agregarComisionUI()"><i class="bi bi-plus-lg me-1"></i>Agregar comisión</button>
+                </header>
+                <div class="admin-card-table">
+                  <table class="table admin-table align-middle">
+                    <thead><tr><th style="width:36px;"></th><th>Nombre</th><th style="width:140px;">%</th><th style="width:44px;"></th></tr></thead>
+                    <tbody id="comisionesBody"></tbody>
+                  </table>
+                </div>
+              </section>
+              <textarea id="cfgComisiones" class="d-none" aria-hidden="true"></textarea>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-credenciales">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Conexión a la nube</h3>
+                    <p class="admin-card-desc">URL del web app de Apps Script. Las claves viven solo en el servidor.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div class="admin-field">
+                    <label>URL de Apps Script</label>
+                    <input type="url" id="cfgGasUrl" class="form-control" placeholder="https://script.google.com/macros/s/.../exec">
+                  </div>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Plantilla Excel</h3>
+                    <p class="admin-card-desc">Publica el .xlsx oficial. La app rellena EXP o NAL según el mercado. ADMIN, cotizaciones y pestañas extra se conservan. Al cargar, se analiza el formato (filas, celdas y hojas) para ajustar el relleno.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <p class="small text-muted mb-2" id="plantillaExcelEstado">Abre esta pestaña para ver qué plantilla está activa.</p>
+                  <div class="admin-field mb-2">
+                    <label>Archivo .xlsx</label>
+                    <input type="file" id="inputPlantillaExcel" class="form-control form-control-sm" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+                  </div>
+                  <div class="admin-actions mb-3">
+                    <button type="button" id="btnPublicarPlantillaExcel" class="btn admin-btn admin-btn-primary" onclick="analizarYPublicarPlantillaExcel()"><i class="bi bi-upload me-1"></i>Analizar y publicar</button>
+                  </div>
+                  <pre class="small bg-light border rounded p-2 mb-0" id="plantillaExcelAnalisis" style="white-space:pre-wrap;max-height:220px;overflow:auto;">Aún no se ha analizado un archivo.</pre>
+                </div>
+              </section>
+            </div>
           </div>
         </div>
-        <div class="modal-footer bg-light">
-          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
-          <button type="button" class="btn btn-primary btn-sm fw-bold" onclick="guardarConfiguracion()">Guardar Configuración</button>
+        <div class="modal-footer sb-modal-footer">
+          <span class="small text-muted me-auto d-none d-md-inline">Los cambios aplican a toda la empresa.</span>
+          <button type="button" class="btn admin-btn" data-bs-dismiss="modal">Cerrar</button>
+          <button type="button" class="btn admin-btn admin-btn-primary" onclick="guardarConfiguracion()">Guardar</button>
         </div>
       </div>
     </div>
@@ -226,11 +644,14 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   
-  <script src="admin.js"></script>
-    <script src="seguridad.js"></script>
-    <script src="app.js"></script>
-  <script src="engine.js"></script>
-  <script src="connectors.js"></script>
+  <script src="admin.js?v=1.0.18"></script>
+    <script src="seguridad.js?v=1.0.18"></script>
+    <script src="app.js?v=1.0.18"></script>
+  <script src="engine.js?v=1.0.18"></script>
+  <script src="connectors.js?v=1.0.18"></script>
+  <script src="ia-core.js?v=1.0.18"></script>
+  <script src="export-excel.js?v=1.0.18"></script>
 </body>
 </html>
