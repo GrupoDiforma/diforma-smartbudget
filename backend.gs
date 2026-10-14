@@ -1377,8 +1377,9 @@ function ordenarModelosPorPotencia(modelos) {
 }
 
 function periodoUsoGemini_() {
-  var d = new Date();
-  return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2);
+  var tz = "America/Bogota";
+  try { tz = Session.getScriptTimeZone() || tz; } catch (e) {}
+  return Utilities.formatDate(new Date(), tz, "yyyy-MM");
 }
 
 function esErrorCupoGemini_(msg) {
@@ -1403,40 +1404,117 @@ function cupoTokensConfig_() {
   return tarifasGeminiConfig_().cupoTokens;
 }
 
-function leerUsoGemini_() {
-  var periodo = periodoUsoGemini_();
-  var empty = {
-    periodo: periodo, llamadas: 0, tokensIn: 0, tokensOut: 0, tokensTotal: 0,
+function usoGeminiVacio_(periodo) {
+  return {
+    periodo: periodo || periodoUsoGemini_(),
+    llamadas: 0, tokensIn: 0, tokensOut: 0, tokensTotal: 0,
     ultimoModelo: "", ultima: "", ultimoError: "", ultimoEstado: "ok", cupoAgotado: false
   };
+}
+
+function filaUsoDesdeValores_(row) {
+  return {
+    periodo: String(row[0] || ""),
+    llamadas: Number(row[1]) || 0,
+    tokensIn: Number(row[2]) || 0,
+    tokensOut: Number(row[3]) || 0,
+    tokensTotal: Number(row[4]) || 0,
+    ultimoModelo: String(row[5] || ""),
+    ultima: String(row[6] || ""),
+    ultimoError: String(row[7] || ""),
+    ultimoEstado: String(row[8] || "ok"),
+    cupoAgotado: row[9] === true || String(row[9]) === "true"
+  };
+}
+
+function hojaUsoGemini_() {
+  var ss = libroHistorico_();
+  var sh = ss.getSheetByName("Gemini_Uso");
+  if (!sh) {
+    sh = ss.insertSheet("Gemini_Uso");
+    sh.appendRow(["periodo", "llamadas", "tokensIn", "tokensOut", "tokensTotal", "ultimoModelo", "ultima", "ultimoError", "ultimoEstado", "cupoAgotado"]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function leerUsoDeProps_(periodo) {
   var raw = PropertiesService.getScriptProperties().getProperty("GEMINI_USO_V1");
-  if (!raw) return empty;
+  if (!raw) return null;
   try {
     var o = JSON.parse(raw);
-    if (!o || o.periodo !== periodo) return empty;
+    if (!o || o.periodo !== periodo) return null;
     return o;
-  } catch (e) { return empty; }
+  } catch (e) { return null; }
+}
+
+function leerUsoGemini_() {
+  var periodo = periodoUsoGemini_();
+  var empty = usoGeminiVacio_(periodo);
+  try {
+    var sh = hojaUsoGemini_();
+    var data = sh.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === periodo) return filaUsoDesdeValores_(data[i]);
+    }
+    var migrado = leerUsoDeProps_(periodo);
+    if (migrado) {
+      guardarUsoGemini_(migrado);
+      return migrado;
+    }
+  } catch (e) {
+    var fallback = leerUsoDeProps_(periodo);
+    if (fallback) return fallback;
+  }
+  return empty;
+}
+
+function guardarUsoGemini_(o) {
+  o.tokensTotal = (Number(o.tokensIn) || 0) + (Number(o.tokensOut) || 0);
+  var vals = [[
+    o.periodo, o.llamadas, o.tokensIn, o.tokensOut, o.tokensTotal,
+    o.ultimoModelo || "", o.ultima || "", o.ultimoError || "", o.ultimoEstado || "ok", !!o.cupoAgotado
+  ]];
+  try {
+    var sh = hojaUsoGemini_();
+    var data = sh.getDataRange().getValues();
+    var f = -1;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === String(o.periodo)) { f = i + 1; break; }
+    }
+    if (f > 0) sh.getRange(f, 1, 1, 10).setValues(vals);
+    else sh.appendRow(vals[0]);
+  } catch (e) {}
+  try {
+    PropertiesService.getScriptProperties().setProperty("GEMINI_USO_V1", JSON.stringify(o));
+  } catch (e2) {}
 }
 
 function registrarUsoGemini_(patch) {
-  var o = leerUsoGemini_();
-  if (patch.tokensIn) o.tokensIn += Number(patch.tokensIn) || 0;
-  if (patch.tokensOut) o.tokensOut += Number(patch.tokensOut) || 0;
-  o.tokensTotal = o.tokensIn + o.tokensOut;
-  if (patch.llamada) o.llamadas += 1;
-  if (patch.modelo) o.ultimoModelo = patch.modelo;
-  o.ultima = new Date().toISOString();
-  if (patch.error) {
-    o.ultimoError = String(patch.error).slice(0, 400);
-    o.ultimoEstado = esErrorCupoGemini_(patch.error) ? "cupo" : "error";
-    o.cupoAgotado = o.ultimoEstado === "cupo";
-  } else if (patch.ok) {
-    o.ultimoError = "";
-    o.ultimoEstado = "ok";
-    o.cupoAgotado = false;
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(15000); } catch (eLock) {}
+  try {
+    var o = leerUsoGemini_();
+    if (patch.tokensIn) o.tokensIn += Number(patch.tokensIn) || 0;
+    if (patch.tokensOut) o.tokensOut += Number(patch.tokensOut) || 0;
+    o.tokensTotal = o.tokensIn + o.tokensOut;
+    if (patch.llamada) o.llamadas += 1;
+    if (patch.modelo) o.ultimoModelo = patch.modelo;
+    o.ultima = new Date().toISOString();
+    if (patch.error) {
+      o.ultimoError = String(patch.error).slice(0, 400);
+      o.ultimoEstado = esErrorCupoGemini_(patch.error) ? "cupo" : "error";
+      o.cupoAgotado = o.ultimoEstado === "cupo";
+    } else if (patch.ok) {
+      o.ultimoError = "";
+      o.ultimoEstado = "ok";
+      o.cupoAgotado = false;
+    }
+    guardarUsoGemini_(o);
+    return o;
+  } finally {
+    try { lock.releaseLock(); } catch (eRel) {}
   }
-  PropertiesService.getScriptProperties().setProperty("GEMINI_USO_V1", JSON.stringify(o));
-  return o;
 }
 
 function obtenerUsoGemini() {

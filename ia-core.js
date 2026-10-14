@@ -451,7 +451,7 @@ window.limpiarMesaDeTrabajo = function() {
 
 async function obtenerCatalogoDriveTexto() {
     try {
-        const data = await realizarPeticionBD({ action: 'catalogo_maestro' });
+        const data = await realizarPeticionBD({ action: 'catalogo_maestro' }, { timeoutMs: 60000 });
         if (!data.exito || !data.data) return '';
         const lineas = data.data.lineas || [];
         if (!lineas.length) return 'Catalogo_Maestro vacío. Un admin debe pulsar "Sincronizar catálogo desde Drive" en Ajustes.';
@@ -463,18 +463,18 @@ async function obtenerCatalogoDriveTexto() {
 
 window.reiniciarSesionIA = window.limpiarMesaDeTrabajo;
 
-async function llamarGeminiConImagenes(promptTexto) {
+async function llamarGeminiConImagenes(promptTexto, timeoutMs) {
     const forzarPro = document.getElementById('togglePro')?.checked || false;
     const parts = [{ text: promptTexto }];
     (window.archivosGemaBase64 || []).forEach(f => parts.push({ inlineData: { mimeType: f.mimeType, data: f.data } }));
-    const data = await realizarPeticionBD({ action: 'gemini_analizar', forzarPro: forzarPro, parts: parts });
+    const data = await realizarPeticionBD({ action: 'gemini_analizar', forzarPro: forzarPro, parts: parts }, { timeoutMs: timeoutMs || 180000 });
     pintarUsoGemini(data && data.uso);
     return data;
 }
 
-async function llamarGeminiChat(promptTexto) {
+async function llamarGeminiChat(promptTexto, timeoutMs) {
     const forzarPro = document.getElementById('togglePro')?.checked || false;
-    const data = await realizarPeticionBD({ action: 'gemini_chat', forzarPro: forzarPro, promptText: promptTexto });
+    const data = await realizarPeticionBD({ action: 'gemini_chat', forzarPro: forzarPro, promptText: promptTexto }, { timeoutMs: timeoutMs || 120000 });
     pintarUsoGemini(data && data.uso);
     return data;
 }
@@ -500,12 +500,12 @@ function pintarUsoGemini(uso) {
     if (wrap) {
         wrap.classList.remove("ok", "warn", "crit");
         wrap.classList.add(agotado || pct >= 95 ? "crit" : (pct >= 80 ? "warn" : "ok"));
-        wrap.title = "Estimado de esta app (tokens × tarifa de Ajustes) contra el presupuesto que recargas. Google no publica el saldo real de la API.";
+        wrap.title = "Consumo de toda la empresa este mes (tokens × tarifa de Ajustes). El mismo número para todos. Google no publica el saldo real de la API.";
     }
     if (txt) {
-        if (agotado) txt.textContent = "Gemini sin crédito";
-        else if (cupoUsd > 0 && !isNaN(usd)) txt.textContent = "Gemini " + pct + "% · ~US$" + usd.toFixed(2) + " / " + cupoUsd;
-        else txt.textContent = "Gemini " + pct + "% · " + fmtTokens(uso.tokensTotal) + "/" + fmtTokens(uso.cupoTokens);
+        if (agotado) txt.textContent = "Equipo · Gemini sin crédito";
+        else if (cupoUsd > 0 && !isNaN(usd)) txt.textContent = "Equipo " + pct + "% · ~US$" + usd.toFixed(2) + " / " + cupoUsd;
+        else txt.textContent = "Equipo " + pct + "% · " + fmtTokens(uso.tokensTotal) + "/" + fmtTokens(uso.cupoTokens);
     }
     if (alerta) {
         if (agotado) {
@@ -555,7 +555,7 @@ window.procesarPlanoIA = async function() {
             ? `\nYa hay matriz y/o chat. NO reinicies la entrevista. Resume el análisis. Si el costeo está listo, pide que pulse Generar matriz.\n=== MATRIZ ACTUAL ===\n${JSON.stringify({ rangos: (typeof lotesSimulacion !== "undefined" ? lotesSimulacion.map(function (l) { return l.q; }) : [1]), items: (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []) })}\n=== HISTORIAL ===\n${historialComoTexto()}`
             : "\nInicia la Fase 1.";
         const promptTexto = `${instruccionesFase(hayItems ? "ajustes" : "entrevista")}\n\nEl analista acaba de cargar ${window.archivosGemaBase64.length} archivo(s).${extra}`;
-        const data = await llamarGeminiConImagenes(promptTexto);
+        const data = await llamarGeminiConImagenes(promptTexto, 180000);
         document.getElementById(typingId)?.remove();
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
@@ -602,8 +602,8 @@ window.enviarMensajeChat = async function() {
     try {
         const promptTexto = `${instruccionesFase(modo)}\n\n=== HISTORIAL ===\n${historialComoTexto()}\n\n=== ÚLTIMO MENSAJE DEL ANALISTA ===\n${msg}`;
         const data = (window.archivosGemaBase64?.length)
-            ? await llamarGeminiConImagenes(promptTexto)
-            : await llamarGeminiChat(promptTexto);
+            ? await llamarGeminiConImagenes(promptTexto, 180000)
+            : await llamarGeminiChat(promptTexto, 120000);
         document.getElementById(typingId)?.remove();
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
@@ -641,13 +641,16 @@ window.generarMatrizIA = async function(opts) {
     const original = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generando...'; }
     if (!opts.desdeChat) {
-        pintarMensaje('user', 'Generar matriz de costos');
-        window.historialChatIA.push({ role: 'user', text: 'Generar matriz de costos' });
+        const last = (window.historialChatIA || [])[(window.historialChatIA || []).length - 1];
+        if (!(last && last.role === "user" && /generar matriz/i.test(last.text || ""))) {
+            pintarMensaje('user', 'Generar matriz de costos');
+            window.historialChatIA.push({ role: 'user', text: 'Generar matriz de costos' });
+        }
     }
     const typingId = 'typing_' + Date.now();
     const box = chatBoxEl();
     if (box) {
-        box.innerHTML += `<div id="${typingId}" class="text-start mb-2"><span class="text-muted" style="font-size:0.8rem;"><span class="spinner-border spinner-border-sm"></span> Consultando Drive y generando matriz...</span></div>`;
+        box.innerHTML += `<div id="${typingId}" class="text-start mb-2"><span class="text-muted" style="font-size:0.8rem;"><span class="spinner-border spinner-border-sm"></span> Generando matriz (puede tardar 1–2 min)...</span></div>`;
         box.scrollTop = box.scrollHeight;
     }
     try {
@@ -662,8 +665,8 @@ Materiales (tubos, ángulos, láminas, alambre, perfiles): busca en el catálogo
 === HISTORIAL ===
 ${historialComoTexto()}`;
         const data = hayArchivos
-            ? await llamarGeminiConImagenes(promptTexto)
-            : await llamarGeminiChat(promptTexto);
+            ? await llamarGeminiConImagenes(promptTexto, 180000)
+            : await llamarGeminiChat(promptTexto, 180000);
         document.getElementById(typingId)?.remove();
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
@@ -694,6 +697,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     actualizarBotonGenerar();
     if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
+    setInterval(function () {
+        if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
+    }, 40000);
     const tog = document.getElementById("togglePro");
     if (tog) tog.addEventListener("change", function () {
         if (tog.checked) ocultarHintGeminiPro();
