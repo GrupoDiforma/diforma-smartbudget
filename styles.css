@@ -325,7 +325,7 @@ html, body { overflow-x: hidden; }
     background: #fff;
     color: var(--sb-text);
     border-bottom: 1px solid var(--sb-line);
-    border-top: 3px solid var(--diforma-red);
+    border-top: 10px solid var(--diforma-red);
     padding: 16px 20px;
     align-items: flex-start;
     cursor: grab;
