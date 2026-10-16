@@ -27,7 +27,7 @@
         <div class="d-flex align-items-center gap-2">
           <button type="button" class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirCatalogoConsulta()"><i class="bi bi-book me-1"></i>Catálogo</button>
           <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirModalAdmin()"><i class="bi bi-gear me-1"></i>Ajustes</button>
-          <span class="app-version" id="appVersionBadge" title="Versión de la app">V1.0.28</span>
+          <span class="app-version" id="appVersionBadge" title="Versión de la app">V1.0.29</span>
         </div>
       </div>
       
@@ -324,6 +324,21 @@
                   </div>
                   <div id="logEscPanel" class="log-esc-panel d-none"></div>
                   <div id="logFilasLista" class="log-filas-lista"></div>
+                </section>
+                <section class="log-card" id="logComisionCard">
+                  <h6>Comisión de venta</h6>
+                  <p class="text-muted small mb-2">Es la comisión de esta cotización. El precio de venta sale del presupuesto y aquí se ajusta al momento: si la bajas, el precio baja; si la subes, sube. En cero queda el precio base, sin comisión. Fletes, montaje, instalación y los demás costos logísticos no cambian y no entran en la liquidación.</p>
+                  <div class="log-doc-grid">
+                    <div>
+                      <label class="form-label small mb-1" for="logComisionSel">Perfil</label>
+                      <select id="logComisionSel" class="form-select form-select-sm" title="Lista de Ajustes. Otro % permite un porcentaje distinto."></select>
+                    </div>
+                    <div>
+                      <label class="form-label small mb-1" for="logComisionPct">%</label>
+                      <input type="number" id="logComisionPct" class="form-control form-control-sm text-end" min="0" max="100" step="0.1" value="0">
+                    </div>
+                  </div>
+                  <div id="logComisionValores" class="mt-2"></div>
                 </section>
                 <section class="log-card">
                   <h6>Envío</h6>
@@ -1087,6 +1102,6 @@
   <script src="connectors.js?v=1.0.27"></script>
   <script src="ia-core.js?v=1.0.29"></script>
   <script src="export-excel.js?v=1.0.30"></script>
-  <script src="logistica.js?v=1.0.54"></script>
+  <script src="logistica.js?v=1.0.58"></script>
 </body>
 </html>

@@ -44,7 +44,7 @@ Mantener módulos independientes. Todo módulo nuevo (ej. `logistica.js`, `ia-co
 | `connectors.js` | Odoo CRM/productos, archivos adjuntos, locale del Brief (`idioma`, `tipo_medida`, país) y ficha comercial (UI) |
 | `ia-core.js` | Chat único, entrevista, generar matriz, rellenar ficha comercial |
 | `export-excel.js` | Rellena la plantilla .xlsx Diforma (EXP/NAL). Duplica pestañas por versión y, si hay candados, clona AUX con el mismo formato. Publica plantilla desde Admin → Conexiones |
-| `logistica.js` | Cotización PDF (Etapa 1) + Etapa 2 Paso 1: Incoterm, destino, cubicaje desde ficha y líneas de envío a mano. No meter flete/IA en `engine.js` ni `ia-core.js`. |
+| `logistica.js` | Cotización PDF, envío (Incoterm, destino, costos) y ficha **Comisión de venta** de esta cotización. No meter flete ni comisión en `engine.js` ni `ia-core.js`. |
 | `backend.gs` | Proxy GAS (Sheets, catálogo, Odoo, Gemini, OTP, Drive, plantilla Excel, cotizaciones) |
 | `config.json` | Config de cliente (sin secretos) |
 
@@ -243,9 +243,9 @@ Módulo `logistica.js`. Hoja **Carta**, iframe `srcdoc`, PDF = impresión nativa
 
 #### Etapa 2 — Envío real
 
-**Paso 1 (borrador en local, 15 oct).** Incoterm corto, destino, cubicaje y una fila de envío libre. Sirve de base. El formato acordado abajo lo reemplaza cuando Edwin pida el código.
+**Paso 1 (publicado en V1.0.29).** Incoterm, destino, cubicaje, filas de costo, el formato de abajo y la ficha de comisión.
 
-**Formato acordado (diseño, sin código aún).** Dos bloques y un gran total.
+**Formato en uso.** Dos bloques y un gran total.
 
 - Bloque proyectos (exportación): subtotal por defecto **PRECIO SUBTOTAL EXWORKS (USD)** (precio en planta). El texto del subtotal es editable.
 - Bloque logística aparte, con su subtotal (título editable). Las filas salen de la matriz según Incoterm × modalidad. El comercial llena el valor. Siempre puede agregar una **fila libre**.
@@ -276,7 +276,19 @@ Matriz vendedor (Sí = la fila existe):
 
 En aéreo, “Flete interno = Sí” no abre fila: ese terrestre ya va dentro de Costos en origen.
 
-**Aún sin diseñar:** maestro de tarifas, IA de flete, márgenes logísticos en Ajustes, comisión sin base logística, contenedor y peso. Plan antes de código.
+#### Comisión de venta (publicada en V1.0.29)
+
+Ficha en Logística, entre Proyectos y Envío. El presupuesto trae el precio con la comisión con la que se calculó (`pctBase` / `snap.pctCom`). El % de la ficha lo reemplaza solo en esta cotización y el precio de la hoja cambia al momento. En cero queda el precio base, sin comisión. Subir el % suma esa comisión sobre esa base, no encima de la comisión vieja. Fórmula del precio: `precioGuardado × (100 + % nuevo + fee) / (100 + % origen + fee)`. El fee no se edita aquí.
+
+La liquidación (`valor = subtotal de proyectos × % / (100 + % + fee)`) usa el precio de venta de los proyectos, sin flete. Fletes, montaje, instalación, bodegaje y el resto no entran y no se mueven al cambiar el %. Un arancel o impuesto dejado en % sigue el precio del presupuesto, no el precio ya ajustado por la comisión de la ficha.
+
+**Una línea.** El gran total no cambia. El % visible queda como logística; el resto se reparte en los productos solo para la impresión, en proporción al precio de venta de cada uno (ya con la comisión de la ficha, todavía sin flete). La comisión no lee el precio impreso. Ejemplo: venta $110 + flete escondido $30 → la fila muestra $140 y la comisión se liquida sobre $110.
+
+**Precio a mano.** Si la fila lleva flete prorrateado, el precio unitario de la hoja no se edita (`.pu-lock`). Cantidad, textos y el precio en modo Detalle siguen editables. Para cambiar el precio de venta hay que pasar los costos a Detalle.
+
+Al guardar, `datos.comision` (`pct`, `pctBase`, `fee`) y `snap.pctCom` van en el JSON. El total de la lista es el gran total ya ajustado. Reabrir la revisión restaura % y precios. Una cotización vieja, sin ese bloque, asume que la comisión ahora seleccionada en Costos es la que está dentro del precio: no salta hasta que se cambie el %.
+
+**Aún sin diseñar:** maestro de tarifas, IA de flete, márgenes logísticos en Ajustes, contenedor y peso. Partir el JSON del presupuesto (una celda, tope 50.000) queda para cuando Edwin pida el plan. No codear eso en el siguiente paso.
 
 ### Recordatorios operativos
 
@@ -289,13 +301,13 @@ En aéreo, “Flete interno = Sí” no abre fila: ese terrestre ya va dentro de
 
 ---
 
-## CHECKPOINT — 15 oct 2026 (publicado en GitHub Pages)
+## CHECKPOINT — 16 oct 2026
 
-Ingeniería + Excel + PDF Etapa 1 + **Etapa 2 Paso 1** (Incoterm / destino / cubicaje / envío a mano). Publicado en `main` / `desarrollo` como **V1.0.28**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` sigue pidiéndose a mano en Apps Script. El aviso OTP ya no se recarga solo si la nube responde “no autorizado” antes de entrar.
+Producción (`main` y `desarrollo`): **V1.0.29**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` del repo sigue pidiéndose a mano en Apps Script (cotizaciones, imágenes Odoo, anchos). La ficha de comisión no lo necesita.
 
-**Caché UI (index.html):** `styles.css 1.0.47` · `admin.js 1.0.29` · `app.js 1.0.32` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.54`.
+**Caché publicada:** `styles.css 1.0.47` · `admin.js 1.0.29` · `app.js 1.0.32` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.58` · `seguridad.js 1.0.25`. `propuestas-ui/` no entra en commits.
 
-Si Ajustes no logra leer la hoja, el aviso queda visible y **Guardar** queda apagado (`_configHojaFallo`). La copia de `config.json` no puede reemplazar `Configuracion_Global`. Historial de Costos y lista de cotizaciones se muestran al instante con la última lista de ese teléfono y se actualizan detrás. Las fotos de una cotización guardada salen por enlace de Drive; el archivo completo solo se pide al editar la imagen. Partir el JSON del presupuesto sigue pendiente. Publicado en **V1.0.28** sin cambios en `backend.gs`.
+Si Ajustes no logra leer la hoja, el aviso queda visible y **Guardar** queda apagado (`_configHojaFallo`). Historial de Costos y lista de cotizaciones se muestran al instante con la última lista de ese teléfono y se actualizan detrás. Las fotos salen por enlace de Drive; el archivo completo solo se pide al editar la imagen.
 
 **Hecho y validado con Edwin (sesión 15 oct):**
 
@@ -313,7 +325,7 @@ Si Ajustes no logra leer la hoja, el aviso queda visible y **Guardar** queda apa
 1. Edwin pega `backend.gs` en Apps Script si aún no lo hizo (`guardar_anchos_matriz`).
 2. **Paso 8 Etapa 1:** validar 3 PDF reales (membrete, textos, gran total según mercado, orden, nombre de archivo).
 3. Si Ajustes en Sheets se ve raro: **no pulsar Guardar**; el agente no debe `guardar_config`.
-4. Etapa 2: el formato está en local (`logistica.js 1.0.52`, `styles.css 1.0.47`). El tipo Nacional o Exportación se elige en Logística y no depende del mercado abierto en Costos. La pestaña queda en dos columnas (controles | hojas Carta) con zoom para ver la hoja completa. País y código usan lista anclada al campo. Filas de costo se arrastran, duplican y quitan; Restaurar vuelve a la plantilla del Incoterm. El gran total siempre muestra la moneda; al editarlo las letras pasan a negro y al salir vuelven a blanco. DDP imprime Costos en destino aunque el valor esté en cero. Una página que solo sigue con envíos no repite el encabezado de proyectos. Idioma y sistema de medidas se heredan del proyecto y se pueden cambiar solo en la cotización. Maestro, IA y márgenes logísticos siguen sin diseñar.
+4. Etapa 2 en V1.0.29: tipo Nacional o Exportación en Logística, independiente del mercado de Costos. Comisión de venta en la cotización y precio unitario bloqueado cuando la fila lleva flete prorrateado. Dos columnas (controles | hojas Carta), zoom, país y código con lista, filas que se arrastran, duplican y quitan, Restaurar vuelve a la plantilla. El gran total siempre muestra la moneda; al editarlo las letras pasan a negro y al salir vuelven a blanco. DDP imprime Costos en destino aunque el valor esté en cero. Una página que solo sigue con envíos no repite el encabezado de proyectos. Idioma y sistema se heredan del proyecto y se pueden cambiar solo en la cotización. No partir presupuestos ni empezar maestro de tarifas, IA de flete o márgenes logísticos hasta que Edwin lo pida.
 
-**Nuevo chat:** arrancar con: *«Lee `CONTEXTO_PROYECTO.md` (checkpoint 15 oct 2026) y continúa desde ahí»* + la tarea concreta. No reabrir Excel/AUX/candados salvo regresión.
+**Nuevo chat:** *«Lee `CONTEXTO_PROYECTO.md` (checkpoint 16 oct 2026) y continúa desde ahí»* + la tarea concreta. No reabrir Excel, AUX, candados, OTP ni Ajustes salvo regresión.
 
