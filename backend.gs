@@ -35,11 +35,18 @@ function doPost(e) {
 
     var result = { exito: false, mensaje: "Acción no válida" };
     if (action === "guardar_config") result = guardarConfiguracionGlobal(params.payload, params.email);
+    else if (action === "guardar_anchos_matriz") result = guardarAnchosMatriz(params.anchos, params.email);
     else if (action === "guardar") result = guardarPresupuestoBD(params.payload);
     else if (action === "listar") result = listarPresupuestosBD();
     else if (action === "obtener") result = obtenerProyectoPorId(params.id);
     else if (action === "eliminar") result = eliminarRegistroHistorico(params.id);
     else if (action === "odoo_buscar") result = proxyOdooBuscar(params.codigo);
+    else if (action === "odoo_cotizacion_datos") result = proxyOdooCotizacionDatos(params.codigo);
+    else if (action === "odoo_imagen_proyecto") result = proxyOdooImagenProyecto(params.codigo, params.campo);
+    else if (action === "guardar_cotizacion") result = guardarCotizacionBD(params, params.email);
+    else if (action === "listar_cotizaciones") result = listarCotizacionesBD();
+    else if (action === "obtener_cotizacion") result = obtenerCotizacionBD(params.id, params.rev);
+    else if (action === "cotizacion_imagenes") result = imagenesCotizacionBD(params.ids, params.modo);
     else if (action === "odoo_productos") result = proxyOdooProductos(params.query);
     else if (action === "gemini_analizar") result = proxyGeminiAnalizar(params);
     else if (action === "gemini_chat") result = proxyGeminiChat(params);
@@ -119,6 +126,24 @@ function guardarConfiguracionGlobal(configData, email) {
   return {exito: true, mensaje: "Configuración global actualizada para toda la empresa."};
 }
 
+function guardarAnchosMatriz(anchos, email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+    return { exito: false, mensaje: "Permisos insuficientes." };
+  }
+  var sheet = obtenerHojaConfig();
+  var data = sheet.getDataRange().getValues();
+  var cfg = {};
+  if (data.length > 1 && data[1][1]) {
+    try { cfg = JSON.parse(data[1][1]); } catch (e) { cfg = {}; }
+  }
+  cfg.anchosMatriz = (anchos && typeof anchos === "object") ? anchos : {};
+  var fechaHoy = new Date().toISOString().replace("T", " ").substring(0, 19);
+  var jsonStr = JSON.stringify(cfg);
+  if (data.length > 1) { sheet.getRange(2, 2, 1, 3).setValues([[jsonStr, fechaHoy, email]]); }
+  else { sheet.appendRow(["CONF_MAESTRA", jsonStr, fechaHoy, email]); }
+  return { exito: true, mensaje: "Anchos de matriz guardados para toda la empresa." };
+}
+
 // ==========================================
 // PROXY ODOO ERP
 // ==========================================
@@ -172,8 +197,506 @@ function odooSearchRead_(model, domain, fields, limit, offset, order) {
 }
 
 function proxyOdooBuscar(codigo) {
-  var records = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], ["name", "partner_id", "user_id", "id_vendedor", "create_date", "pricelist_id", "id_disenador", "id_presupuestador"], 1, 0, "");
+  var records = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], [
+    "name", "partner_id", "user_id", "id_vendedor", "create_date", "pricelist_id",
+    "id_disenador", "id_presupuestador", "idioma", "lang_code", "lang_id",
+    "country_id", "tipo_medida", "funcionales", "dim_diseno", "obs_presupuesto"
+  ], 1, 0, "");
   return (!records || records.length === 0) ? {exito: false, mensaje: "No encontrada"} : {exito: true, data: records[0]};
+}
+
+// ==========================================
+// COTIZACIÓN PDF: contacto del cliente + datos del comercial (firma)
+// Acción independiente de odoo_buscar: no la hace más lenta. Solo lee campos que
+// existan en tu Odoo; lo que falte vuelve vacío y se avisa en "avisos".
+// ==========================================
+function odooCamposExistentes_(model, campos) {
+  var c = odooCredenciales_();
+  var uid = odooUid_();
+  var meta = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, model, "fields_get", [campos], { attributes: ["type", "relation"] }]);
+  return meta || {};
+}
+
+function odooLeerRegistro_(model, id, campos) {
+  var meta = odooCamposExistentes_(model, campos);
+  var ok = campos.filter(function (f) { return meta[f]; });
+  if (!ok.length) return {};
+  var c = odooCredenciales_();
+  var uid = odooUid_();
+  var r = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, model, "read", [[id]], { fields: ok }]);
+  return (r && r[0]) || {};
+}
+
+function odooTexto_(v) {
+  if (v === false || v === null || v === undefined) return "";
+  return String(v).trim();
+}
+
+function odooRelId_(v) {
+  if (v && v.length) return v[0];
+  return typeof v === "number" ? v : 0;
+}
+
+/** Persona desde res.partner, res.users o hr.employee → {nombre, cargo, correo, telefono, web}. */
+function odooPersona_(model, id) {
+  var out = { nombre: "", cargo: "", correo: "", telefono: "", web: "" };
+  if (!model || !id) return out;
+  var rec = odooLeerRegistro_(model, id, [
+    "name", "function", "job_title", "email", "work_email", "phone", "mobile", "work_phone", "mobile_phone", "website", "partner_id"
+  ]);
+  out.nombre = odooTexto_(rec.name);
+  out.cargo = odooTexto_(rec.function || rec.job_title);
+  out.correo = odooTexto_(rec.email || rec.work_email);
+  out.telefono = odooTexto_(rec.phone || rec.work_phone || rec.mobile || rec.mobile_phone);
+  out.web = odooTexto_(rec.website);
+  var pid = odooRelId_(rec.partner_id);
+  if (pid && model !== "res.partner" && (!out.cargo || !out.web || !out.telefono || !out.correo)) {
+    var p = odooLeerRegistro_("res.partner", pid, ["function", "website", "phone", "mobile", "email"]);
+    if (!out.cargo) out.cargo = odooTexto_(p["function"]);
+    if (!out.web) out.web = odooTexto_(p.website);
+    if (!out.telefono) out.telefono = odooTexto_(p.phone || p.mobile);
+    if (!out.correo) out.correo = odooTexto_(p.email);
+  }
+  return out;
+}
+
+function proxyOdooCotizacionDatos(codigo) {
+  codigo = String(codigo || "").trim();
+  if (!codigo) return { exito: false, mensaje: "Falta el código del proyecto." };
+  var pedidos = ["name", "partner_id", "contact_id", "id_vendedor", "user_id", "contact_name", "partner_name", "email_from", "phone", "function"];
+  var meta = odooCamposExistentes_("crm.lead", pedidos);
+  var campos = pedidos.filter(function (f) { return meta[f]; });
+  var recs = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], campos, 1, 0, "");
+  if (!recs || !recs.length) return { exito: false, mensaje: "No encontrada" };
+  var lead = recs[0];
+  var avisos = [];
+
+  var contacto = { nombre: "", cargo: "", correo: "", telefono: "" };
+  if (meta.contact_id && lead.contact_id) {
+    var pc = odooPersona_(meta.contact_id.relation || "res.partner", odooRelId_(lead.contact_id));
+    contacto = { nombre: pc.nombre, cargo: pc.cargo, correo: pc.correo, telefono: pc.telefono };
+  } else {
+    contacto.nombre = odooTexto_(lead.contact_name);
+    contacto.cargo = odooTexto_(lead["function"]);
+    contacto.correo = odooTexto_(lead.email_from);
+    contacto.telefono = odooTexto_(lead.phone);
+  }
+  if (!contacto.nombre) avisos.push("Odoo no trae el nombre del contacto.");
+  else if (!contacto.cargo) avisos.push("El contacto no tiene cargo en Odoo.");
+
+  var comercial = { nombre: "", cargo: "", correo: "", telefono: "", web: "" };
+  if (meta.id_vendedor && lead.id_vendedor) {
+    comercial = odooPersona_(meta.id_vendedor.relation || "res.users", odooRelId_(lead.id_vendedor));
+  } else if (meta.user_id && lead.user_id) {
+    comercial = odooPersona_("res.users", odooRelId_(lead.user_id));
+  }
+  if (!comercial.nombre) avisos.push("Odoo no trae el comercial del proyecto.");
+  else if (!comercial.cargo || !comercial.correo || !comercial.telefono) avisos.push("A la firma le faltan datos del comercial (cargo, correo o teléfono).");
+
+  var nombre = odooTexto_(lead.name);
+  return {
+    exito: true,
+    data: {
+      codigoProyecto: nombre.split(" ")[0],
+      nombreProyecto: nombre,
+      cliente: lead.partner_id ? String(lead.partner_id[1] || "") : "",
+      contacto: contacto,
+      comercial: comercial,
+      avisos: avisos
+    }
+  };
+}
+
+// ==========================================
+// COTIZACIÓN PDF: imagen del proyecto (campo binario de crm.lead)
+// No hace falta saber el nombre del campo: busca los campos binarios del lead,
+// prueba primero las versiones pequeñas (image_256, image_128…) y devuelve la
+// primera imagen que tenga contenido. En "candidatos" lista lo que encontró,
+// para poder fijar el campo correcto si hay más de uno.
+// ==========================================
+function odooMimeImagen_(b64) {
+  var h = String(b64 || "").substring(0, 12);
+  if (h.indexOf("/9j/") === 0) return "image/jpeg";
+  if (h.indexOf("iVBOR") === 0) return "image/png";
+  if (h.indexOf("R0lGOD") === 0) return "image/gif";
+  if (h.indexOf("UklGR") === 0) return "image/webp";
+  if (h.indexOf("PHN2Zy") === 0 || h.indexOf("PD94") === 0) return "image/svg+xml";
+  return "image/jpeg";
+}
+
+function proxyOdooImagenProyecto(codigo, campoForzado) {
+  codigo = String(codigo || "").trim();
+  if (!codigo) return { exito: false, mensaje: "Falta el código del proyecto." };
+  var c = odooCredenciales_();
+  var uid = odooUid_();
+  var meta = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, "crm.lead", "fields_get", [[]], { attributes: ["type", "string"] }]) || {};
+  var binarios = Object.keys(meta).filter(function (f) {
+    return meta[f].type === "binary" && !/_filename$|_name$/.test(f);
+  });
+  var prioridad = function (f) {
+    var m = f.match(/^image_(\d+)$/);
+    if (m) return 100 - Math.min(99, Math.round(Number(m[1]) / 20)); // 128, 256, 512... de menor a mayor
+    if (/imagen|image|foto|render|thumb/i.test(f + " " + (meta[f].string || ""))) return 10;
+    return 1;
+  };
+  binarios.sort(function (a, b) { return prioridad(b) - prioridad(a); });
+  if (campoForzado && meta[campoForzado]) binarios = [campoForzado];
+  if (!binarios.length) return { exito: false, mensaje: "El modelo crm.lead no tiene campos de imagen.", candidatos: [] };
+
+  var ids = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], ["name"], 1, 0, "");
+  if (!ids || !ids.length) return { exito: false, mensaje: "No encontrada" };
+  var id = ids[0].id;
+
+  var vistos = [];
+  for (var i = 0; i < binarios.length && i < 8; i++) {
+    var f = binarios[i];
+    var r = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, "crm.lead", "read", [[id]], { fields: [f] }]);
+    var b64 = r && r[0] && r[0][f];
+    vistos.push(f + (b64 ? "" : " (vacío)"));
+    if (b64 && typeof b64 === "string") {
+      return {
+        exito: true,
+        data: {
+          campo: f,
+          etiqueta: meta[f].string || f,
+          mime: odooMimeImagen_(b64),
+          base64: b64,
+          kb: Math.round(b64.length * 0.75 / 1024),
+          candidatos: vistos
+        }
+      };
+    }
+  }
+  return { exito: false, mensaje: "El proyecto no tiene imagen en: " + vistos.join(", "), candidatos: vistos };
+}
+
+// ==========================================
+// COTIZACIONES: historial en la hoja "Cotizaciones" + imágenes en Drive
+// - Una fila por revisión. ID (C-00001) identifica la cotización; Rev sube cada vez
+//   que se guarda una revisión de una cotización abierta del historial.
+// - El contenido (JSON sin imágenes) se parte en hasta 4 celdas de 45.000 caracteres.
+// - Bóveda: unidad compartida GD-SmartBudget (solo Script + 1 respaldo).
+//     01_Sistema      → DRIVE_SISTEMA_FOLDER_ID (libro + plantilla Excel)
+//     02_Cotizaciones → DRIVE_COTIZACIONES_FOLDER_ID (renders JPG)
+//   Listados de proveedores: carpeta DRIVE_PRECIOS_FOLDER_ID (sigue en Compras).
+// - No crear carpetas en "Mi unidad": si falta el ID, se aborta.
+// ==========================================
+var COT_COLS_ = ["ID", "Rev", "Numero", "Tipo", "Proyecto", "Proyectos", "Cliente", "Idioma", "Moneda", "Total", "Creado", "Usuario", "Comentario", "Datos_1", "Datos_2", "Datos_3", "Datos_4"];
+var COT_CHUNK_ = 45000;
+
+function obtenerHojaCotizaciones_() {
+  var ss = libroHistorico_();
+  var sh = ss.getSheetByName("Cotizaciones");
+  if (!sh) {
+    sh = ss.insertSheet("Cotizaciones");
+    sh.appendRow(COT_COLS_);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function driveGetJson_(url) {
+  var res = UrlFetchApp.fetch(url, {
+    headers: { Authorization: "Bearer " + tokenDrive_() },
+    muteHttpExceptions: true
+  });
+  var json = JSON.parse(res.getContentText() || "{}");
+  if (res.getResponseCode() >= 400) {
+    throw new Error((json.error && json.error.message) || ("Drive HTTP " + res.getResponseCode()));
+  }
+  return json;
+}
+
+function primeraCarpetaPorNombres_(nombres) {
+  for (var i = 0; i < nombres.length; i++) {
+    var it = DriveApp.getFoldersByName(nombres[i]);
+    if (it.hasNext()) {
+      var f = it.next();
+      return { id: f.getId(), name: f.getName() };
+    }
+  }
+  return null;
+}
+
+function buscarCarpetaDriveApi_(nombre) {
+  var q = "name = '" + String(nombre).replace(/'/g, "\\'") + "' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+  var url = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) +
+    "&includeItemsFromAllDrives=true&supportsAllDrives=true&corpora=allDrives&fields=files(id,name)&pageSize=10";
+  try {
+    var files = driveGetJson_(url).files || [];
+    return files[0] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function diagnosticoBoveda_() {
+  var nombres = [];
+  try {
+    var it = DriveApp.getFoldersByName("01_Sistema");
+    if (it.hasNext()) nombres.push("DriveApp ve 01_Sistema");
+    var it2 = DriveApp.getFoldersByName("02_Cotizaciones");
+    if (it2.hasNext()) nombres.push("DriveApp ve 02_Cotizaciones");
+  } catch (e1) {
+    nombres.push("DriveApp: " + e1.message);
+  }
+  try {
+    var pack = driveGetJson_("https://www.googleapis.com/drive/v3/drives?pageSize=50&fields=drives(id,name)");
+    var drives = pack.drives || [];
+    nombres.push("unidades: " + (drives.map(function (d) { return d.name; }).join(", ") || "(ninguna)"));
+  } catch (e2) {
+    nombres.push("lista unidades: " + e2.message);
+  }
+  return nombres.join(" · ");
+}
+
+/** Encuentra 01_Sistema y 02_Cotizaciones por nombre (unidad compartida o Mi unidad). */
+function carpetasBovedaSmartBudget_() {
+  DriveApp.getRootFolder();
+  var sistema = primeraCarpetaPorNombres_(["01_Sistema", "01 Sistema", "01-Sistema"]) ||
+    buscarCarpetaDriveApi_("01_Sistema");
+  var cots = primeraCarpetaPorNombres_(["02_Cotizaciones", "02 Cotizaciones", "02-Cotizaciones"]) ||
+    buscarCarpetaDriveApi_("02_Cotizaciones");
+  if (!sistema || !cots) {
+    throw new Error("No encuentro 01_Sistema o 02_Cotizaciones. " + diagnosticoBoveda_());
+  }
+  return { driveId: "", driveName: "GD-SmartBudget", sistema: sistema, cotizaciones: cots };
+}
+
+function recordarBoveda_(boveda) {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty("DRIVE_SISTEMA_FOLDER_ID", boveda.sistema.id);
+  props.setProperty("DRIVE_COTIZACIONES_FOLDER_ID", boveda.cotizaciones.id);
+  props.setProperty("DRIVE_PLANTILLA_FOLDER_ID", boveda.sistema.id);
+}
+
+function carpetaPorId_(prop, etiqueta) {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty(prop);
+  if (!id) {
+    recordarBoveda_(carpetasBovedaSmartBudget_());
+    id = props.getProperty(prop);
+  }
+  if (!id) throw new Error("Falta " + prop + " (carpeta " + etiqueta + " en GD-SmartBudget).");
+  try { return DriveApp.getFolderById(id); }
+  catch (e) { throw new Error("No se abre " + etiqueta + ". Revisa que el Script sea miembro de GD-SmartBudget."); }
+}
+
+function carpetaCotizaciones_() {
+  return carpetaPorId_("DRIVE_COTIZACIONES_FOLDER_ID", "02_Cotizaciones");
+}
+
+function carpetaSistema_() {
+  return carpetaPorId_("DRIVE_SISTEMA_FOLDER_ID", "01_Sistema");
+}
+
+/** Mueve un archivo a una carpeta de unidad compartida (conserva el ID). */
+function moverArchivoACarpetaDrive_(fileId, folderId) {
+  if (!fileId || !folderId) return;
+  var token = tokenDrive_();
+  var meta = UrlFetchApp.fetch(
+    "https://www.googleapis.com/drive/v3/files/" + fileId + "?fields=parents&supportsAllDrives=true",
+    { headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true }
+  );
+  var json = JSON.parse(meta.getContentText() || "{}");
+  var parents = json.parents || [];
+  var url = "https://www.googleapis.com/drive/v3/files/" + fileId +
+    "?supportsAllDrives=true&addParents=" + folderId +
+    (parents.length ? "&removeParents=" + parents.join(",") : "");
+  var res = UrlFetchApp.fetch(url, {
+    method: "patch",
+    contentType: "application/json",
+    headers: { Authorization: "Bearer " + token },
+    payload: "{}",
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() >= 400) {
+    var err = JSON.parse(res.getContentText() || "{}");
+    throw new Error((err.error && err.error.message) || ("Drive HTTP " + res.getResponseCode()));
+  }
+}
+
+/**
+ * Ejecutar una vez (▶) después de pegar este backend.gs.
+ * Busca GD-SmartBudget sola, guarda los IDs y confirma libro/plantilla en 01_Sistema.
+ */
+function anclarBovedaSmartBudget() {
+  var props = PropertiesService.getScriptProperties();
+  var boveda = carpetasBovedaSmartBudget_();
+  recordarBoveda_(boveda);
+  var out = ["unidad " + boveda.driveName, boveda.sistema.name, boveda.cotizaciones.name];
+  var sheetId = props.getProperty("DB_SHEET_ID_V28");
+  if (sheetId) {
+    moverArchivoACarpetaDrive_(sheetId, boveda.sistema.id);
+    out.push("libro en " + boveda.sistema.name);
+  }
+  var plantilla = props.getProperty("PLANTILLA_XLSX_ID");
+  if (plantilla) {
+    moverArchivoACarpetaDrive_(plantilla, boveda.sistema.id);
+    out.push("plantilla en " + boveda.sistema.name);
+  }
+  var n = recogerImagenesViejasCotizacion_(boveda.cotizaciones.id);
+  if (n) out.push(n + " imagen(es) recolectadas");
+  return "Bóveda anclada: " + out.join(" · ");
+}
+
+function recogerImagenesViejasCotizacion_(destId) {
+  var n = 0;
+  var it = DriveApp.getFoldersByName("SmartBudget_Cotizaciones");
+  while (it.hasNext()) {
+    var f = it.next();
+    if (f.getId() === destId) continue;
+    var files = f.getFiles();
+    while (files.hasNext()) {
+      moverArchivoACarpetaDrive_(files.next().getId(), destId);
+      n++;
+    }
+  }
+  return n;
+}
+
+function verificarBovedaSmartBudget() {
+  var props = PropertiesService.getScriptProperties();
+  var sis = carpetaSistema_();
+  var cot = carpetaCotizaciones_();
+  var sheetId = props.getProperty("DB_SHEET_ID_V28");
+  if (!sheetId) throw new Error("Falta DB_SHEET_ID_V28.");
+  SpreadsheetApp.openById(sheetId);
+  return "OK · " + sis.getName() + " + " + cot.getName() + " + libro " + sheetId;
+}
+
+function fechaCotizacion_(d) {
+  return d instanceof Date ? Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm") : String(d || "");
+}
+
+function guardarCotizacionBD(p, email) {
+  if (!p || !p.datos) return { exito: false, mensaje: "Falta el contenido de la cotización." };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var sh = obtenerHojaCotizaciones_();
+    var props = PropertiesService.getScriptProperties();
+    var id = String(p.id || "");
+    var rev = 1;
+    if (id) {
+      var last = sh.getLastRow();
+      if (last > 1) {
+        var v = sh.getRange(2, 1, last - 1, 2).getValues();
+        for (var i = 0; i < v.length; i++) {
+          if (String(v[i][0]) === id) rev = Math.max(rev, (Number(v[i][1]) || 0) + 1);
+        }
+      }
+    } else {
+      var seq = (Number(props.getProperty("COT_SEQ")) || 0) + 1;
+      props.setProperty("COT_SEQ", String(seq));
+      id = "C-" + ("00000" + seq).slice(-5);
+    }
+    var datos = JSON.parse(p.datos);
+    var refs = {};
+    var carpeta = null;
+    (p.imagenes || []).forEach(function (im) {
+      if (!im || !im.k || !im.data) return;
+      var m = String(im.data).match(/^data:([^;]+);base64,(.+)$/);
+      if (!m) return;
+      if (!carpeta) carpeta = carpetaCotizaciones_();
+      var nombre = id + "_r" + rev + "_" + String(im.k).replace(/[^\w]/g, "_") + ".jpg";
+      var file = carpeta.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], nombre));
+      publicarArchivoCotizacion_(file);
+      refs[im.k] = file.getId();
+    });
+    (datos.filas || []).forEach(function (f) {
+      if (refs[f.uid + ":img"]) f.imgRef = refs[f.uid + ":img"];
+      if (refs[f.uid + ":src"]) f.srcRef = refs[f.uid + ":src"];
+    });
+    var json = JSON.stringify(datos);
+    if (json.length > COT_CHUNK_ * 4) return { exito: false, mensaje: "La cotización es demasiado grande para guardarse (reduce filas o textos)." };
+    var partes = [];
+    for (var k = 0; k < 4; k++) partes.push(json.substring(k * COT_CHUNK_, (k + 1) * COT_CHUNK_));
+    var creado = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
+    sh.appendRow([id, rev, String(p.numero || ""), String(p.tipo || ""), String(p.proyecto || ""), String(p.proyectos || ""), String(p.cliente || ""), String(p.idioma || ""), String(p.moneda || ""), Number(p.total) || 0, creado, String(email || ""), String(p.comentario || "")].concat(partes));
+    try { CacheService.getScriptCache().remove("cot_list_v1"); } catch (eC) {}
+    return { exito: true, mensaje: "Cotización guardada.", data: { id: id, rev: rev, numero: String(p.numero || ""), refs: refs } };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function listarCotizacionesBD() {
+  var cache = CacheService.getScriptCache();
+  try {
+    var hit = cache.get("cot_list_v1");
+    if (hit) return { exito: true, data: JSON.parse(hit) };
+  } catch (e0) {}
+  var sh = obtenerHojaCotizaciones_();
+  var last = sh.getLastRow();
+  if (last <= 1) return { exito: true, data: [] };
+  var desde = Math.max(2, last - 399);
+  var rows = sh.getRange(desde, 1, last - desde + 1, 13).getValues();
+  var out = rows.map(function (r) {
+    return {
+      id: String(r[0]), rev: Number(r[1]) || 1, numero: String(r[2]), tipo: String(r[3]),
+      proyecto: String(r[4]), proyectos: String(r[5]), cliente: String(r[6]), idioma: String(r[7]),
+      moneda: String(r[8]), total: Number(r[9]) || 0, creado: fechaCotizacion_(r[10]),
+      usuario: String(r[11]), comentario: String(r[12])
+    };
+  });
+  out.reverse();
+  try { cache.put("cot_list_v1", JSON.stringify(out), 120); } catch (e1) {}
+  return { exito: true, data: out };
+}
+
+function obtenerCotizacionBD(id, rev) {
+  var sh = obtenerHojaCotizaciones_();
+  var last = sh.getLastRow();
+  if (last <= 1) return { exito: false, mensaje: "No se encontró la cotización." };
+  var pares = sh.getRange(2, 1, last - 1, 2).getValues();
+  var idx = -1, mejor = 0;
+  for (var i = 0; i < pares.length; i++) {
+    if (String(pares[i][0]) !== String(id)) continue;
+    var r = Number(pares[i][1]) || 1;
+    if (rev ? r === Number(rev) : r > mejor) { idx = i; mejor = r; }
+  }
+  if (idx < 0) return { exito: false, mensaje: "No se encontró la cotización." };
+  var d = sh.getRange(idx + 2, 1, 1, 17).getValues()[0];
+  var json = [13, 14, 15, 16].map(function (c) { return String(d[c] || ""); }).join("");
+  var datos;
+  try { datos = JSON.parse(json); } catch (e) { return { exito: false, mensaje: "El contenido guardado está dañado." }; }
+  return {
+    exito: true,
+    data: {
+      id: String(d[0]), rev: Number(d[1]) || 1, numero: String(d[2]), tipo: String(d[3]),
+      proyecto: String(d[4]), proyectos: String(d[5]), cliente: String(d[6]), idioma: String(d[7]),
+      moneda: String(d[8]), total: Number(d[9]) || 0, creado: fechaCotizacion_(d[10]),
+      comentario: String(d[12]), datos: datos
+    }
+  };
+}
+
+function urlImagenDrive_(fid, px) {
+  return "https://lh3.googleusercontent.com/d/" + fid + "=s" + (px || 800);
+}
+
+function publicarArchivoCotizacion_(file) {
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { /* ya era público o sin permiso */ }
+}
+
+function imagenesCotizacionBD(ids, modo) {
+  var out = {};
+  var blob = String(modo || "") === "blob";
+  (ids || []).slice(0, 30).forEach(function (fid) {
+    try {
+      var f = DriveApp.getFileById(fid);
+      if (!/^C-\d+_r\d+_/.test(f.getName())) return;
+      if (!blob) {
+        publicarArchivoCotizacion_(f);
+        out[fid] = urlImagenDrive_(fid, 800);
+      } else {
+        var b = f.getBlob();
+        out[fid] = "data:" + b.getContentType() + ";base64," + Utilities.base64Encode(b.getBytes());
+      }
+    } catch (e) { /* archivo no disponible: se omite */ }
+  });
+  return { exito: true, data: out };
 }
 
 function proxyOdooProductos(query) {
@@ -303,6 +826,15 @@ function libroHistorico_() {
   var sheetId = PropertiesService.getScriptProperties().getProperty("DB_SHEET_ID_V28");
   if (!sheetId) throw new Error("Falta DB_SHEET_ID_V28.");
   return SpreadsheetApp.openById(sheetId);
+}
+
+/** Ejecutar una vez desde el editor (▶): renombra el libro del historial a "SmartBudget_Presupuestos".
+ *  El script lo encuentra por ID, así que el cambio de nombre no rompe nada. */
+function renombrarLibroHistorico() {
+  var ss = libroHistorico_();
+  var antes = ss.getName();
+  ss.rename("SmartBudget_Presupuestos");
+  return "Renombrado: " + antes + " → " + ss.getName() + " (" + ss.getUrl() + ")";
 }
 
 function obtenerHojaCatalogo() {
@@ -1607,26 +2139,10 @@ function proxyGeminiChat(p) {
 // BASE DE DATOS SHEETS
 // ==========================================
 function obtenerHojaBD() {
-  var props = PropertiesService.getScriptProperties();
-  var sheetId = props.getProperty("DB_SHEET_ID_V28");
-  var ss;
-  if (!sheetId) {
-    ss = SpreadsheetApp.create("SmartBudget_BD_Historico_V28");
-    props.setProperty("DB_SHEET_ID_V28", ss.getId());
-    var sheet = ss.getActiveSheet();
-    sheet.setName("Presupuestos");
-    sheet.appendRow(["ID", "No", "Cliente", "Nombre", "Tipo", "Estado", "Fecha", "JSON_Data"]);
-  } else {
-    try { ss = SpreadsheetApp.openById(sheetId); }
-    catch (e) {
-      ss = SpreadsheetApp.create("SmartBudget_BD_Historico_V28");
-      props.setProperty("DB_SHEET_ID_V28", ss.getId());
-      var sheet2 = ss.getActiveSheet();
-      sheet2.setName("Presupuestos");
-      sheet2.appendRow(["ID", "No", "Cliente", "Nombre", "Tipo", "Estado", "Fecha", "JSON_Data"]);
-    }
-  }
-  return ss.getSheetByName("Presupuestos");
+  var ss = libroHistorico_();
+  var sheet = ss.getSheetByName("Presupuestos");
+  if (!sheet) throw new Error("Falta la hoja Presupuestos en el libro de GD-SmartBudget.");
+  return sheet;
 }
 
 function guardarPresupuestoBD(datos) {

@@ -350,7 +350,12 @@ async function cargarConfiguracionGlobal() {
                 if (dataRemota.exito && dataRemota.data) remotaConfig = dataRemota.data;
             } catch(e) { console.warn("Modo offline o error al traer config remota."); }
         }
-        CONFIG_GLOBAL = remotaConfig ? { ...baseConfig, ...remotaConfig } : baseConfig;
+        if (remotaConfig) {
+            CONFIG_GLOBAL = Object.assign({}, remotaConfig);
+            if (!CONFIG_GLOBAL.gasUrl) CONFIG_GLOBAL.gasUrl = baseConfig.gasUrl;
+        } else {
+            CONFIG_GLOBAL = baseConfig;
+        }
         if (!CONFIG_GLOBAL.gasUrl) CONFIG_GLOBAL.gasUrl = baseConfig.gasUrl;
         
         if (typeof aplicarControlDeRoles === "function") aplicarControlDeRoles();
@@ -400,6 +405,8 @@ function abrirModalAdmin() {
     if (typeof pintarTablaUnidadesMatriz === "function") pintarTablaUnidadesMatriz();
     if (typeof pintarTablaTarifasFijas === "function") pintarTablaTarifasFijas();
     if (typeof pintarTablaComisiones === "function") pintarTablaComisiones();
+    if (typeof pintarEditorTyc === "function") pintarEditorTyc();
+    if (typeof pintarEditorMembrete === "function") pintarEditorMembrete();
     const selUm = document.getElementById("catNuevoUm");
     if (selUm) selUm.innerHTML = opcionesUmHtml("UND");
     if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
@@ -825,6 +832,337 @@ async function cargarTablaCatalogoConsulta() {
     }
 }
 
+var _tycDraft = null;
+var _tycLang = "es";
+var _tycFocus = null;
+var TYC_VAR_CAMPOS = [
+    { k: "validez", label: "Validez" },
+    { k: "tope_prototipo", label: "Tope prototipo" },
+    { k: "min_orden_prototipo", label: "Mín. orden" },
+    { k: "plazo_prod", label: "Plazo ES" },
+    { k: "plazo_prod_en", label: "Plazo EN" },
+    { k: "dias_bodega", label: "Bodegaje" },
+    { k: "anticipo", label: "Anticipo" },
+    { k: "saldo", label: "Saldo" },
+    { k: "garantia", label: "Garantía" }
+];
+var TYC_VAR_COTIZ = [
+    { k: "cliente", label: "Cliente" },
+    { k: "codigo", label: "Código" },
+    { k: "ciudad", label: "Ciudad" },
+    { k: "fecha", label: "Fecha" },
+    { k: "comercial", label: "Comercial" },
+    { k: "moneda", label: "Moneda" },
+    { k: "total", label: "Total" }
+];
+
+function tycClonar_(o) { return JSON.parse(JSON.stringify(o == null ? {} : o)); }
+
+function tycDocBase_() {
+    if (typeof logTycDoc_ === "function") return tycClonar_(logTycDoc_());
+    return { vars: {}, es: { titulo: "", secciones: [] }, en: { titulo: "", secciones: [] } };
+}
+
+function tycMarcarFocus_(el) { _tycFocus = el; }
+
+function pintarChipsTyc() {
+    const box = document.getElementById("tycChips");
+    if (!box) return;
+    const chip = function (k, auto) {
+        return "<button type=\"button\" class=\"tyc-chip" + (auto ? " is-auto" : "") + "\" title=\"" +
+            (auto ? "Se llena al emitir la cotización" : "Variable de empresa") +
+            "\" onclick=\"tycInsertarVar('" + k + "')\">{{" + k + "}}</button>";
+    };
+    box.innerHTML = TYC_VAR_CAMPOS.map(function (v) { return chip(v.k, false); }).join("") +
+        TYC_VAR_COTIZ.map(function (v) { return chip(v.k, true); }).join("");
+}
+
+function tycItemHtml_(it) {
+    it = it || { k: "", v: "" };
+    return "<div class=\"tyc-item-ed\">" +
+        "<input class=\"form-control form-control-sm\" data-tyc=\"k\" placeholder=\"Etiqueta\" value=\"" + escHtml(it.k || "") + "\">" +
+        "<textarea class=\"form-control form-control-sm\" data-tyc=\"v\" rows=\"3\" placeholder=\"Texto\">" + escHtml(it.v || "") + "</textarea>" +
+        "<button type=\"button\" class=\"admin-icon-btn\" title=\"Quitar párrafo\" onclick=\"tycQuitarItem(this)\"><i class=\"bi bi-trash3\"></i></button>" +
+        "</div>";
+}
+
+function tycSeccionHtml_(sec, i) {
+    sec = sec || { id: "s" + (i + 1), t: "", items: [] };
+    const items = (sec.items && sec.items.length) ? sec.items : [{ k: "", v: "" }];
+    return "<div class=\"tyc-sec-ed\" data-sid=\"" + escHtml(sec.id || ("s" + (i + 1))) + "\">" +
+        "<div class=\"tyc-sec-ed-head\">" +
+        "<input class=\"form-control form-control-sm\" data-tyc=\"sec-t\" placeholder=\"Título de la sección\" value=\"" + escHtml(sec.t || "") + "\">" +
+        "<button type=\"button\" class=\"btn admin-btn\" onclick=\"tycAgregarItem(this)\"><i class=\"bi bi-plus-lg\"></i></button>" +
+        "<button type=\"button\" class=\"admin-icon-btn\" title=\"Quitar sección\" onclick=\"tycQuitarSeccion(this)\"><i class=\"bi bi-trash3\"></i></button>" +
+        "</div><div class=\"tyc-sec-ed-items\">" + items.map(tycItemHtml_).join("") + "</div></div>";
+}
+
+function tycEnlazarFocus_() {
+    const root = document.getElementById("panel-tyc");
+    if (!root || root.dataset.tycFocusBound) return;
+    root.dataset.tycFocusBound = "1";
+    root.addEventListener("focusin", function (e) {
+        const el = e.target;
+        if (el && (el.matches("textarea, input") && el.closest("#tycSecciones, #tycTitulo"))) tycMarcarFocus_(el);
+    });
+}
+
+function pintarTextosTyc() {
+    if (!_tycDraft) return;
+    const lib = _tycDraft[_tycLang] || { titulo: "", secciones: [] };
+    const tit = document.getElementById("tycTitulo");
+    if (tit) tit.value = lib.titulo || "";
+    const box = document.getElementById("tycSecciones");
+    if (box) box.innerHTML = (lib.secciones || []).map(tycSeccionHtml_).join("");
+    document.getElementById("tycLangEs")?.classList.toggle("is-on", _tycLang === "es");
+    document.getElementById("tycLangEn")?.classList.toggle("is-on", _tycLang === "en");
+}
+
+function pintarEditorTyc() {
+    _tycDraft = tycDocBase_();
+    _tycLang = "es";
+    const vars = _tycDraft.vars || {};
+    TYC_VAR_CAMPOS.forEach(function (v) {
+        const el = document.getElementById("tycVar_" + v.k);
+        if (el) el.value = vars[v.k] != null ? vars[v.k] : "";
+    });
+    pintarChipsTyc();
+    pintarTextosTyc();
+    tycEnlazarFocus_();
+}
+
+function leerIdiomaTyc_() {
+    const vars = {};
+    TYC_VAR_CAMPOS.forEach(function (v) {
+        vars[v.k] = (document.getElementById("tycVar_" + v.k)?.value || "").trim();
+    });
+    const secciones = [];
+    document.querySelectorAll("#tycSecciones .tyc-sec-ed").forEach(function (sec, i) {
+        const items = [];
+        sec.querySelectorAll(".tyc-item-ed").forEach(function (it) {
+            items.push({
+                k: it.querySelector('[data-tyc="k"]')?.value || "",
+                v: it.querySelector('[data-tyc="v"]')?.value || ""
+            });
+        });
+        secciones.push({
+            id: sec.getAttribute("data-sid") || ("s" + (i + 1)),
+            t: sec.querySelector('[data-tyc="sec-t"]')?.value || "",
+            items: items
+        });
+    });
+    if (!_tycDraft) _tycDraft = tycDocBase_();
+    _tycDraft.vars = vars;
+    _tycDraft[_tycLang] = {
+        titulo: document.getElementById("tycTitulo")?.value || "",
+        secciones: secciones
+    };
+    return _tycDraft;
+}
+
+function leerTycUI() {
+    if (document.getElementById("tycSecciones")) return tycClonar_(leerIdiomaTyc_());
+    if (typeof logTycDoc_ === "function") return tycClonar_(logTycDoc_());
+    return (CONFIG_GLOBAL && CONFIG_GLOBAL.tyc) ? tycClonar_(CONFIG_GLOBAL.tyc) : null;
+}
+
+function tycCambiarIdioma(lang) {
+    if (lang !== "es" && lang !== "en") return;
+    leerIdiomaTyc_();
+    _tycLang = lang;
+    pintarTextosTyc();
+}
+
+function tycRestaurarIdioma() {
+    if (typeof logTycDefault_ !== "function") return;
+    leerIdiomaTyc_();
+    _tycDraft[_tycLang] = tycClonar_(logTycDefault_(_tycLang));
+    pintarTextosTyc();
+}
+
+function tycAgregarSeccion() {
+    leerIdiomaTyc_();
+    const n = ((_tycDraft[_tycLang] && _tycDraft[_tycLang].secciones) || []).length + 1;
+    (_tycDraft[_tycLang].secciones || (_tycDraft[_tycLang].secciones = [])).push({
+        id: "s" + n, t: "", items: [{ k: "", v: "" }]
+    });
+    pintarTextosTyc();
+}
+
+function tycQuitarSeccion(btn) {
+    btn.closest(".tyc-sec-ed")?.remove();
+}
+
+function tycAgregarItem(btn) {
+    const box = btn.closest(".tyc-sec-ed")?.querySelector(".tyc-sec-ed-items");
+    if (box) box.insertAdjacentHTML("beforeend", tycItemHtml_({ k: "", v: "" }));
+}
+
+function tycQuitarItem(btn) {
+    const wrap = btn.closest(".tyc-sec-ed-items");
+    btn.closest(".tyc-item-ed")?.remove();
+    if (wrap && !wrap.querySelector(".tyc-item-ed")) wrap.insertAdjacentHTML("beforeend", tycItemHtml_({ k: "", v: "" }));
+}
+
+function memClonar_(o) { return JSON.parse(JSON.stringify(o == null ? {} : o)); }
+
+function memDocBase_() {
+    if (typeof logMembreteDefault_ === "function") return memClonar_(logMembreteDefault_());
+    return { logo: "", qr: "", firmaImg: "", web: "", oficinas: [] };
+}
+
+function memEsData_(s) { return /^data:image\//i.test(String(s || "")); }
+
+function memSetPrev_(id, src, custom) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.src = src || "";
+    el.dataset.custom = custom ? "1" : "";
+    el.style.display = src ? "" : "none";
+}
+
+function memLeerPrev_(id) {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.custom !== "1") return "";
+    return memEsData_(el.src) ? el.src : "";
+}
+
+function memLeerArchivo_(file, maxW, maxH, cb) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+        const img = new Image();
+        img.onload = function () {
+            let w = img.width || 1, h = img.height || 1;
+            const s = Math.min(1, maxW / w, maxH / h);
+            w = Math.max(1, Math.round(w * s));
+            h = Math.max(1, Math.round(h * s));
+            const c = document.createElement("canvas");
+            c.width = w;
+            c.height = h;
+            const ctx = c.getContext("2d");
+            ctx.drawImage(img, 0, 0, w, h);
+            let out = c.toDataURL("image/png");
+            if (out.length > 420000) out = c.toDataURL("image/jpeg", 0.88);
+            cb(out);
+        };
+        img.onerror = function () { cb(reader.result); };
+        img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function memOficinaHtml_(of) {
+    of = of || { titulo: "", tel: "", dir1: "", dir2: "" };
+    return "<div class=\"mem-ofi\">" +
+        "<div class=\"admin-field\"><label>Título</label><input class=\"form-control form-control-sm\" data-mem=\"titulo\" value=\"" + escHtml(of.titulo || "") + "\"></div>" +
+        "<div class=\"admin-field\"><label>Teléfono</label><input class=\"form-control form-control-sm\" data-mem=\"tel\" value=\"" + escHtml(of.tel || "") + "\"></div>" +
+        "<button type=\"button\" class=\"admin-icon-btn\" title=\"Quitar oficina\" onclick=\"memQuitarOficina(this)\"><i class=\"bi bi-trash3\"></i></button>" +
+        "<div class=\"admin-field mem-ofi-dir\"><label>Dirección (línea 1)</label><input class=\"form-control form-control-sm\" data-mem=\"dir1\" value=\"" + escHtml(of.dir1 || "") + "\"></div>" +
+        "<div class=\"admin-field mem-ofi-dir\"><label>Dirección (línea 2)</label><input class=\"form-control form-control-sm\" data-mem=\"dir2\" value=\"" + escHtml(of.dir2 || "") + "\"></div>" +
+        "</div>";
+}
+
+function memEnlazarArchivos_() {
+    const root = document.getElementById("panel-membrete");
+    if (!root || root.dataset.memBound) return;
+    root.dataset.memBound = "1";
+    const bind = function (inputId, prevId, maxW, maxH) {
+        const inp = document.getElementById(inputId);
+        if (!inp) return;
+        inp.addEventListener("change", function () {
+            const file = inp.files && inp.files[0];
+            if (!file) return;
+            memLeerArchivo_(file, maxW, maxH, function (data) {
+                memSetPrev_(prevId, data, true);
+                inp.value = "";
+            });
+        });
+    };
+    bind("memLogoFile", "memLogoPrev", 1400, 480);
+    bind("memQrFile", "memQrPrev", 560, 560);
+    bind("memFirmaFile", "memFirmaPrev", 1000, 360);
+}
+
+function pintarEditorMembrete() {
+    const raw = (CONFIG_GLOBAL && CONFIG_GLOBAL.membrete) ? CONFIG_GLOBAL.membrete : {};
+    const def = memDocBase_();
+    const live = (typeof logMembreteDoc_ === "function") ? logMembreteDoc_() : def;
+    memSetPrev_("memLogoPrev", live.logo, memEsData_(raw.logo));
+    memSetPrev_("memQrPrev", live.qr, memEsData_(raw.qr));
+    memSetPrev_("memFirmaPrev", live.firmaImg || "", memEsData_(raw.firmaImg));
+    const web = document.getElementById("memWeb");
+    if (web) web.value = live.web || "";
+    const box = document.getElementById("memOficinas");
+    if (box) box.innerHTML = (live.oficinas && live.oficinas.length ? live.oficinas : def.oficinas).map(memOficinaHtml_).join("");
+    memEnlazarArchivos_();
+}
+
+function leerMembreteUI() {
+    if (!document.getElementById("memOficinas")) {
+        if (CONFIG_GLOBAL && CONFIG_GLOBAL.membrete) return memClonar_(CONFIG_GLOBAL.membrete);
+        return memDocBase_();
+    }
+    const oficinas = [];
+    document.querySelectorAll("#memOficinas .mem-ofi").forEach(function (el) {
+        oficinas.push({
+            titulo: el.querySelector('[data-mem="titulo"]')?.value || "",
+            tel: el.querySelector('[data-mem="tel"]')?.value || "",
+            dir1: el.querySelector('[data-mem="dir1"]')?.value || "",
+            dir2: el.querySelector('[data-mem="dir2"]')?.value || ""
+        });
+    });
+    return {
+        logo: memLeerPrev_("memLogoPrev"),
+        qr: memLeerPrev_("memQrPrev"),
+        firmaImg: memLeerPrev_("memFirmaPrev"),
+        web: (document.getElementById("memWeb")?.value || "").trim(),
+        oficinas: oficinas
+    };
+}
+
+function memRestaurar() {
+    const def = memDocBase_();
+    memSetPrev_("memLogoPrev", "assets/membrete-demo/logo-diforma.png", false);
+    memSetPrev_("memQrPrev", "assets/membrete-demo/qr-diforma.png", false);
+    memSetPrev_("memFirmaPrev", "", false);
+    const web = document.getElementById("memWeb");
+    if (web) web.value = def.web || "";
+    const box = document.getElementById("memOficinas");
+    if (box) box.innerHTML = (def.oficinas || []).map(memOficinaHtml_).join("");
+}
+
+function memAgregarOficina() {
+    const box = document.getElementById("memOficinas");
+    if (box) box.insertAdjacentHTML("beforeend", memOficinaHtml_({ titulo: "", tel: "", dir1: "", dir2: "" }));
+}
+
+function memQuitarOficina(btn) {
+    btn.closest(".mem-ofi")?.remove();
+}
+
+function memQuitarFirma() {
+    memSetPrev_("memFirmaPrev", "", false);
+}
+
+function tycInsertarVar(k) {
+    const el = _tycFocus;
+    const token = "{{" + k + "}}";
+    if (!el) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Pon el cursor en un texto para insertar {{" + k + "}}.", "info");
+        return;
+    }
+    if (typeof el.selectionStart === "number") {
+        const start = el.selectionStart, end = el.selectionEnd, val = el.value || "";
+        el.value = val.slice(0, start) + token + val.slice(end);
+        el.focus();
+        el.selectionStart = el.selectionEnd = start + token.length;
+        return;
+    }
+    el.value = (el.value || "") + token;
+    el.focus();
+}
+
 async function guardarConfiguracion() {
     const email = localStorage.getItem('smartbudget_email');
     const token = localStorage.getItem('smartbudget_token');
@@ -845,7 +1183,10 @@ async function guardarConfiguracion() {
         diasVigencia: { materiales: getVal('cfgDiasVigMat') || 180, procesos: getVal('cfgDiasVigProc') || 90 },
         operativos: { topeFab: getVal('cfgTopeOpFab'), topeCom: getVal('cfgTopeOpCom'), impFab: { max: getVal('cfgImpFabMax'), min: getVal('cfgImpFabMin') }, indFab: { max: getVal('cfgIndFabMax'), min: getVal('cfgIndFabMin') }, indCom: { max: getVal('cfgIndComMax'), min: getVal('cfgIndComMin') } },
         utilidadNal: { fab: { tope: getVal('n_fabTope'), max: getVal('n_fabMax'), min: getVal('n_fabMin') }, com: { tope: getVal('n_comTope'), max: getVal('n_comMax'), min: getVal('n_comMin') } },
-        utilidadExp: { fab: { tope: getVal('e_fabTope'), max: getVal('e_fabMax'), min: getVal('e_fabMin') }, com: { tope: getVal('e_comTope'), max: getVal('e_comMax'), min: getVal('e_comMin') } }
+        utilidadExp: { fab: { tope: getVal('e_fabTope'), max: getVal('e_fabMax'), min: getVal('e_fabMin') }, com: { tope: getVal('e_comTope'), max: getVal('e_comMax'), min: getVal('e_comMin') } },
+        tyc: (typeof leerTycUI === "function") ? leerTycUI() : (CONFIG_GLOBAL && CONFIG_GLOBAL.tyc) || null,
+        membrete: (typeof leerMembreteUI === "function") ? leerMembreteUI() : (CONFIG_GLOBAL && CONFIG_GLOBAL.membrete) || null,
+        anchosMatriz: (CONFIG_GLOBAL && CONFIG_GLOBAL.anchosMatriz) || {}
     };
     
     if(typeof mostrarNotificacion === "function") mostrarNotificacion("Sincronizando configuración...", "info");
@@ -859,6 +1200,7 @@ async function guardarConfiguracion() {
             bootstrap.Modal.getInstance(document.getElementById('modalAdmin'))?.hide();
             if(typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
             if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
+            if (typeof logisticaActualizarVista === "function") logisticaActualizarVista();
         } else { if(typeof mostrarNotificacion === "function") mostrarNotificacion("Error: " + resData.mensaje, "danger"); }
     } catch(e) { if(typeof mostrarNotificacion === "function") mostrarNotificacion("Error de red guardando configuración.", "danger"); }
 }

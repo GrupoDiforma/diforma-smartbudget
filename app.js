@@ -1,3 +1,58 @@
+var _sbEspera = { n: 0, t0: 0, tick: null };
+
+function _sbEsperaPintarTiempo_() {
+    const el = document.getElementById("sbEsperaTiempo");
+    if (!el || !_sbEspera.t0) return;
+    const s = Math.floor((Date.now() - _sbEspera.t0) / 1000);
+    el.textContent = s < 1 ? "Un momento…" : ("Lleva " + s + " s");
+}
+
+function mostrarEsperaNube(mensaje) {
+    let el = document.getElementById("sbEspera");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "sbEspera";
+        el.className = "sb-espera";
+        el.innerHTML = '<div class="sb-espera-card" role="status" aria-live="polite">' +
+            '<div class="spinner-border text-danger" role="presentation"></div>' +
+            '<p class="sb-espera-msg mb-1" id="sbEsperaMsg">Procesando…</p>' +
+            '<p class="sb-espera-t mb-0" id="sbEsperaTiempo">Un momento…</p></div>';
+        document.body.appendChild(el);
+    }
+    const msg = document.getElementById("sbEsperaMsg");
+    if (msg) msg.textContent = mensaje || "Procesando…";
+    el.hidden = false;
+    el.classList.add("is-on");
+    _sbEspera.n += 1;
+    if (_sbEspera.n === 1) {
+        _sbEspera.t0 = Date.now();
+        _sbEsperaPintarTiempo_();
+        clearInterval(_sbEspera.tick);
+        _sbEspera.tick = setInterval(_sbEsperaPintarTiempo_, 250);
+    }
+}
+
+function textoEsperaNube(mensaje) {
+    const msg = document.getElementById("sbEsperaMsg");
+    if (msg && mensaje) msg.textContent = mensaje;
+}
+
+function ocultarEsperaNube() {
+    _sbEspera.n = Math.max(0, _sbEspera.n - 1);
+    if (_sbEspera.n > 0) return;
+    clearInterval(_sbEspera.tick);
+    _sbEspera.tick = null;
+    const el = document.getElementById("sbEspera");
+    if (el) {
+        el.classList.remove("is-on");
+        el.hidden = true;
+    }
+}
+
+window.mostrarEsperaNube = mostrarEsperaNube;
+window.textoEsperaNube = textoEsperaNube;
+window.ocultarEsperaNube = ocultarEsperaNube;
+
 function mostrarNotificacion(mensaje, tipo = 'info') {
     const container = document.getElementById('toastContainer');
     if (!container) return;
@@ -26,10 +81,31 @@ function mostrarAlertaOdoo(mensaje, tipo, cargando = false) {
     if (!cargando && tipo !== 'danger') setTimeout(() => alertBox.classList.add('d-none'), 6000);
 }
 
-async function realizarPeticionBD(payload, opts) {
-    opts = opts || {};
-    const url = CONFIG_GLOBAL?.gasUrl;
-    if (!url) throw new Error("Falta URL del proxy backend.");
+var _colaCotGas = Promise.resolve();
+
+function _esAccionCotizacion_(action) {
+    return /^(listar_cotizaciones|obtener_cotizacion|guardar_cotizacion|cotizacion_)/.test(String(action || ""));
+}
+
+async function asegurarGasUrl_() {
+    if (CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl) return CONFIG_GLOBAL.gasUrl;
+    if (typeof cargarConfiguracionGlobal === "function") {
+        try { await cargarConfiguracionGlobal(); } catch (e) { /* se intenta config.json abajo */ }
+    }
+    if (CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl) return CONFIG_GLOBAL.gasUrl;
+    try {
+        const res = await fetch("config.json");
+        if (res.ok) {
+            const j = await res.json();
+            CONFIG_GLOBAL = Object.assign({}, CONFIG_GLOBAL || {}, j || {});
+        }
+    } catch (e) { /* sin archivo local */ }
+    return (CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl) || "";
+}
+
+async function _fetchGas_(payload, opts) {
+    const url = await asegurarGasUrl_();
+    if (!url) throw new Error("Aún no cargó la conexión a la nube. Espera un momento y pulsa Reintentar.");
     payload.authKey = localStorage.getItem('smartbudget_token') || "";
     const ctrl = new AbortController();
     const ms = opts.timeoutMs || 45000;
@@ -53,6 +129,16 @@ async function realizarPeticionBD(payload, opts) {
     } finally {
         clearTimeout(timer);
     }
+}
+
+async function realizarPeticionBD(payload, opts) {
+    opts = opts || {};
+    if (opts.cola === false || !_esAccionCotizacion_(payload && payload.action)) {
+        return _fetchGas_(payload, opts);
+    }
+    const p = _colaCotGas.then(function () { return _fetchGas_(payload, opts); }, function () { return _fetchGas_(payload, opts); });
+    _colaCotGas = p.then(function () {}, function () {});
+    return p;
 }
 
 // === FUNCIONES DE NEGOCIO RESTAURADAS ===
@@ -123,7 +209,8 @@ function versionVacia_(id, comentario) {
         matrizItems: [],
         escalas: [{ id: "l1", q: 1 }],
         historialChat: [],
-        faseIA: "idle"
+        faseIA: "idle",
+        fichaComercial: typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {}
     };
 }
 
@@ -143,7 +230,8 @@ function snapshotDesdeUI_(id, comentario) {
         matrizItems: clonarJson_(typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []),
         escalas: clonarJson_(typeof lotesSimulacion !== "undefined" && lotesSimulacion.length ? lotesSimulacion : [{ id: "l1", q: 1 }]),
         historialChat: clonarJson_(window.historialChatIA || []),
-        faseIA: window.faseIA || "idle"
+        faseIA: window.faseIA || "idle",
+        fichaComercial: clonarJson_(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : (prev && prev.fichaComercial) || {})
     };
 }
 
@@ -190,6 +278,7 @@ function aplicarVersionEnUI(id, omitirSnapshot) {
         });
     }
     if (typeof aplicarMercado === "function") aplicarMercado(ver.tipoPresupuesto || "NACIONAL");
+    if (typeof pintarFichaComercial === "function") pintarFichaComercial(ver.fichaComercial);
     if (typeof window.pintarHistorialChatIA === "function") {
         window.pintarHistorialChatIA(ver.historialChat || [], ver.faseIA);
     } else {
@@ -218,7 +307,8 @@ function hidratarVersionesDesdePayload(p) {
             matrizItems: p.matrizItems || p.items || [],
             escalas: p.escalas || p.lotes || [{ id: "l1", q: 1 }],
             historialChat: p.historialChat || p.chat || [],
-            faseIA: p.faseIA || p.fase || "idle"
+            faseIA: p.faseIA || p.fase || "idle",
+            fichaComercial: p.fichaComercial || {}
         }];
         window.versionActivaId = "V1";
     }
@@ -282,7 +372,15 @@ async function guardarProyectoBD() {
     snapshotVersionActual();
     const activa = window.versionActivaId || "V1";
     const payload = compactarPayloadNube({
-        cabecera: { noProyecto: codigo, cliente: document.getElementById('cliente')?.value || '', nombreProyecto: document.getElementById('noProyecto')?.value || '', tipoPresupuesto: (typeof mercadoActual === "function" ? mercadoActual() : (document.getElementById('badgeTipo')?.innerText || 'NACIONAL')), versionActiva: activa },
+        cabecera: {
+            noProyecto: codigo,
+            cliente: document.getElementById('cliente')?.value || '',
+            nombreProyecto: document.getElementById('noProyecto')?.value || '',
+            tipoPresupuesto: (typeof mercadoActual === "function" ? mercadoActual() : (document.getElementById('badgeTipo')?.innerText || 'NACIONAL')),
+            versionActiva: activa,
+            locale: typeof localeProyectoActual === "function" ? localeProyectoActual() : (window.localeProyecto || {})
+        },
+        odooPistas: window.odooPistas || {},
         datosAdicionales: { fecha: document.getElementById('fecha')?.value || '', comercial: document.getElementById('comercial')?.value || '', disenador: document.getElementById('disenador')?.value || '', analista: document.getElementById('analista')?.value || '' },
         matrizItems: typeof itemsPresupuesto !== 'undefined' ? itemsPresupuesto : [],
         escalas: typeof lotesSimulacion !== 'undefined' ? lotesSimulacion : [],
@@ -298,8 +396,9 @@ async function guardarProyectoBD() {
 async function abrirHistorial() {
     const tbody = document.getElementById('tbodyHistorial');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4"><span class="spinner-border spinner-border-sm me-2"></span>Cargando historial...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5"><div class="spinner-border text-danger mb-2"></div><div class="fw-semibold">Cargando historial de Costos…</div><div class="small text-muted">La nube puede tardar unos segundos.</div></td></tr>';
     new bootstrap.Modal(document.getElementById('modalHistorial')).show();
+    mostrarEsperaNube("Cargando historial de Costos…");
     try {
         const data = await realizarPeticionBD({ action: 'listar' });
         if(data.exito && data.data.length > 0) {
@@ -307,22 +406,34 @@ async function abrirHistorial() {
         } else { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No hay proyectos.</td></tr>'; }
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4"><div class="text-danger mb-2">${e.message}</div><button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirHistorial()">Reintentar</button></td></tr>`;
+    } finally {
+        ocultarEsperaNube();
     }
 }
 
 async function cargarProyectoBD(idProyecto) {
+    mostrarEsperaNube("Abriendo el proyecto…");
     try {
         const data = await realizarPeticionBD({ action: 'obtener', id: idProyecto });
         if (data.exito && data.data) {
+            textoEsperaNube("Preparando la matriz…");
             const p = data.data; const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
             setVal('inputCodigo', p.cabecera?.noProyecto); setVal('noProyecto', p.cabecera?.nombreProyecto); setVal('cliente', p.cabecera?.cliente);
+            window.odooPistas = p.odooPistas || {};
+            /* los archivos del Paso 2 no se guardan en la nube: los del proyecto anterior no deben quedar */
+            if (typeof window.vaciarArchivosIA === "function") window.vaciarArchivosIA();
+            if (typeof aplicarLocaleProyecto === "function") {
+                aplicarLocaleProyecto((p.cabecera && p.cabecera.locale) || {}, { silencio: true });
+            }
             hidratarVersionesDesdePayload(p);
             bootstrap.Modal.getInstance(document.getElementById('modalHistorial'))?.hide();
+            if (typeof window.cargarImagenOdooEnVisor === "function") window.cargarImagenOdooEnVisor();
             const nVer = (window.versionesPresupuesto || []).length;
             const nChat = (window.historialChatIA || []).length;
             mostrarNotificacion((nVer > 1 ? (nVer + " versiones. ") : "") + (nChat ? "Proyecto y chat cargados." : "Proyecto cargado."), "success");
         }
     } catch(e) { mostrarNotificacion(e.message, "danger"); }
+    finally { ocultarEsperaNube(); }
 }
 
 var SESION_TRABAJO_KEY = "smartbudget_sesion_v1";
@@ -354,7 +465,9 @@ function guardarSesionTrabajo() {
             comision: document.getElementById("simComision")?.value || "",
             archivos: window.archivosGemaBase64 || [],
             versiones: window.versionesPresupuesto || [],
-            versionActivaId: window.versionActivaId || "V1"
+            versionActivaId: window.versionActivaId || "V1",
+            locale: typeof localeProyectoActual === "function" ? localeProyectoActual() : (window.localeProyecto || {}),
+            odooPistas: window.odooPistas || {}
         };
         let json = JSON.stringify(payload);
         if (json.length > 4500000) {
@@ -393,6 +506,10 @@ function restaurarSesionTrabajo() {
         const sel = document.getElementById("simComision");
         if (sel) sel.value = s.comision;
     }
+    window.odooPistas = s.odooPistas || {};
+    if (typeof aplicarLocaleProyecto === "function") {
+        aplicarLocaleProyecto(s.locale || {}, { silencio: true });
+    }
     hidratarVersionesDesdePayload({
         cabecera: { tipoPresupuesto: s.cabecera && s.cabecera.selMercado, versionActiva: s.versionActivaId },
         datosAdicionales: {
@@ -421,6 +538,7 @@ async function eliminarProyectoBD(idProyecto) {
 document.addEventListener('DOMContentLoaded', async () => {
     // 1. Cargar configuración maestra y roles
     if(typeof cargarConfiguracionGlobal === "function") await cargarConfiguracionGlobal();
+    if (typeof logisticaPrefetchHistorial_ === "function") logisticaPrefetchHistorial_();
     if(typeof poblarSelectComisiones === "function") poblarSelectComisiones();
     if(typeof verificarAccesoCorporativo === "function") verificarAccesoCorporativo();
     
@@ -440,4 +558,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (el) el.addEventListener("change", programarGuardarSesion);
         if (el) el.addEventListener("input", programarGuardarSesion);
     });
+    ["fichaTitulo", "fichaDesc", "fichaDimAncho", "fichaDimFondo", "fichaDimAlto", "fichaEmpAncho", "fichaEmpFondo", "fichaEmpAlto", "fichaEmpUnd"].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener("change", programarGuardarSesion);
+            el.addEventListener("input", programarGuardarSesion);
+        }
+    });
+    if (typeof pintarLocaleProyecto === "function") pintarLocaleProyecto();
 });
