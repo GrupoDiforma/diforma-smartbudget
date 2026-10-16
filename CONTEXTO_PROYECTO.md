@@ -291,9 +291,9 @@ En aéreo, “Flete interno = Sí” no abre fila: ese terrestre ya va dentro de
 
 ## CHECKPOINT — 15 oct 2026 (publicado en GitHub Pages)
 
-Ingeniería + Excel + PDF Etapa 1 + **Etapa 2 Paso 1** (Incoterm / destino / cubicaje / envío a mano). Publicado en `main` / `desarrollo` como **V1.0.26**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` sigue pidiéndose a mano en Apps Script.
+Ingeniería + Excel + PDF Etapa 1 + **Etapa 2 Paso 1** (Incoterm / destino / cubicaje / envío a mano). Publicado en `main` / `desarrollo` como **V1.0.27**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` sigue pidiéndose a mano en Apps Script. El aviso OTP ya no se recarga solo si la nube responde “no autorizado” antes de entrar.
 
-**Caché UI (index.html):** `styles.css 1.0.47` · `admin.js 1.0.28` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.52`.
+**Caché UI (index.html):** `styles.css 1.0.47` · `admin.js 1.0.28` · `app.js 1.0.31` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.53`.
 
 **Hecho y validado con Edwin (sesión 15 oct):**
 

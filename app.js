@@ -114,9 +114,15 @@ async function _fetchGas_(payload, opts) {
         const res = await fetch(url, { method: "POST", body: JSON.stringify(payload), signal: ctrl.signal });
         if (!res.ok) throw new Error("HTTP Error: " + res.status);
         const data = await res.json();
-        if (data.mensaje && data.mensaje.includes("Acceso no autorizado")) {
-            localStorage.removeItem("smartbudget_token");
-            location.reload();
+        if (data && data.mensaje && String(data.mensaje).indexOf("Acceso no autorizado") !== -1) {
+            const enviado = payload.authKey || "";
+            const actual = localStorage.getItem("smartbudget_token") || "";
+            if (enviado && actual === enviado) {
+                localStorage.removeItem("smartbudget_token");
+                localStorage.removeItem("smartbudget_email");
+                localStorage.removeItem("smartbudget_rol");
+                if (!document.getElementById("authOverlay")) location.reload();
+            }
         }
         return data;
     } catch (e) {
@@ -538,9 +544,9 @@ async function eliminarProyectoBD(idProyecto) {
 document.addEventListener('DOMContentLoaded', async () => {
     // 1. Cargar configuración maestra y roles
     if(typeof cargarConfiguracionGlobal === "function") await cargarConfiguracionGlobal();
-    if (typeof logisticaPrefetchHistorial_ === "function") logisticaPrefetchHistorial_();
     if(typeof poblarSelectComisiones === "function") poblarSelectComisiones();
     if(typeof verificarAccesoCorporativo === "function") verificarAccesoCorporativo();
+    if (localStorage.getItem("smartbudget_token") && typeof logisticaPrefetchHistorial_ === "function") logisticaPrefetchHistorial_();
     
     // 2. Ejecutar funciones externas (Si existen en otros archivos)
     if(typeof obtenerTRMOficial === "function") await obtenerTRMOficial();

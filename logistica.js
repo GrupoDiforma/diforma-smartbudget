@@ -2638,6 +2638,7 @@ async function logisticaCargarHistorial_(force, onStatus) {
             return logHist;
         } catch (e) {
             ultimo = e;
+            if (/Acceso no autorizado/i.test(String((e && e.message) || e))) break;
             await new Promise(function (ok) { setTimeout(ok, 350 * (i + 1)); });
         }
     }
@@ -2645,6 +2646,7 @@ async function logisticaCargarHistorial_(force, onStatus) {
 }
 
 function logisticaPrefetchHistorial_() {
+    if (!localStorage.getItem("smartbudget_token")) return;
     if (!(CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl)) return;
     if (logHistCache.data && (Date.now() - logHistCache.t) < 180000) return;
     logisticaCargarHistorial_(false).catch(function () { /* se pide de nuevo al abrir Guardadas */ });
