@@ -191,7 +191,7 @@ Hay **dos pestañas** en la app. No mezclar con las fases internas del chat de G
 
 ### Fase 1 — Ingeniería de Costos (hecha; pulir solo si Edwin lo pide)
 
-Local preview: `http://127.0.0.1:8765/` (versión de UI según badge en `index.html`). Producción: `https://smartbudget.grupodiforma.com` solo tras `git push` / `./desplegar.sh` con OK explícito. Cambios recientes de ficha/locale/visor pueden estar **solo en local** hasta que Edwin publique. Tras editar `backend.gs` en el repo, Edwin debe **pegarlo** en Apps Script.
+Local preview: `http://127.0.0.1:8765/` (versión de UI según badge en `index.html`). Producción: `https://smartbudget.grupodiforma.com` tras `git push` a `main`. Tras editar `backend.gs` en el repo, Edwin debe **pegarlo** en Apps Script.
 
 **Cabecera y Odoo.** Buscar código de oportunidad (`crm.lead`). Equipo, cliente, mercado por `pricelist_id` (USD → Exportación, si no Nacional). Locale del Brief:
 
@@ -289,9 +289,9 @@ En aéreo, “Flete interno = Sí” no abre fila: ese terrestre ya va dentro de
 
 ---
 
-## CHECKPOINT — 15 oct 2026 (local, no publicado)
+## CHECKPOINT — 15 oct 2026 (publicado en GitHub Pages)
 
-Ingeniería + Excel + PDF Etapa 1 + **Etapa 2 Paso 1** (Incoterm / destino / cubicaje / envío a mano). **No hay push ni `desplegar.sh`.** Preview: `http://127.0.0.1:8765/` con Ctrl+F5.
+Ingeniería + Excel + PDF Etapa 1 + **Etapa 2 Paso 1** (Incoterm / destino / cubicaje / envío a mano). Publicado en `main` / `desarrollo` como **V1.0.26**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` sigue pidiéndose a mano en Apps Script.
 
 **Caché UI (index.html):** `styles.css 1.0.47` · `admin.js 1.0.28` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.52`.
 

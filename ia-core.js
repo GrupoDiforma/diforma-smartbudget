@@ -40,11 +40,13 @@ REGLA B — procesos y mano de obra
 REGLA C — clasificación
 Categorías: "Materias Primas", "Procesos Externos", "Procesos Internos", "Mano de Obra", "Empaque y Fletes", "Comercialización".
 Ítem "Fletes / Transporte Local" con es_global true (se diluye Costo/Q en cada rango).
+Cajas máster / corrugado del pedido, elaboración de troquel (el DADO, no el golpe), moldes y setup CNC: es_global true. cantidad = unidades de ese ítem en el LOTE (ej. 2 cajas), costoUnitario = COP de una de esas unidades para TODO el pedido, NUNCA por cada producto del rango.
+Troquelado mecánico (golpe por pieza o pliego), materiales y MO: es_global false.
 
 REGLA D — TRM
 Importaciones: TRM base + 100 COP. Exportaciones: TRM base - 100 COP.
 
-Ítems globales (moldes, troqueles, CNC setup, fletes de lote): es_global true. El resto false.`;
+Ítems globales (moldes, elaboración de troquel/dado, CNC setup, fletes de lote, cajas máster): es_global true. El resto false.`;
 
 function umPermitidas() {
     if (typeof unidadesParaPrompt === "function") {
@@ -186,23 +188,33 @@ function textoGemini(data) {
     return data?.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-function extraerCotizacionIA(texto) {
+function extraerObjetoJsonIA(texto) {
     if (!texto) return null;
     let raw = texto;
     const fenced = texto.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (fenced) raw = fenced[1];
     const tryParse = (s) => { try { return JSON.parse(s); } catch (e) { return null; } };
     const objStart = raw.indexOf('{');
-    const arrStart = raw.indexOf('[');
-    if (objStart >= 0 && (arrStart < 0 || objStart < arrStart)) {
+    if (objStart >= 0) {
         const parsed = tryParse(raw.slice(objStart));
-        if (parsed && Array.isArray(parsed.items)) return parsed;
-        const m = raw.match(/\{[\s\S]*"items"\s*:\s*\[[\s\S]*\][\s\S]*\}/);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        const m = raw.match(/\{[\s\S]*\}/);
         if (m) {
             const p = tryParse(m[0]);
-            if (p && Array.isArray(p.items)) return p;
+            if (p && typeof p === "object" && !Array.isArray(p)) return p;
         }
     }
+    return null;
+}
+
+function extraerCotizacionIA(texto) {
+    const parsed = extraerObjetoJsonIA(texto);
+    if (parsed && (Array.isArray(parsed.items) || parsed.ficha)) return parsed;
+    if (!texto) return null;
+    let raw = texto;
+    const fenced = texto.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) raw = fenced[1];
+    const tryParse = (s) => { try { return JSON.parse(s); } catch (e) { return null; } };
     const arr = raw.match(/\[[\s\S]*\]/);
     if (arr) {
         const p = tryParse(arr[0]);
@@ -224,12 +236,37 @@ function textoSinJson(texto, cotizacion) {
 }
 
 async function aplicarCotizacionEnUI(cotizacion) {
-    if (!cotizacion || !Array.isArray(cotizacion.items)) return false;
-    if (typeof window.aplicarRangosDesdeIA === 'function') window.aplicarRangosDesdeIA(cotizacion.rangos);
-    await enriquecerItemsConCatalogo(cotizacion.items);
-    window.reemplazarMatrizDesdeIA(cotizacion.items);
-    window.faseIA = 'matriz';
-    return true;
+    if (!cotizacion) return false;
+    let ok = false;
+    if (Array.isArray(cotizacion.items)) {
+        if (typeof window.aplicarRangosDesdeIA === 'function') window.aplicarRangosDesdeIA(cotizacion.rangos);
+        await enriquecerItemsConCatalogo(cotizacion.items);
+        window.reemplazarMatrizDesdeIA(cotizacion.items);
+        window.faseIA = 'matriz';
+        ok = true;
+    }
+    if (cotizacion.ficha && typeof aplicarFichaComercial === "function") {
+        aplicarFichaComercial(cotizacion.ficha);
+        ok = true;
+    }
+    return ok;
+}
+
+function bloqueLocaleParaPrompt() {
+    const loc = typeof localeProyectoActual === "function" ? localeProyectoActual() : (window.localeProyecto || {});
+    const um = loc.sistema === "imperial" ? "in" : "cm";
+    const idioma = loc.idioma === "en" ? "English" : "español";
+    const pistas = window.odooPistas || {};
+    const lineas = [
+        "=== FICHA COMERCIAL / LOCALE (Odoo Brief) ===",
+        "idioma de la ficha: " + idioma + " (lang Odoo=" + (loc.langOdoo || "") + ")",
+        "sistema de medida: " + (loc.sistema === "imperial" ? "Sistema Ingles" : "Sistema Internacional") + " → um=" + um,
+        "país: " + (loc.pais || "—"),
+        pistas.funcionales ? ("funcionales Odoo: " + pistas.funcionales) : "",
+        pistas.dimDiseno ? ("dimensiones diseño Odoo: " + pistas.dimDiseno) : "",
+        pistas.obsPresupuesto ? ("obs presupuesto Odoo: " + pistas.obsPresupuesto) : ""
+    ].filter(Boolean);
+    return lineas.join("\n");
 }
 
 function nombreCortoItem(s) {
@@ -406,28 +443,42 @@ ${tarifas || '(vacío)'}`;
     if (modo === 'entrevista') {
         return `${base}
 
+${bloqueLocaleParaPrompt()}
+
 MODO ACTUAL: FASE 1 ENTREVISTA.
-Responde en español, breve. PROHIBIDO JSON, arrays de ítems o costos. NO desgloses la matriz.
+Responde en ${localeProyectoActual && localeProyectoActual().idioma === "en" ? "inglés" : "español"}, breve. PROHIBIDO JSON, arrays de ítems o costos. NO desgloses la matriz.
 Aunque el analista dé todos los datos, SOLO continúa el diálogo. El costeo ocurre únicamente en FASE 2.
-Pregunta solo lo no obvio. Incluye rangos si no están en los archivos.
+Pregunta solo lo no obvio. Incluye rangos si no están en los archivos. Medidas en ${localeProyectoActual && localeProyectoActual().sistema === "imperial" ? "pulgadas (in)" : "centímetros (cm)"}.
 Si ya hay una matriz en pantalla o un historial previo, NO reinicies la entrevista: confirma lo pendiente y pide que pulse Generar matriz.
 Cuando el costeo ya puede salir, invita a pulsar Generar matriz y menciona que, si quiere resultados más confiables, active Gemini PRO antes (la entrevista puede seguir en Flash).`;
     }
     if (modo === 'generar') {
+        const umF = (typeof umFichaActual === "function") ? umFichaActual() : "cm";
+        const langF = (typeof localeProyectoActual === "function" && localeProyectoActual().idioma === "en") ? "English" : "español";
         return `${base}
+
+${bloqueLocaleParaPrompt()}
 
 MODO ACTUAL: FASE 2 GENERAR COTIZACIÓN.
 El analista confirmó. Usa rangos que haya dicho; si no hay, [1, 50, 100].
 Primero un párrafo corto. AL FINAL un único JSON (sin markdown) con esta forma:
-{"rangos":[1,50,100],"items":[{"fuente":"[Estimado IA]","nombre":"...","categoria":"Materias Primas","cantidad":1,"um":"UND","costoUnitario":0,"es_global":false}]}
-costoUnitario en COP sin IVA. Para es_global true, costoUnitario es el costo TOTAL del lote a diluir.`;
+{"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"}},"items":[{"fuente":"[Estimado IA]","nombre":"...","categoria":"Materias Primas","cantidad":1,"um":"UND","costoUnitario":0,"es_global":false}]}
+ficha.titulo y ficha.descripcion en ${langF}. descripcion: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo).
+Medidas de ficha SOLO en ${umF}. Si el brief ya trae 60x40x120, úsalas. empaque: estima caja si no hay dato (un poco mayor que el mueble).
+costoUnitario en COP sin IVA. Para es_global true, costoUnitario es el costo del LOTE (o por cada cantidad del lote), NO por producto. No rellenes costos[] en ítems globales: la app hace costoUnitario/Q. PROHIBIDO poner el valor de una caja o un flete en cada unidad del rango (ej. 5.000 cenefas).`;
     }
     return `${base}
 
+${bloqueLocaleParaPrompt()}
+
 MODO ACTUAL: FASE 3 AJUSTES sobre la matriz ya listada.
-Responde breve. Si modificas ítems o el analista pide regenerar/rehacer la matriz, AL FINAL el JSON completo {"rangos":[...],"items":[...]} sin markdown.
+Responde breve. Si modificas ítems o el analista pide regenerar/rehacer la matriz, AL FINAL el JSON completo {"rangos":[...],"ficha":{...},"items":[...]} sin markdown. Incluye ficha si cambian título, texto o medidas.
 Si solo aclaras, no envíes JSON.
 Puede adjuntar archivos extra: úsalos. No pidas recargar la página.
+Al rellenar costos: flete, cajas máster, elaboración de troquel (dado) y setup van con es_global true y costoUnitario = COP del lote (o por caja del lote). NO copies esos valores a costos[] ni los pongas como precio de cada producto. La app diluye Costo/Q. PROHIBIDO asignar una caja o un flete entero a cada unidad del rango (ej. 5.000 cenefas). Troquelado por golpe y materiales por pieza: es_global false.
+
+=== FICHA ACTUAL ===
+${JSON.stringify(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : {})}
 
 === MATRIZ ACTUAL ===
 ${JSON.stringify({ rangos: (typeof lotesSimulacion !== 'undefined' ? lotesSimulacion.map(l => l.q) : [1]), items: (typeof itemsPresupuesto !== 'undefined' ? itemsPresupuesto : []) })}`;
@@ -438,10 +489,10 @@ window.limpiarMesaDeTrabajo = function() {
     window.faseIA = 'idle';
     window._avisoProMatriz = false;
     ocultarHintGeminiPro();
-    window.archivosGemaBase64 = [];
-    if (typeof window.actualizarListaUI === 'function') window.actualizarListaUI();
+    if (typeof window.vaciarArchivosIA === 'function') window.vaciarArchivosIA();
     if (typeof itemsPresupuesto !== 'undefined') itemsPresupuesto = [];
     if (typeof lotesSimulacion !== 'undefined') lotesSimulacion = [{ id: 'l1', q: 1 }];
+    if (typeof pintarFichaComercial === "function") pintarFichaComercial(typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {});
     if (typeof resetearVersionesProyecto === "function") resetearVersionesProyecto();
     if (typeof renderizarTablaItems === 'function') renderizarTablaItems();
     resetChatPlaceholder();
@@ -525,6 +576,36 @@ window.refrescarUsoGemini = async function () {
     } catch (e) {}
 };
 
+function esperaIAInicio_(mensaje) {
+    if (typeof mostrarEsperaNube === "function") mostrarEsperaNube(mensaje || "La IA está trabajando…");
+}
+function esperaIATexto_(mensaje) {
+    if (typeof textoEsperaNube === "function" && mensaje) textoEsperaNube(mensaje);
+}
+function esperaIAFin_() {
+    if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+}
+function marcarEsperaIA_(mensaje) {
+    const typingId = "typing_" + Date.now();
+    const box = chatBoxEl();
+    if (box) {
+        box.innerHTML += '<div id="' + typingId + '" class="text-start mb-2 ia-typing"><span class="text-muted" style="font-size:0.8rem;"><span class="spinner-border spinner-border-sm me-1"></span><span class="ia-typing-txt">' + mensaje + '</span></span></div>';
+        box.scrollTop = box.scrollHeight;
+    }
+    esperaIAInicio_(mensaje);
+    return typingId;
+}
+function quitarEsperaIA_(typingId) {
+    if (typingId) document.getElementById(typingId)?.remove();
+    esperaIAFin_();
+}
+function bloquearChatIA_(on) {
+    const btn = document.getElementById("btnChat");
+    const ta = document.getElementById("chatInput");
+    if (btn) btn.disabled = !!on;
+    if (ta) ta.disabled = !!on;
+}
+
 window.procesarPlanoIA = async function() {
     if (!window.archivosGemaBase64 || window.archivosGemaBase64.length === 0) {
         return mostrarNotificacion("Sube un render o PDF.", "warning");
@@ -544,19 +625,13 @@ window.procesarPlanoIA = async function() {
     actualizarBotonGenerar();
     pintarMensaje('user', reanudar ? 'Reanalizar archivos (continuar)' : 'Analizar archivos adjuntos');
     window.historialChatIA.push({ role: 'user', text: reanudar ? 'Reanalizar archivos (continuar)' : 'Analizar archivos adjuntos' });
-    const typingId = 'typing_' + Date.now();
-    const box = chatBoxEl();
-    if (box) {
-        box.innerHTML += `<div id="${typingId}" class="text-start mb-2"><span class="text-muted" style="font-size:0.8rem;"><span class="spinner-border spinner-border-sm"></span> Leyendo propuesta...</span></div>`;
-        box.scrollTop = box.scrollHeight;
-    }
+    const typingId = marcarEsperaIA_("Analizando archivos…");
     try {
         const extra = reanudar
             ? `\nYa hay matriz y/o chat. NO reinicies la entrevista. Resume el análisis. Si el costeo está listo, pide que pulse Generar matriz.\n=== MATRIZ ACTUAL ===\n${JSON.stringify({ rangos: (typeof lotesSimulacion !== "undefined" ? lotesSimulacion.map(function (l) { return l.q; }) : [1]), items: (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []) })}\n=== HISTORIAL ===\n${historialComoTexto()}`
             : "\nInicia la Fase 1.";
         const promptTexto = `${instruccionesFase(hayItems ? "ajustes" : "entrevista")}\n\nEl analista acaba de cargar ${window.archivosGemaBase64.length} archivo(s).${extra}`;
         const data = await llamarGeminiConImagenes(promptTexto, 180000);
-        document.getElementById(typingId)?.remove();
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const sinJson = textoSinJson(texto, extraerCotizacionIA(texto));
@@ -566,10 +641,10 @@ window.procesarPlanoIA = async function() {
         promoverFaseIA();
         if (textoInvitaGenerarMatriz(sinJson)) mostrarHintGeminiPro(true);
     } catch (err) {
-        document.getElementById(typingId)?.remove();
         mostrarNotificacion("Error Servidor: " + err.message, "danger");
         promoverFaseIA();
     } finally {
+        quitarEsperaIA_(typingId);
         if (btn) { btn.innerHTML = txtOriginal; btn.disabled = false; }
         actualizarBotonGenerar();
     }
@@ -591,24 +666,24 @@ window.enviarMensajeChat = async function() {
     }
 
     const modo = modoConversacion();
-
-    const typingId = 'typing_' + Date.now();
-    const box = chatBoxEl();
-    if (box) {
-        box.innerHTML += `<div id="${typingId}" class="text-start mb-2"><span class="text-muted" style="font-size:0.8rem;"><span class="spinner-border spinner-border-sm"></span> Conectando al Servidor...</span></div>`;
-        box.scrollTop = box.scrollHeight;
-    }
+    const msgEspera = modo === "ajustes" ? "La IA está ajustando la matriz…" : "La IA está respondiendo…";
+    bloquearChatIA_(true);
+    const typingId = marcarEsperaIA_(msgEspera);
 
     try {
         const promptTexto = `${instruccionesFase(modo)}\n\n=== HISTORIAL ===\n${historialComoTexto()}\n\n=== ÚLTIMO MENSAJE DEL ANALISTA ===\n${msg}`;
         const data = (window.archivosGemaBase64?.length)
             ? await llamarGeminiConImagenes(promptTexto, 180000)
             : await llamarGeminiChat(promptTexto, 120000);
-        document.getElementById(typingId)?.remove();
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const cotizacion = extraerCotizacionIA(texto);
-        if (cotizacion && modo === 'ajustes') await aplicarCotizacionEnUI(cotizacion);
+        if (cotizacion && Array.isArray(cotizacion.items) && modo === 'ajustes') {
+            esperaIATexto_("Aplicando la matriz…");
+            await aplicarCotizacionEnUI(cotizacion);
+        } else if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
+            aplicarFichaComercial(cotizacion.ficha);
+        }
         const charla = textoSinJson(texto, cotizacion);
         window.historialChatIA.push({ role: 'model', text: charla });
         pintarMensaje('model', charla.replace(/\n/g, '<br>'), data.modeloUsado);
@@ -616,14 +691,82 @@ window.enviarMensajeChat = async function() {
         if (textoInvitaGenerarMatriz(charla) || textoInvitaGenerarMatriz(texto)) mostrarHintGeminiPro(true);
         if (typeof programarGuardarSesion === "function") programarGuardarSesion();
     } catch (err) {
-        document.getElementById(typingId)?.remove();
         mostrarNotificacion("Error Servidor Chat: " + err.message, "danger");
+    } finally {
+        quitarEsperaIA_(typingId);
+        bloquearChatIA_(false);
     }
 };
 
 function pideRegenerarMatriz(msg) {
     return /genera\w*.{0,48}matriz|matriz.{0,28}(nuevamente|de nuevo|otra vez)|vuelve a (generar|armar|costear)|reprocesa|regenera|rehacer.{0,24}matriz/i.test(String(msg || ""));
 }
+
+function promptSoloFichaComercial() {
+    const umF = (typeof umFichaActual === "function") ? umFichaActual() : "cm";
+    const langF = (typeof localeProyectoActual === "function" && localeProyectoActual().idioma === "en") ? "English" : "español";
+    const fichaHoy = (typeof leerFichaComercialUI === "function") ? leerFichaComercialUI() : {};
+    return `${bloqueLocaleParaPrompt()}
+
+TAREA: rellenar SOLO la ficha comercial. NO toques costos ni matriz.
+Idioma del texto: ${langF}. Medidas SOLO en ${umF}.
+titulo corto (como en cotización). descripcion 3–4 líneas: qué es, uso en PDV, materiales visibles. Sin receta de costo.
+dimensiones del mueble (ancho × fondo × alto). empaque de la caja (un poco mayor si no hay dato).
+Usa renders/PDF, el chat y pistas de ítems (ej. caja 155x65x45). Si el brief Odoo trae 60×40×120, úsalas.
+
+Ficha actual (puedes completar huecos, no borres lo que ya esté bien):
+${JSON.stringify(fichaHoy)}
+
+Responde un párrafo corto y AL FINAL un único JSON sin markdown:
+{"ficha":{"titulo":"...","descripcion":"...","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"}}}`;
+}
+
+window.completarFichaIA = async function () {
+    const hayArchivos = window.archivosGemaBase64 && window.archivosGemaBase64.length;
+    const hayChat = (window.historialChatIA || []).length > 0;
+    const hayItems = typeof itemsPresupuesto !== "undefined" && itemsPresupuesto.length > 0;
+    if (!hayArchivos && !hayChat && !hayItems) {
+        return mostrarNotificacion("Escribe la ficha a mano, o analiza archivos / genera matriz y luego pulsa Rellenar con IA.", "warning");
+    }
+    const btn = document.getElementById("btnCompletarFicha");
+    const original = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Ficha...'; }
+    pintarMensaje("user", "Completar ficha comercial (sin tocar la matriz)");
+    window.historialChatIA.push({ role: "user", text: "Completar ficha comercial (sin tocar la matriz)" });
+    const typingId = marcarEsperaIA_("Redactando la ficha comercial…");
+    try {
+        const promptTexto = `${promptSoloFichaComercial()}
+
+=== HISTORIAL ===
+${historialComoTexto()}
+
+=== PISTAS DE MATRIZ (solo para medidas/nombre, no costes) ===
+${JSON.stringify({
+    proyecto: document.getElementById("noProyecto")?.value || "",
+    cliente: document.getElementById("cliente")?.value || "",
+    items: (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto.map(function (i) { return i.nombre; }) : [])
+})}`;
+        const data = hayArchivos
+            ? await llamarGeminiConImagenes(promptTexto, 120000)
+            : await llamarGeminiChat(promptTexto, 90000);
+        if (!data.exito) throw new Error(data.mensaje);
+        const texto = textoGemini(data);
+        const cotizacion = extraerCotizacionIA(texto);
+        if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
+            aplicarFichaComercial(cotizacion.ficha);
+        }
+        const charla = textoSinJson(texto, cotizacion);
+        window.historialChatIA.push({ role: "model", text: charla });
+        pintarMensaje("model", charla.replace(/\n/g, "<br>"), data.modeloUsado);
+        if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        mostrarNotificacion(cotizacion && cotizacion.ficha ? "Ficha comercial lista. Revísala y edítala si hace falta." : "La IA no devolvió la ficha. Reintenta o escríbela a mano.", cotizacion && cotizacion.ficha ? "success" : "warning");
+    } catch (err) {
+        mostrarNotificacion("Error ficha: " + err.message, "danger");
+    } finally {
+        quitarEsperaIA_(typingId);
+        if (btn) { btn.innerHTML = original; btn.disabled = false; }
+    }
+};
 
 window.generarMatrizIA = async function(opts) {
     opts = opts || {};
@@ -647,14 +790,11 @@ window.generarMatrizIA = async function(opts) {
             window.historialChatIA.push({ role: 'user', text: 'Generar matriz de costos' });
         }
     }
-    const typingId = 'typing_' + Date.now();
-    const box = chatBoxEl();
-    if (box) {
-        box.innerHTML += `<div id="${typingId}" class="text-start mb-2"><span class="text-muted" style="font-size:0.8rem;"><span class="spinner-border spinner-border-sm"></span> Generando matriz (puede tardar 1–2 min)...</span></div>`;
-        box.scrollTop = box.scrollHeight;
-    }
+    const typingId = marcarEsperaIA_("Generando la matriz de costos…");
     try {
+        esperaIATexto_("Leyendo el catálogo maestro…");
         const catalogo = await obtenerCatalogoDriveTexto();
+        esperaIATexto_("Generando la matriz de costos…");
         const promptTexto = `${instruccionesFase('generar')}
 
 === CATÁLOGO MAESTRO (hoja Sheets, vigente; cada línea: categoria | proveedor | nombre | UM= | COP=) ===
@@ -667,11 +807,13 @@ ${historialComoTexto()}`;
         const data = hayArchivos
             ? await llamarGeminiConImagenes(promptTexto, 180000)
             : await llamarGeminiChat(promptTexto, 180000);
-        document.getElementById(typingId)?.remove();
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const cotizacion = extraerCotizacionIA(texto);
-        if (cotizacion) await aplicarCotizacionEnUI(cotizacion);
+        if (cotizacion) {
+            esperaIATexto_("Aplicando la matriz…");
+            await aplicarCotizacionEnUI(cotizacion);
+        }
         const charla = textoSinJson(texto, cotizacion);
         window.historialChatIA.push({ role: 'model', text: charla });
         pintarMensaje('model', charla.replace(/\n/g, '<br>'), data.modeloUsado);
@@ -679,9 +821,9 @@ ${historialComoTexto()}`;
         if (typeof programarGuardarSesion === "function") programarGuardarSesion();
         mostrarNotificacion(cotizacion ? "Matriz generada. Sigue ajustando en el chat si hace falta." : "La IA no devolvió JSON válido. Reintenta Generar matriz.", cotizacion ? "success" : "warning");
     } catch (err) {
-        document.getElementById(typingId)?.remove();
         mostrarNotificacion("Error generando matriz: " + err.message, "danger");
     } finally {
+        quitarEsperaIA_(typingId);
         if (btn) { btn.innerHTML = original; }
         actualizarBotonGenerar();
     }

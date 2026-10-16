@@ -38,7 +38,10 @@ function mercadoEsExportacion() {
 }
 
 function tablasUtilidadAIU() {
-    const exp = mercadoEsExportacion();
+    return tablasUtilidadAIUPara_(mercadoEsExportacion());
+}
+
+function tablasUtilidadAIUPara_(exp) {
     const ut = exp
         ? (CONFIG_GLOBAL.utilidadExp || CONFIG_GLOBAL.utilidadNal)
         : (CONFIG_GLOBAL.utilidadNal || CONFIG_GLOBAL.utilidadExp);
@@ -56,6 +59,90 @@ function filaAiu(label, pct, cop, inputHtml, extraClass) {
       <span class="aiu-lab">${label}${inputHtml || ""}</span>
       <span class="aiu-cop">${copFmt(cop)}</span>
     </div>`;
+}
+
+/**
+ * Motor AIU puro (sin DOM): precio de venta unitario y total de UN lote (escala).
+ * Lo usan el simulador y la cotización, así los números siempre coinciden.
+ * ctx = { op, ut, pctCom, feeExtra, overrides }
+ */
+function itemEstaCandado(it) {
+    return !!(it && (it.candado === true || it.candado === "S" || it.candado === 1));
+}
+
+function calcularPrecioLote_(items, lt, ctx, opts) {
+    const op = ctx.op || {};
+    const ut = ctx.ut || {};
+    const pctCom = Number(ctx.pctCom) || 0;
+    const feeExtra = Number(ctx.feeExtra) || 0;
+    const incluirCandado = !!(opts && opts.incluirCandado);
+    let uFab = 0, uCom = 0, nCandado = 0;
+    (items || []).forEach(i => {
+        if (itemEstaCandado(i)) nCandado++;
+        if (!incluirCandado && itemEstaCandado(i)) return;
+        let c = (i.costos && i.costos[lt.id] !== undefined) ? i.costos[lt.id] : (i.costoUnitario || 0);
+        let s = (Number(i.cantidad) || 1) * (Number(c) || 0);
+        i.categoria === "Comercialización" ? uCom += s : uFab += s;
+    });
+
+    const totalFabLote = uFab * lt.q;
+    const totalComLote = uCom * lt.q;
+    const o = ctx.overrides || {};
+
+    let pImpF = o.impFab !== undefined ? o.impFab : interpTope(totalFabLote, op.topeFab, op.impFab?.max, op.impFab?.min);
+    let pIndF = o.indFab !== undefined ? o.indFab : interpTope(totalFabLote, op.topeFab, op.indFab?.max, op.indFab?.min);
+    let pIndC = o.indCom !== undefined ? o.indCom : interpTope(totalComLote, op.topeCom, op.indCom?.max, op.indCom?.min);
+    let pUtF = o.uFab !== undefined ? o.uFab : interpTope(totalFabLote, ut.fab?.tope, ut.fab?.max, ut.fab?.min);
+    let pUtC = o.uCom !== undefined ? o.uCom : interpTope(totalComLote, ut.com?.tope, ut.com?.max, ut.com?.min);
+
+    const vImpF = uFab * pImpF / 100;
+    const vIndF = uFab * pIndF / 100;
+    const subFab = uFab + vImpF + vIndF;
+    let pVtaF = (pUtF < 100) ? (subFab / (1 - pUtF / 100)) : (subFab * 1.5);
+
+    let vIndC = 0, subCom = 0, pVtaC = 0;
+    if (uCom > 0) {
+        vIndC = uCom * pIndC / 100;
+        subCom = uCom + vIndC;
+        pVtaC = (pUtC < 100) ? (subCom / (1 - pUtC / 100)) : (subCom * 1.5);
+    } else {
+        pIndC = 0;
+        pUtC = 0;
+    }
+
+    let pFinUnitario = pVtaF + pVtaC;
+    pFinUnitario += (pFinUnitario * pctCom / 100) + (pFinUnitario * feeExtra / 100);
+    const pTotalGlobal = pFinUnitario * lt.q;
+    return { uFab, uCom, totalFabLote, totalComLote, pImpF, pIndF, pIndC, pUtF, pUtC, vImpF, vIndF, subFab, pVtaF, vIndC, subCom, pVtaC, pFinUnitario, pTotalGlobal, nCandado };
+}
+
+/**
+ * Precios de venta (COP) de todas las escalas de una versión guardada.
+ * Devuelve { exportacion, trm, escalas: [{ id, q, puCop, totalCop }] }.
+ * Los overrides manuales de las tarjetas solo aplican a la versión abierta.
+ */
+function calcularPreciosVersion_(ver) {
+    if (!ver || typeof CONFIG_GLOBAL === "undefined" || !CONFIG_GLOBAL) return null;
+    const exp = String(ver.tipoPresupuesto || "").toUpperCase().indexOf("EXPORT") !== -1;
+    const ut = tablasUtilidadAIUPara_(exp).ut;
+    const activa = String(ver.id) === String(window.versionActivaId);
+    const items = activa ? itemsPresupuesto : (ver.matrizItems || []);
+    const lotes = activa ? lotesSimulacion : ((ver.escalas && ver.escalas.length) ? ver.escalas : [{ id: "l1", q: 1 }]);
+    const trm = parseFloat(document.getElementById('simTRM')?.value) || trmActualGlobal;
+    const ctx = {
+        op: CONFIG_GLOBAL.operativos || {},
+        ut: ut,
+        pctCom: parseFloat(document.getElementById('simComision')?.value) || 0,
+        feeExtra: parseFloat(document.getElementById('simFee')?.value) || 0
+    };
+    return {
+        exportacion: exp,
+        trm: trm,
+        escalas: (items && items.length) ? lotes.map(lt => {
+            const r = calcularPrecioLote_(items, lt, Object.assign({ overrides: activa ? overridesTarjetas[lt.id] : null }, ctx));
+            return { id: lt.id, q: Number(lt.q) || 1, puCop: r.pFinUnitario, totalCop: r.pTotalGlobal };
+        }) : []
+    };
 }
 
 function actualizarSimuladorFinanciero() {
@@ -76,43 +163,12 @@ function actualizarSimuladorFinanciero() {
 
     let htmlCartas = "";
     lotesSimulacion.forEach(lt => {
-        let uFab = 0, uCom = 0;
-        itemsPresupuesto.forEach(i => { 
-            let c = (i.costos && i.costos[lt.id] !== undefined) ? i.costos[lt.id] : (i.costoUnitario || 0);
-            let s = (Number(i.cantidad) || 1) * (Number(c) || 0);
-            i.categoria === "Comercialización" ? uCom += s : uFab += s;
-        });
-
-        const totalFabLote = uFab * lt.q;
-        const totalComLote = uCom * lt.q;
-        const o = overridesTarjetas[lt.id] || {};
-
-        let pImpF = o.impFab !== undefined ? o.impFab : interpTope(totalFabLote, op.topeFab, op.impFab?.max, op.impFab?.min);
-        let pIndF = o.indFab !== undefined ? o.indFab : interpTope(totalFabLote, op.topeFab, op.indFab?.max, op.indFab?.min);
-        let pIndC = o.indCom !== undefined ? o.indCom : interpTope(totalComLote, op.topeCom, op.indCom?.max, op.indCom?.min);
-        let pUtF = o.uFab !== undefined ? o.uFab : interpTope(totalFabLote, ut.fab?.tope, ut.fab?.max, ut.fab?.min);
-        let pUtC = o.uCom !== undefined ? o.uCom : interpTope(totalComLote, ut.com?.tope, ut.com?.max, ut.com?.min);
-
-        const vImpF = uFab * pImpF / 100;
-        const vIndF = uFab * pIndF / 100;
-        const subFab = uFab + vImpF + vIndF;
-        let pVtaF = (pUtF < 100) ? (subFab / (1 - pUtF / 100)) : (subFab * 1.5);
-
-        let vIndC = 0, subCom = 0, pVtaC = 0;
-        if (uCom > 0) {
-            vIndC = uCom * pIndC / 100;
-            subCom = uCom + vIndC;
-            pVtaC = (pUtC < 100) ? (subCom / (1 - pUtC / 100)) : (subCom * 1.5);
-        } else {
-            pIndC = 0;
-            pUtC = 0;
-        }
-
-        let pFinUnitario = pVtaF + pVtaC;
-        pFinUnitario += (pFinUnitario * pctCom / 100) + (pFinUnitario * feeExtra / 100);
-        const pTotalGlobal = pFinUnitario * lt.q;
+        const r = calcularPrecioLote_(itemsPresupuesto, lt, { op: op, ut: ut, pctCom: pctCom, feeExtra: feeExtra, overrides: overridesTarjetas[lt.id] });
+        const { uFab, uCom, totalFabLote, totalComLote, pImpF, pIndF, pIndC, pUtF, pUtC, vImpF, vIndF, subFab, pVtaF, vIndC, subCom, pVtaC, pFinUnitario, pTotalGlobal, nCandado } = r;
+        const rEst = nCandado ? calcularPrecioLote_(itemsPresupuesto, lt, { op: op, ut: ut, pctCom: pctCom, feeExtra: feeExtra }, { incluirCandado: true }) : null;
 
         const inp = (campo, val) => `<input type="number" step="0.01" class="inline-override" value="${Number(val).toFixed(2)}" onchange="guardarOverride('${lt.id}','${campo}',this.value)">`;
+        const avisoEstudio = rEst ? `<div class="aiu-estudio">Estudio (no entra al precio): ${copFmt(rEst.subFab)} · ${nCandado} línea(s) candada(s)</div>` : "";
 
         htmlCartas += `
           <div class="col-md-6 col-lg-4">
@@ -122,10 +178,11 @@ function actualizarSimuladorFinanciero() {
                 <span class="aiu-mer ${merCls}">${merLabel}</span>
               </div>
               <div class="card-body p-2" style="font-size:0.78rem;">
+                ${avisoEstudio}
                 <div class="bg-fab p-2 rounded mb-2">
                   <div class="aiu-title">FABRICACIÓN</div>
                   <div class="aiu-hint">Tope sobre costo total de manufactura (materiales y procesos) del lote: ${copFmt(totalFabLote)}</div>
-                  ${filaAiu("Costo directo", null, uFab)}
+                  ${filaAiu("Costo directo", null, uFab, "", "aiu-directo")}
                   ${filaAiu("+ Imprevistos", pImpF, vImpF, inp("impFab", pImpF) + "<small>%</small>")}
                   ${filaAiu("+ Costos indirectos", pIndF, vIndF, inp("indFab", pIndF) + "<small>%</small>")}
                   ${filaAiu("Subtotal costo", null, subFab, "", "aiu-sub")}
@@ -140,12 +197,12 @@ function actualizarSimuladorFinanciero() {
                   ${filaAiu("Margen real", pUtC, pVtaC, uCom > 0 ? inp("uCom", pUtC) + "<small>%</small>" : "", "aiu-margen")}
                 </div>
                 <div class="aiu-total p-2 rounded">
-                  <span class="d-block text-uppercase" style="font-size:0.68rem; letter-spacing:.04em; color:#6b6b6b;">Precio venta unitario</span>
-                  <div class="fw-bold">${copFmt(pFinUnitario)} COP</div>
+                  <span class="aiu-total-lab">Precio venta unitario</span>
+                  <div class="aiu-total-val">${copFmt(pFinUnitario)} COP</div>
                   <div class="aiu-usd">US$ ${(pFinUnitario / trm).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                  <div class="border-top pt-2 mt-2">
-                    <span class="d-block text-uppercase fw-bold" style="font-size:0.68rem; color:var(--diforma-red);">Total negocio (${lt.q} unds)</span>
-                    <div class="fw-bold" style="color:var(--diforma-red);">${copFmt(pTotalGlobal)} COP</div>
+                  <div class="aiu-total-neg border-top pt-2 mt-2">
+                    <span class="aiu-total-lab">Total negocio (${lt.q} unds)</span>
+                    <div class="aiu-total-val">${copFmt(pTotalGlobal)} COP</div>
                     <div class="aiu-usd">US$ ${(pTotalGlobal / trm).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                 </div>
@@ -166,28 +223,147 @@ function inicializarDragAndDropMatrix() {
     }
 }
 
+var MTX_TOPE_ = {
+    num: [36, 56], fuente: [88, 170], desc: [160, 640],
+    cat: [108, 200], cant: [56, 88], um: [70, 120], glob: [100, 160]
+};
+
+function esProcesoPorPieza_(n) {
+    n = String(n || "");
+    if (/troquelado/i.test(n) && !/elaboraci[oó]n|litogr[aá]fico|dado|molde/i.test(n)) return true;
+    return false;
+}
+
+function nombreSugiereGlobal_(n) {
+    n = String(n || "");
+    if (esProcesoPorPieza_(n)) return false;
+    if (/transporte|flete|fletes|transport/i.test(n)) return true;
+    if (/elaboraci[oó]n de troquel|troquel litogr[aá]fico|molde de|setup\s*cnc|preparaci[oó]n (cnc|de m[aá]quina)/i.test(n)) return true;
+    if (/cajas? de cart[oó]n|caja m[aá]ster|corrugado m[aá]ster|embalaje protegido/i.test(n)) return true;
+    return false;
+}
+
+function inferirEsGlobal_(m) {
+    if (!m) return false;
+    const n = String(m.nombre || "");
+    if (esProcesoPorPieza_(n)) return false;
+    if (m.es_global === true || m.es_global === "S" || m.es_global === 1) return true;
+    if (nombreSugiereGlobal_(n)) return true;
+    if (typeof listaTarifasFijas === "function" && typeof mejorTarifaParaItem === "function" && typeof scoreCatalogo === "function") {
+        const t = mejorTarifaParaItem(n, listaTarifasFijas());
+        if (t && t.es_global && scoreCatalogo(n, t.nombre) >= 0.72) return true;
+    }
+    return false;
+}
+
+function diluirCostosGlobales_(item) {
+    if (!item) return;
+    const base = Number(item.costoUnitario) || 0;
+    item.es_global = true;
+    lotesSimulacion.forEach(function (l) {
+        item.costos = item.costos || {};
+        item.costos[l.id] = (l.q ? base / l.q : base);
+    });
+}
+
+function asegurarCostosGlobales_(item) {
+    if (!item || !item.es_global) return;
+    const lt = lotesSimulacion[0];
+    const q = (lt && lt.q) || 1;
+    const visto = lt && item.costos ? Number(item.costos[lt.id]) || 0 : 0;
+    let base = Number(item.costoUnitario) || 0;
+    if (!(base > 0) && visto > 0) {
+        item.costoUnitario = (q > 1 && visto < 200) ? visto * q : visto;
+    }
+    diluirCostosGlobales_(item);
+}
+
+function anchoColMatriz_(w, id, def) {
+    const t = MTX_TOPE_[id] || [36, 400];
+    const x = parseInt(w && w[id], 10);
+    if (!x) return def;
+    return Math.max(t[0], Math.min(t[1], x));
+}
+
+function colgroupMatriz_(w) {
+    const defs = [["num", 40], ["fuente", 110], ["desc", 220], ["cat", 128], ["cant", 62], ["um", 84], ["glob", 118]];
+    const box = document.querySelector(".matriz-scroll");
+    const avail = box ? box.clientWidth : 0;
+    const anchos = {};
+    let fijo = 76;
+    lotesSimulacion.forEach(function () { fijo += 168; });
+    defs.forEach(function (d) {
+        if (d[0] === "desc") return;
+        anchos[d[0]] = anchoColMatriz_(w, d[0], d[1]);
+        fijo += anchos[d[0]];
+    });
+    let desc = anchoColMatriz_(w, "desc", 240);
+    if (avail > fijo) desc = Math.max(desc, avail - fijo);
+    anchos.desc = Math.max(MTX_TOPE_.desc[0], desc);
+    let html = "";
+    let total = 0;
+    defs.forEach(function (d) {
+        const x = anchos[d[0]];
+        html += '<col data-col="' + d[0] + '" style="width:' + x + 'px">';
+        total += x;
+        const th = document.querySelector('#theadItems th[data-col="' + d[0] + '"]');
+        if (th) { th.style.width = x + "px"; th.style.minWidth = x + "px"; }
+    });
+    lotesSimulacion.forEach(function () {
+        html += '<col style="width:80px"><col style="width:88px">';
+        total += 168;
+    });
+    html += '<col style="width:36px"><col style="width:40px">';
+    total += 76;
+    const cg = document.getElementById("colgroupItems");
+    if (cg) cg.innerHTML = html;
+    const tabla = document.getElementById("tablaMatriz");
+    if (tabla) {
+        tabla.style.width = total + "px";
+        tabla.style.minWidth = total + "px";
+        tabla.style.maxWidth = total + "px";
+    }
+}
+
+function fijarAltoCabezaMatriz_() {
+    const thead = document.getElementById("theadItems");
+    if (!thead) return;
+    const r1 = thead.querySelector("tr");
+    if (!r1) return;
+    thead.style.setProperty("--mtx-th2", Math.ceil(r1.getBoundingClientRect().height) + "px");
+}
+window.addEventListener("resize", function () {
+    colgroupMatriz_(anchosColumnasMatriz());
+    fijarAltoCabezaMatriz_();
+});
+
 function renderizarTablaItems() {
     const thead = document.getElementById('theadItems');
     const tbody = document.getElementById('tbodyItems');
     if(!thead || !tbody) return;
 
     const w = anchosColumnasMatriz();
-    const thStyle = (id, def) => { const x = w[id] || def; return `width:${x}px;min-width:${x}px;`; };
+    const thStyle = (id, def) => { const x = anchoColMatriz_(w, id, def); return `width:${x}px;min-width:${x}px;`; };
     let th = `<tr>
         <th rowspan="2" class="text-center mtx-th" data-col="num" style="${thStyle("num", 36)}">#<span class="col-resizer"></span></th>
         <th rowspan="2" class="mtx-th" data-col="fuente" style="${thStyle("fuente", 110)}">FUENTE<span class="col-resizer"></span></th>
-        <th rowspan="2" class="mtx-th" data-col="desc" style="${thStyle("desc", 380)}">DESCRIPCIÓN<span class="col-resizer"></span></th>
+        <th rowspan="2" class="mtx-th" data-col="desc" style="${thStyle("desc", 320)}">DESCRIPCIÓN<span class="col-resizer"></span></th>
         <th rowspan="2" class="mtx-th" data-col="cat" style="${thStyle("cat", 130)}">CATEGORÍA<span class="col-resizer"></span></th>
         <th rowspan="2" class="text-center mtx-th" data-col="cant" style="${thStyle("cant", 70)}">CANT.<span class="col-resizer"></span></th>
-        <th rowspan="2" class="mtx-th" data-col="um" style="${thStyle("um", 90)}">U.M.<span class="col-resizer"></span></th>`;
+        <th rowspan="2" class="mtx-th" data-col="um" style="${thStyle("um", 90)}">U.M.<span class="col-resizer"></span></th>
+        <th rowspan="2" class="text-center mtx-th" data-col="glob" title="Costo global del lote (Ajustes). Se divide entre Q." style="${thStyle("glob", 118)}">$ LOTE<span class="col-resizer"></span></th>`;
     const merHead = mercadoEsExportacion() ? "EXP" : "NAL";
+    const nCand = itemsPresupuesto.filter(itemEstaCandado).length;
+    const todosCand = itemsPresupuesto.length > 0 && nCand === itemsPresupuesto.length;
     lotesSimulacion.forEach(lt => th += `<th colspan="2" class="text-center" style="background:#0f172a; color:#e5e5e5;">Q: ${lt.q} · ${merHead} <i class="bi bi-x-circle text-danger ms-1 cursor-pointer" onclick="eliminarLote('${lt.id}')"></i></th>`);
-    th += `<th rowspan="2" class="text-center" style="width:35px;"><i class="bi bi-trash"></i></th></tr><tr>`;
-    lotesSimulacion.forEach(lt => th += `<th class="text-center" style="background:#334155; color:white; font-size:0.7rem; width:90px;">$ UNIT.</th><th class="text-center" style="background:#475569; color:white; font-size:0.7rem; width:100px;">$ TOTAL</th>`);
+    th += `<th rowspan="2" class="text-center mtx-lock-th" title="${todosCand ? "Clic: liberar toda la matriz" : "Clic: candar toda la matriz (no suman; se conservan los valores)"}" style="width:36px;" onclick="alternarCandadosMasivo()"><i class="bi ${todosCand ? "bi-lock-fill" : "bi-unlock"} mtx-lock-head${todosCand ? " mtx-lock-on" : ""}"></i></th><th rowspan="2" class="text-center" style="width:35px;"><i class="bi bi-trash"></i></th></tr><tr>`;
+    lotesSimulacion.forEach(lt => th += `<th class="text-center" style="background:#334155; color:white; font-size:0.7rem; width:80px;">$ UNIT.</th><th class="text-center" style="background:#475569; color:white; font-size:0.7rem; width:88px;">$ TOTAL</th>`);
     thead.innerHTML = th + `</tr>`;
+    colgroupMatriz_(w);
 
     if (itemsPresupuesto.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${7+(lotesSimulacion.length*2)}" class="text-center text-muted py-4">Matriz vacía.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${9+(lotesSimulacion.length*2)}" class="text-center text-muted py-4">Matriz vacía.</td></tr>`;
+        fijarAltoCabezaMatriz_();
         return actualizarSimuladorFinanciero();
     }
 
@@ -195,6 +371,7 @@ function renderizarTablaItems() {
     let tb = "";
     itemsPresupuesto.forEach((i, idx) => {
         if(!i.costos) { i.costos = {}; lotesSimulacion.forEach(l => i.costos[l.id] = i.costoUnitario || 0); }
+        asegurarCostosGlobales_(i);
         
         let fTag = i.fuente || "[Manual]";
         let bc = "badge-manual";
@@ -203,23 +380,32 @@ function renderizarTablaItems() {
         else if (fTag.includes("Base")) bc = "badge-base";
         else if (fTag.includes("IA") || fTag.includes("Chat") || fTag.includes("Estimado")) bc = "badge-ia";
         
-        tb += `<tr><td class="text-center align-middle"><i class="bi bi-grid-3x2-gap-fill drag-handle"></i> <small class="text-muted d-block">${idx+1}</small></td>
+        tb += `<tr class="${itemEstaCandado(i) ? "mtx-candado" : ""}${i.es_global ? " mtx-es-global" : ""}"><td class="text-center align-middle"><i class="bi bi-grid-3x2-gap-fill drag-handle"></i> <small class="text-muted d-block">${idx+1}</small></td>
             <td class="align-middle"><span class="badge ${bc} w-100">${fTag}</span></td>
             <td class="mtx-desc" data-tip="${escAttrMatriz(i.nombre)}"><input type="text" class="form-control form-control-sm" value="${escAttrMatriz(i.nombre)}" onchange="actualizarCampo(${i.id},'nombre',this.value)"></td>
             <td><select class="form-select form-select-sm" onchange="actualizarCampo(${i.id},'categoria',this.value)">${CATEGORIAS.map(c=>`<option ${i.categoria===c?'selected':''}>${c}</option>`).join('')}</select></td>
             <td><input type="number" class="form-control form-control-sm text-center px-1" value="${i.cantidad}" onchange="actualizarCampo(${i.id},'cantidad',this.value)"></td>
-            <td><select class="form-select form-select-sm px-1" onchange="actualizarCampo(${i.id},'um',this.value)">${(i.um && !umList.some(u=>u.trim()===i.um)?[i.um,...umList]:umList).map(u=>`<option ${i.um===u.trim()?'selected':''}>${u.trim()}</option>`).join('')}</select></td>`;
+            <td><select class="form-select form-select-sm px-1" onchange="actualizarCampo(${i.id},'um',this.value)">${(i.um && !umList.some(u=>u.trim()===i.um)?[i.um,...umList]:umList).map(u=>`<option ${i.um===u.trim()?'selected':''}>${u.trim()}</option>`).join('')}</select></td>
+            <td class="mtx-glob">${celdaCostoLote_(i)}</td>`;
         lotesSimulacion.forEach(lt => {
             let v = i.costos[lt.id] || 0;
-            tb += `<td style="border-left:2px solid #cbd5e1;"><input type="number" class="form-control form-control-sm text-center fw-bold text-primary px-1" value="${v}" onchange="actualizarCostoItem(${i.id},'${lt.id}',this.value)"></td>
-            <td class="text-end fw-bold align-middle" style="font-size:0.8rem;">$${(v*i.cantidad).toLocaleString('es-CO',{maximumFractionDigits:0})}</td>`;
+            const unitVal = i.es_global ? (Math.round(v * 100) / 100) : v;
+            const unitAttr = i.es_global ? "disabled" : "";
+            tb += `<td style="border-left:2px solid #cbd5e1;"><input type="number" step="0.01" class="form-control form-control-sm text-center fw-bold text-primary px-1" value="${unitVal}" ${unitAttr} onchange="actualizarCostoItem(${i.id},'${lt.id}',this.value)"></td>
+            <td class="text-end fw-bold align-middle" style="font-size:0.8rem;">$${((v*i.cantidad)||0).toLocaleString('es-CO',{maximumFractionDigits: (Math.abs(v*i.cantidad) < 100 ? 2 : 0)})}</td>`;
         });
-        tb += `<td class="text-center align-middle"><i class="bi bi-trash text-danger cursor-pointer fs-6" onclick="eliminarItem(${i.id})"></i></td></tr>`;
+        tb += `<td class="text-center align-middle"><i class="bi ${itemEstaCandado(i) ? "bi-lock-fill" : "bi-unlock"} mtx-lock" title="${itemEstaCandado(i) ? "Liberar: vuelve a sumar" : "Candar: no suma; conserva el valor"}" onclick="alternarCandado(${i.id})"></i></td><td class="text-center align-middle"><i class="bi bi-trash text-danger cursor-pointer fs-6" onclick="eliminarItem(${i.id})"></i></td></tr>`;
     });
     tbody.innerHTML = tb;
     inicializarDragAndDropMatrix();
     activarResizeColumnasMatriz();
     activarRolloverDescripcion();
+    colgroupMatriz_(w);
+    fijarAltoCabezaMatriz_();
+    requestAnimationFrame(function () {
+        colgroupMatriz_(anchosColumnasMatriz());
+        fijarAltoCabezaMatriz_();
+    });
     actualizarSimuladorFinanciero();
     if (typeof programarGuardarSesion === "function") programarGuardarSesion();
 }
@@ -228,15 +414,48 @@ function escAttrMatriz(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
+var _anchosMatrizSesion = null;
+var _timerAnchosMatriz = null;
+
 function anchosColumnasMatriz() {
+    const remoto = (typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.anchosMatriz && typeof CONFIG_GLOBAL.anchosMatriz === "object")
+        ? CONFIG_GLOBAL.anchosMatriz : {};
+    if (_anchosMatrizSesion) return Object.assign({}, remoto, _anchosMatrizSesion);
+    if (Object.keys(remoto).length) return Object.assign({}, remoto);
     try { return JSON.parse(localStorage.getItem("smartbudget_mtx_cols") || "{}"); } catch (e) { return {}; }
 }
 
 function guardarAnchoColumnaMatriz(id, w) {
     if (!id) return;
     const o = anchosColumnasMatriz();
-    o[id] = w;
-    localStorage.setItem("smartbudget_mtx_cols", JSON.stringify(o));
+    o[id] = anchoColMatriz_({ [id]: w }, id, w);
+    _anchosMatrizSesion = o;
+    if (typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL) CONFIG_GLOBAL.anchosMatriz = o;
+    try { localStorage.setItem("smartbudget_mtx_cols", JSON.stringify(o)); } catch (e) {}
+    programarGuardarAnchosMatriz_();
+}
+
+function programarGuardarAnchosMatriz_() {
+    if (_timerAnchosMatriz) clearTimeout(_timerAnchosMatriz);
+    _timerAnchosMatriz = setTimeout(function () {
+        _timerAnchosMatriz = null;
+        persistirAnchosMatrizNube_();
+    }, 1400);
+}
+
+function persistirAnchosMatrizNube_() {
+    if (localStorage.getItem("smartbudget_rol") !== "ADMIN") return;
+    const anchos = (typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.anchosMatriz) || _anchosMatrizSesion;
+    if (!anchos || typeof realizarPeticionBD !== "function") return;
+    realizarPeticionBD({
+        action: "guardar_anchos_matriz",
+        anchos: anchos,
+        email: localStorage.getItem("smartbudget_email") || ""
+    }).then(function (res) {
+        if (res && res.exito && typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Anchos de matriz guardados para toda la empresa.", "success");
+        }
+    }).catch(function () {});
 }
 
 function activarResizeColumnasMatriz() {
@@ -251,6 +470,8 @@ function activarResizeColumnasMatriz() {
                 const w = Math.max(48, startW + ev.clientX - startX);
                 th.style.width = w + "px";
                 th.style.minWidth = w + "px";
+                const col = document.querySelector('#colgroupItems col[data-col="' + th.getAttribute("data-col") + '"]');
+                if (col) col.style.width = w + "px";
             }
             function up() {
                 document.removeEventListener("mousemove", move);
@@ -307,7 +528,10 @@ function confirmarNuevoRango() {
     lotesSimulacion.push({id: nId, q: q}); 
     lotesSimulacion.sort((a,b)=>a.q-b.q);
     
-    itemsPresupuesto.forEach(i => { i.costos[nId] = (closestId && i.costos[closestId] !== undefined) ? i.costos[closestId] : (i.costoUnitario || 0); });
+    itemsPresupuesto.forEach(i => {
+        if (i.es_global) i.costos[nId] = (Number(i.costoUnitario) || 0) / q;
+        else i.costos[nId] = (closestId && i.costos[closestId] !== undefined) ? i.costos[closestId] : (i.costoUnitario || 0);
+    });
     
     bootstrap.Modal.getInstance(document.getElementById('modalNuevoRango'))?.hide();
     renderizarTablaItems();
@@ -315,9 +539,86 @@ function confirmarNuevoRango() {
 
 function eliminarLote(id) { if(lotesSimulacion.length<=1) return; lotesSimulacion = lotesSimulacion.filter(l=>l.id!==id); renderizarTablaItems(); }
 function actualizarCostoItem(iId, lId, val) { let item = itemsPresupuesto.find(i=>i.id===iId); if(item) { item.costos[lId] = parseFloat(val)||0; renderizarTablaItems(); } }
-function agregarItemTemporal() { let ni = {id:Date.now(), fuente:"[Manual]", nombre:"", categoria:"Materias Primas", cantidad:1, um:"UND", costoUnitario:0, costos:{}}; lotesSimulacion.forEach(l => ni.costos[l.id] = 0); itemsPresupuesto.push(ni); renderizarTablaItems(); }
+function celdaCostoLote_(i) {
+    const glob = !!i.es_global;
+    return '<div class="mtx-glob-wrap">' +
+        '<input type="checkbox" class="form-check-input mtx-glob-chk" title="Marcar como costo global (se divide entre Q)" ' + (glob ? "checked " : "") + 'onchange="alternarEsGlobal(' + i.id + ',this.checked)">' +
+        '<input type="number" step="1" class="form-control form-control-sm text-end mtx-glob-inp" title="Costo global del lote (COP)" ' + (glob ? "" : "disabled ") + 'placeholder="—" value="' + (glob ? Math.round(Number(i.costoUnitario) || 0) : "") + '" onchange="actualizarCostoGlobal(' + i.id + ',this.value)">' +
+        "</div>";
+}
+function actualizarCostoGlobal(id, val) {
+    const i = itemsPresupuesto.find(function (x) { return x.id === id; });
+    if (!i) return;
+    i.es_global = true;
+    i.costoUnitario = parseFloat(val) || 0;
+    diluirCostosGlobales_(i);
+    renderizarTablaItems();
+}
+function alternarEsGlobal(id, on) {
+    const i = itemsPresupuesto.find(function (x) { return x.id === id; });
+    if (!i) return;
+    if (on) {
+        const lt = lotesSimulacion[0];
+        const q = (lt && lt.q) || 1;
+        const visto = lt && i.costos ? Number(i.costos[lt.id]) || 0 : 0;
+        const prev = Number(i.costoUnitario) || 0;
+        if (!(prev > 0 && q > 1 && prev >= visto * Math.max(2, q * 0.4))) {
+            i.costoUnitario = visto || prev;
+        }
+        diluirCostosGlobales_(i);
+    } else {
+        i.es_global = false;
+    }
+    renderizarTablaItems();
+}
+function agregarItemTemporal() { let ni = {id:Date.now(), fuente:"[Manual]", nombre:"", categoria:"Materias Primas", cantidad:1, um:"UND", costoUnitario:0, es_global:false, costos:{}}; lotesSimulacion.forEach(l => ni.costos[l.id] = 0); itemsPresupuesto.push(ni); renderizarTablaItems(); }
 function actualizarCampo(id, c, v) { let i = itemsPresupuesto.find(x=>x.id===id); if(i) { i[c] = (c==='cantidad')?parseFloat(v)||0:v; renderizarTablaItems(); } }
 function eliminarItem(id) { itemsPresupuesto = itemsPresupuesto.filter(i=>i.id!==id); renderizarTablaItems(); }
+
+function alternarCandado(id) {
+    const i = itemsPresupuesto.find(function (x) { return x.id === id; });
+    if (!i) return;
+    i.candado = !itemEstaCandado(i);
+    renderizarTablaItems();
+}
+
+function alternarCandadosMasivo() {
+    if (!itemsPresupuesto.length) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("La matriz está vacía.", "info");
+        return;
+    }
+    const todos = itemsPresupuesto.every(itemEstaCandado);
+    if (todos) return liberarCandados();
+    let n = 0;
+    itemsPresupuesto.forEach(function (i) {
+        if (!itemEstaCandado(i)) {
+            i.candado = true;
+            n++;
+        }
+    });
+    renderizarTablaItems();
+    if (typeof mostrarNotificacion === "function") {
+        mostrarNotificacion(n + " línea(s) candada(s). No suman al precio; los valores se conservan.", "success");
+    }
+}
+
+function candarFabricacion() {
+    alternarCandadosMasivo();
+}
+
+function liberarCandados() {
+    let n = 0;
+    itemsPresupuesto.forEach(function (i) {
+        if (itemEstaCandado(i)) {
+            i.candado = false;
+            n++;
+        }
+    });
+    renderizarTablaItems();
+    if (typeof mostrarNotificacion === "function") {
+        mostrarNotificacion(n ? (n + " líneas liberadas. Vuelven a sumar.") : "No había candados.", n ? "success" : "info");
+    }
+}
 
 window.aplicarRangosDesdeIA = function(rangos) {
     let qs = Array.isArray(rangos) ? rangos.map(Number).filter(q => q > 0) : [];
@@ -340,11 +641,22 @@ window.reemplazarMatrizDesdeIA = function(nuevaMatriz) {
             um = hit || "UND";
         }
         let costoBase = parseFloat(m.costoUnitario) || 0;
-        let n = { id: Date.now() + Math.random(), fuente: fuenteCorrecta, nombre: nombreLimpio, categoria: m.categoria || "Materias Primas", cantidad: parseFloat(m.cantidad) || 1, um: um, es_global: !!m.es_global, costos: {} };
+        const esGlob = inferirEsGlobal_({ nombre: nombreLimpio, categoria: m.categoria, es_global: m.es_global });
+        if (esGlob && !costoBase && m.costos) {
+            const keys = Object.keys(m.costos);
+            if (keys.length) costoBase = parseFloat(m.costos[keys[0]]) || 0;
+        }
+        let n = { id: Date.now() + Math.random(), fuente: fuenteCorrecta, nombre: nombreLimpio, categoria: m.categoria || "Materias Primas", cantidad: parseFloat(m.cantidad) || 1, um: um, es_global: esGlob, candado: !!m.candado, costoUnitario: costoBase, costos: {} };
         lotesSimulacion.forEach(l => {
-            if (m.costos && m.costos[l.id] != null) n.costos[l.id] = parseFloat(m.costos[l.id]) || 0;
-            else if (m.costos && m.costos[String(l.q)] != null) n.costos[l.id] = parseFloat(m.costos[String(l.q)]) || 0;
-            else n.costos[l.id] = n.es_global ? (costoBase / (l.q || 1)) : costoBase;
+            if (n.es_global) {
+                n.costos[l.id] = (l.q ? costoBase / l.q : costoBase);
+            } else if (m.costos && m.costos[l.id] != null) {
+                n.costos[l.id] = parseFloat(m.costos[l.id]) || 0;
+            } else if (m.costos && m.costos[String(l.q)] != null) {
+                n.costos[l.id] = parseFloat(m.costos[String(l.q)]) || 0;
+            } else {
+                n.costos[l.id] = costoBase;
+            }
         });
         itemsPresupuesto.push(n);
     });

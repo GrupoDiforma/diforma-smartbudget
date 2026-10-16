@@ -30,15 +30,20 @@ function valCampo(id) {
     return (document.getElementById(id)?.value || "").trim();
 }
 
-function tresLotesExportacion(escalas) {
+function tresLotesExportacion(escalas, opts) {
     const src = escalas || (typeof lotesSimulacion !== "undefined" ? lotesSimulacion : [{ id: "l1", q: 1 }]);
     const lots = src.slice().sort(function (a, b) { return (a.q || 0) - (b.q || 0); });
     const avisos = [];
+    const sinPad = !!(opts && opts.sinPad);
     if (lots.length > 3) avisos.push("El Excel solo tiene 3 rangos; se exportaron los tres de menor Q.");
     while (lots.length < 3) {
         const last = lots[lots.length - 1] || { id: "l1", q: 1 };
-        lots.push({ id: last.id + "_pad" + lots.length, q: last.q || 1, pad: true });
-        if (lots.length === 3 && (lotesSimulacion || []).length < 3) {
+        lots.push({
+            id: (last.id || "l") + "_pad" + lots.length,
+            q: sinPad ? 0 : (last.q || 1),
+            pad: true
+        });
+        if (!sinPad && lots.length === 3 && (lotesSimulacion || []).length < 3) {
             avisos.push("Se completó a 3 rangos copiando el último Q para la plantilla.");
         }
     }
@@ -47,11 +52,7 @@ function tresLotesExportacion(escalas) {
 
 function esFleteGlobal(item) {
     if (!item) return false;
-    const n = String(item.nombre || "");
-    const cat = String(item.categoria || "");
-    if (/flete|transporte|transport/i.test(n)) return true;
-    if (item.es_global && /empaque|flete/i.test(cat)) return true;
-    return false;
+    return /flete|transporte|transport/i.test(String(item.nombre || ""));
 }
 
 function unitarioLote(item, lote, escalas) {
@@ -68,8 +69,10 @@ function unitarioLote(item, lote, escalas) {
 function montoGlobalLote(item, lote, escalas) {
     const u = unitarioLote(item, lote, escalas);
     const q = Number(lote.q) || 1;
-    if (item.es_global) return u * q;
-    return u;
+    const cant = Number(item && item.cantidad) || 1;
+    if (lote && lote.pad) return 0;
+    if (item.es_global) return u * q * cant;
+    return u * cant;
 }
 
 function escribirCelda(ws, addr, valor) {
@@ -92,9 +95,10 @@ function escribirFilaItem(ws, row, item, lots, escalas) {
     const u = m.colU || ["E", "G", "I"];
     escribirCelda(ws, (m.colDesc || "A") + row, item.nombre || "");
     escribirCelda(ws, (m.colCant || "D") + row, Number(item.cantidad) || 1);
-    escribirCelda(ws, u[0] + row, unitarioLote(item, lots[0], escalas));
-    escribirCelda(ws, u[1] + row, unitarioLote(item, lots[1], escalas));
-    escribirCelda(ws, u[2] + row, unitarioLote(item, lots[2], escalas));
+    lots.forEach(function (lt, i) {
+        const val = (lt && lt.pad) ? 0 : unitarioLote(item, lt, escalas);
+        escribirCelda(ws, u[i] + row, val);
+    });
 }
 
 function aplicarMapaXlsx(mapa) {
@@ -246,6 +250,18 @@ function nombrePestanaVersion(mkt, codigo, vid) {
     return name;
 }
 
+function clonarEstiloExcel_(dest, srcStyle) {
+    if (!dest || !srcStyle || typeof srcStyle !== "object") return;
+    let st;
+    try { st = JSON.parse(JSON.stringify(srcStyle)); } catch (e) { return; }
+    if (st.font) dest.font = st.font;
+    if (st.alignment) dest.alignment = st.alignment;
+    if (st.border) dest.border = st.border;
+    if (st.fill) dest.fill = st.fill;
+    if (st.protection) dest.protection = st.protection;
+    if (st.numFmt) dest.numFmt = st.numFmt;
+}
+
 function clonarHojaExcel(wb, src, nuevoNombre) {
     const existente = wb.getWorksheet(nuevoNombre);
     if (existente) wb.removeWorksheet(existente.id);
@@ -255,26 +271,33 @@ function clonarHojaExcel(wb, src, nuevoNombre) {
     try { opts.headerFooter = JSON.parse(JSON.stringify(src.headerFooter || {})); } catch (e3) {}
     try { opts.properties = JSON.parse(JSON.stringify(src.properties || {})); } catch (e4) {}
     const copy = wb.addWorksheet(nuevoNombre, opts);
-    const colCount = Math.max(Number(src.columnCount) || 13, 13);
+    if (src.properties && src.properties.defaultRowHeight != null) {
+        copy.properties.defaultRowHeight = src.properties.defaultRowHeight;
+    }
+    const colCount = Math.max(Number(src.columnCount) || 16, 16);
     for (let c = 1; c <= colCount; c++) {
         const sc = src.getColumn(c);
         const dc = copy.getColumn(c);
         if (sc.width != null) dc.width = sc.width;
         dc.hidden = !!sc.hidden;
-        if (sc.style) {
-            try { dc.style = JSON.parse(JSON.stringify(sc.style)); } catch (e5) {}
-        }
+        // No copiar column.style: ExcelJS lo serializa como Calibri 11 y recorta
+        // los números del AIU (filas de 9 pt pensadas para Arial 8).
     }
     src.eachRow({ includeEmpty: true }, function (row, n) {
         const dr = copy.getRow(n);
         if (row.height != null) dr.height = row.height;
         dr.hidden = !!row.hidden;
+        clonarEstiloExcel_(dr, row.style);
+        try {
+            if (row.font) dr.font = JSON.parse(JSON.stringify(row.font));
+        } catch (eFont) {}
         row.eachCell({ includeEmpty: true }, function (cell, col) {
             const t = dr.getCell(col);
-            t.value = cell.value;
-            try { t.style = JSON.parse(JSON.stringify(cell.style || {})); } catch (e6) {}
+            try { t.value = cell.value; } catch (eVal) {}
+            clonarEstiloExcel_(t, cell.style);
             if (cell.numFmt) t.numFmt = cell.numFmt;
         });
+        try { dr.commit(); } catch (eCommit) {}
     });
     const merges = (src.model && src.model.merges) ? src.model.merges.slice() : [];
     merges.forEach(function (ref) {
@@ -331,14 +354,22 @@ function escribirObservacionVersion(ws, ver) {
     master.alignment = Object.assign({}, master.alignment || {}, { wrapText: true, vertical: "top" });
 }
 
-function rellenarHojaVersion(ws, ver, codigo, avisos) {
+function itemExportCandado_(it) {
+    if (typeof itemEstaCandado === "function") return itemEstaCandado(it);
+    return !!(it && (it.candado === true || it.candado === "S" || it.candado === 1));
+}
+
+function rellenarHojaVersion(ws, ver, codigo, avisos, opts) {
+    opts = opts || {};
+    const incluirCandado = !!opts.incluirCandado;
     const items = ver.matrizItems || [];
     const escalas = ver.escalas || [{ id: "l1", q: 1 }];
-    const { lots } = tresLotesExportacion(escalas);
+    const { lots } = tresLotesExportacion(escalas, { sinPad: !!opts.esAux });
     const fab = [];
     const com = [];
     const fletes = [];
     items.forEach(function (it) {
+        if (!incluirCandado && itemExportCandado_(it)) return;
         if (esFleteGlobal(it)) fletes.push(it);
         else if (it.categoria === "Comercialización") com.push(it);
         else fab.push(it);
@@ -365,6 +396,7 @@ function rellenarHojaVersion(ws, ver, codigo, avisos) {
     com.slice(0, maxCom).forEach(function (it, i) {
         escribirFilaItem(ws, XLSX_FILAS_COM.inicio + i, it, lots, escalas);
     });
+    limpiarFilaItem(ws, XLSX_FILA_FLETE);
     if (fletes.length) {
         const acc = [0, 0, 0];
         fletes.forEach(function (it) {
@@ -381,6 +413,169 @@ function rellenarHojaVersion(ws, ver, codigo, avisos) {
         escribirCelda(ws, u[2] + XLSX_FILA_FLETE, acc[2]);
     }
     escribirObservacionVersion(ws, ver);
+    if (opts.esAux) escribirNotaAuxExcel(ws, ver, codigo);
+    else escribirNotaCandadosExcel(ws, ver, codigo);
+}
+
+function escribirNotaAuxExcel(ws, ver, codigo) {
+    const items = (ver && ver.matrizItems) || [];
+    const n = items.filter(itemExportCandado_).length;
+    const nota = "AUXILIAR · estudio de costos (incluye " + n + " línea(s) candada(s)). Mismo formato NAL/EXP. No usar esta pestaña como precio de venta.";
+    const hit = buscarTextoHoja(ws, /OBSERVACIONES/i, 90, 6);
+    if (!hit) return;
+    const below = ws.getCell(hit.r + 1, hit.c);
+    const master = below.master || below;
+    const prev = valorCeldaPlano(master);
+    if (prev.indexOf("AUXILIAR") >= 0) return;
+    const font0 = Object.assign({ name: "Calibri", size: 9, bold: true }, master.font || {});
+    const fontNota = { name: "Calibri", size: 9, italic: true, bold: false, color: { argb: "FFB42318" } };
+    master.value = {
+        richText: [
+            { font: font0, text: prev ? prev.replace(/\s+$/, "") + "\n\n" : "" },
+            { font: fontNota, text: nota }
+        ]
+    };
+    master.alignment = Object.assign({}, master.alignment || {}, { wrapText: true, vertical: "top" });
+}
+
+function escribirNotaCandadosExcel(ws, ver, codigo) {
+    const items = (ver && ver.matrizItems) || [];
+    const n = items.filter(itemExportCandado_).length;
+    if (!n) return;
+    const vid = ver.id || "V1";
+    const aux = nombrePestanaVersion("AUX", codigo, vid);
+    const nota = n + " línea(s) candada(s): no suman aquí. Desglose con valores en " + aux + ".";
+    const hit = buscarTextoHoja(ws, /OBSERVACIONES/i, 90, 6);
+    if (!hit) return;
+    const below = ws.getCell(hit.r + 1, hit.c);
+    const master = below.master || below;
+    const prev = valorCeldaPlano(master);
+    if (prev.indexOf("candada") >= 0) return;
+    const font0 = Object.assign({ name: "Calibri", size: 9, bold: true }, master.font || {});
+    const fontNota = { name: "Calibri", size: 9, italic: true, bold: false, color: { argb: "FFB42318" } };
+    master.value = {
+        richText: [
+            { font: font0, text: prev ? prev.replace(/\s+$/, "") + "\n\n" : "" },
+            { font: fontNota, text: nota }
+        ]
+    };
+    master.alignment = Object.assign({}, master.alignment || {}, { wrapText: true, vertical: "top" });
+}
+
+function rellenarHojaAux(ws, ver, codigo) {
+    const items = ver.matrizItems || [];
+    const escalas = ver.escalas || [{ id: "l1", q: 1 }];
+    const { lots } = tresLotesExportacion(escalas);
+    const vid = ver.id || "V1";
+    const nCand = items.filter(itemExportCandado_).length;
+
+    ws.getColumn(1).width = 6;
+    ws.getColumn(2).width = 16;
+    ws.getColumn(3).width = 62;
+    ws.getColumn(4).width = 20;
+    ws.getColumn(5).width = 10;
+    ws.getColumn(6).width = 10;
+    let col = 7;
+    lots.forEach(function () {
+        ws.getColumn(col).width = 14;
+        ws.getColumn(col + 1).width = 14;
+        col += 2;
+    });
+    ws.getColumn(col).width = 12;
+    ws.getColumn(col + 1).width = 16;
+
+    const lastCol = 6 + lots.length * 2 + 2;
+    function mergeTitulo(row, texto, fill, color, size, italic) {
+        try { ws.mergeCells(row, 1, row, lastCol); } catch (e) {}
+        const cell = ws.getCell(row, 1);
+        cell.value = texto;
+        cell.font = { name: "Calibri", size: size || 12, bold: !italic, italic: !!italic, color: { argb: color || "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+        cell.alignment = { vertical: "middle", wrapText: true };
+        ws.getRow(row).height = italic ? 32 : 22;
+    }
+
+    mergeTitulo(1, "TABLA AUXILIAR · ESTUDIO DE COSTOS — no alimenta el AIU de NAL/EXP", "FFB42318", "FFFFFFFF", 13, false);
+    mergeTitulo(2, (codigo || "") + " · " + vid + " · " + nCand + " línea(s) candada(s). Los unitarios reales se conservan aquí.", "FF1A1A1A", "FFFFFFFF", 10, false);
+    mergeTitulo(3, "Candado = S: la línea no suma al precio de venta. Sirve para pronosticar un costo de proveedor y pasarlo a Comercialización.", "FFF7F7F7", "FF333333", 9, true);
+
+    const headers = ["#", "Fuente", "Descripción", "Categoría", "Cant.", "U.M."];
+    lots.forEach(function (lt) {
+        headers.push("Q " + lt.q + " unit.");
+        headers.push("Q " + lt.q + " total");
+    });
+    headers.push("Candado", "Suma al precio");
+    const head = ws.getRow(5);
+    headers.forEach(function (h, i) {
+        const cell = head.getCell(i + 1);
+        cell.value = h;
+        cell.font = { name: "Calibri", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+        cell.alignment = { vertical: "middle", wrapText: true };
+    });
+    head.height = 22;
+
+    let sumaFabEst = [0, 0, 0];
+    let sumaFabEntra = [0, 0, 0];
+    let sumaComEntra = [0, 0, 0];
+
+    items.forEach(function (it, idx) {
+        const row = ws.getRow(6 + idx);
+        const cand = itemExportCandado_(it);
+        const com = it.categoria === "Comercialización";
+        row.getCell(1).value = idx + 1;
+        row.getCell(2).value = it.fuente || "";
+        row.getCell(3).value = it.nombre || "";
+        row.getCell(4).value = it.categoria || "";
+        row.getCell(5).value = Number(it.cantidad) || 1;
+        row.getCell(6).value = it.um || "UND";
+        lots.forEach(function (lt, li) {
+            const u = unitarioLote(it, lt, escalas);
+            const tot = u * (Number(it.cantidad) || 1);
+            row.getCell(7 + li * 2).value = u;
+            row.getCell(8 + li * 2).value = tot;
+            row.getCell(7 + li * 2).numFmt = "#,##0";
+            row.getCell(8 + li * 2).numFmt = "#,##0";
+            if (!com) sumaFabEst[li] += tot;
+            if (!cand && !com) sumaFabEntra[li] += tot;
+            if (!cand && com) sumaComEntra[li] += tot;
+        });
+        row.getCell(7 + lots.length * 2).value = cand ? "S" : "N";
+        row.getCell(8 + lots.length * 2).value = cand ? "N" : "S";
+        row.font = { name: "Calibri", size: 9 };
+        row.alignment = { vertical: "middle", wrapText: true };
+        if (cand) {
+            for (let c = 1; c <= lastCol; c++) {
+                row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F3F3" } };
+            }
+        }
+    });
+
+    const base = 7 + items.length;
+    function filaResumen(r, label, vals, fill) {
+        try { ws.mergeCells(r, 1, r, 6); } catch (e) {}
+        const lab = ws.getCell(r, 1);
+        lab.value = label;
+        lab.font = { name: "Calibri", size: 9, bold: true };
+        lab.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+        lots.forEach(function (lt, li) {
+            const cell = ws.getCell(r, 8 + li * 2);
+            cell.value = vals[li] || 0;
+            cell.numFmt = '"$"#,##0';
+            cell.font = { name: "Calibri", size: 9, bold: true };
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+        });
+        ws.getRow(r).height = 18;
+    }
+    filaResumen(base, "Subtotal fabricación ESTUDIO (incluye candadas)", sumaFabEst, "FFEEEEEE");
+    filaResumen(base + 1, "Subtotal fabricación que ENTRA al precio", sumaFabEntra, "FFE8F5E9");
+    filaResumen(base + 2, "Subtotal comercialización que ENTRA al precio", sumaComEntra, "FFFFF3E0");
+
+    ws.views = [{ state: "frozen", ySplit: 5 }];
+    ws.autoFilter = {
+        from: { row: 5, column: 1 },
+        to: { row: Math.max(5, 5 + items.length), column: lastCol }
+    };
 }
 
 function valorCeldaPlano(cell) {
@@ -673,7 +868,20 @@ window.exportarPresupuestoExcel = async function () {
             }
             asignadas.push({ ver: ver, ws: ws });
         });
-        asignadas.forEach(function (a) { rellenarHojaVersion(a.ws, a.ver, codigo, avisos); });
+        asignadas.forEach(function (a) {
+            const nCand = (a.ver.matrizItems || []).filter(itemExportCandado_).length;
+            let aux = null;
+            if (nCand) {
+                const auxName = nombrePestanaVersion("AUX", codigo, a.ver.id);
+                aux = clonarHojaExcel(wb, a.ws, auxName);
+                aux.orderNo = (a.ws.orderNo || 0) + 0.25;
+            }
+            rellenarHojaVersion(a.ws, a.ver, codigo, avisos);
+            if (aux) {
+                rellenarHojaVersion(aux, a.ver, codigo, avisos, { incluirCandado: true, esAux: true });
+                avisos.push(a.ver.id + ": pestaña " + aux.name + " (formato NAL/EXP, con " + nCand + " candada(s)).");
+            }
+        });
 
         const buf = await wb.xlsx.writeBuffer();
         const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
