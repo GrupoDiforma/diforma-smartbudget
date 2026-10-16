@@ -137,7 +137,7 @@ No consultar Drive ni la web en cada cotización. `[Estimado IA]` no es un scrap
 Hay **una sola ventana de chat** (`ia-core.js`) con un único historial de sesión. No existe “Instrucción Inicial” aparte.
 
 1. El analista sube archivos (renders, planos, fichas, PDF/JPG/PNG). La zona de carga se compacta al haber archivos; se pueden adjuntar también desde el clip del chat.
-2. Pulsa **Analizar archivos** → **Fase 1 entrevista**. La IA **no** genera matriz aunque el analista ya haya respondido.
+2. Pulsa **Analizar archivos** → **Fase 1 entrevista**. La IA **no** genera matriz aunque el analista ya haya respondido. El **chat siempre en español** (interno Diforma). El idioma Odoo (es/en) solo aplica a título y descripción de la ficha comercial.
 3. Conversación en un solo chat (textarea con saltos de línea). Si no hay rangos, se usarán 1 / 50 / 100 al costear.
 4. El analista pulsa **Generar matriz** → costeo JSON + **ficha comercial** (título, 3–4 líneas, medidas, empaque). Gemini busca en **Catalogo_Maestro** (filas vigentes). No recorre los PDF/Excel crudos en ese momento.
 5. El mismo chat **ajusta ítems**. En un proyecto ya costado, **Rellenar con IA** completa solo la ficha (no pisa la matriz).

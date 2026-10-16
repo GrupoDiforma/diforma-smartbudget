@@ -259,7 +259,7 @@ function bloqueLocaleParaPrompt() {
     const pistas = window.odooPistas || {};
     const lineas = [
         "=== FICHA COMERCIAL / LOCALE (Odoo Brief) ===",
-        "idioma de la ficha: " + idioma + " (lang Odoo=" + (loc.langOdoo || "") + ")",
+        "idioma de la FICHA (no del chat): " + idioma + " (lang Odoo=" + (loc.langOdoo || "") + ")",
         "sistema de medida: " + (loc.sistema === "imperial" ? "Sistema Ingles" : "Sistema Internacional") + " → um=" + um,
         "país: " + (loc.pais || "—"),
         pistas.funcionales ? ("funcionales Odoo: " + pistas.funcionales) : "",
@@ -428,6 +428,7 @@ function instruccionesFase(modo) {
     const base = `${promptMaestroActivo()}
 
 === REGLAS DEL SISTEMA (mandan sobre el texto de Ajustes) ===
+IDIOMA DEL CHAT: SIEMPRE español. El analista es de Diforma. Aunque el Brief, el PDF o la ficha vayan en inglés, preguntas, resúmenes y aclaraciones van en español. El idioma Odoo (es/en) SOLO aplica a ficha.titulo y ficha.descripcion (texto para el cliente).
 Las fases las controla la app: entrevista hasta que el analista pulse Generar matriz; entonces JSON. No uses herramientas inventadas ni busques en Drive archivo por archivo. El catálogo ya viene abajo. campo um = UND (nunca escribas Unidades). campo fuente aparte; no lo metas en nombre.
 Prioridad: 1) [Tarifa Fija] si el ítem coincide con la lista de tarifas (procesos internos). 2) Catálogo maestro / [Matriz Drive] para materiales. 3) [Estimado IA]. 4) [Manual].
 
@@ -446,7 +447,7 @@ ${tarifas || '(vacío)'}`;
 ${bloqueLocaleParaPrompt()}
 
 MODO ACTUAL: FASE 1 ENTREVISTA.
-Responde en ${localeProyectoActual && localeProyectoActual().idioma === "en" ? "inglés" : "español"}, breve. PROHIBIDO JSON, arrays de ítems o costos. NO desgloses la matriz.
+Responde SIEMPRE en español, breve. Aunque el proyecto sea exportación o el Brief esté en inglés. PROHIBIDO JSON, arrays de ítems o costos. NO desgloses la matriz.
 Aunque el analista dé todos los datos, SOLO continúa el diálogo. El costeo ocurre únicamente en FASE 2.
 Pregunta solo lo no obvio. Incluye rangos si no están en los archivos. Medidas en ${localeProyectoActual && localeProyectoActual().sistema === "imperial" ? "pulgadas (in)" : "centímetros (cm)"}.
 Si ya hay una matriz en pantalla o un historial previo, NO reinicies la entrevista: confirma lo pendiente y pide que pulse Generar matriz.
@@ -461,7 +462,7 @@ ${bloqueLocaleParaPrompt()}
 
 MODO ACTUAL: FASE 2 GENERAR COTIZACIÓN.
 El analista confirmó. Usa rangos que haya dicho; si no hay, [1, 50, 100].
-Primero un párrafo corto. AL FINAL un único JSON (sin markdown) con esta forma:
+Primero un párrafo corto EN ESPAÑOL (chat interno). AL FINAL un único JSON (sin markdown) con esta forma:
 {"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"}},"items":[{"fuente":"[Estimado IA]","nombre":"...","categoria":"Materias Primas","cantidad":1,"um":"UND","costoUnitario":0,"es_global":false}]}
 ficha.titulo y ficha.descripcion en ${langF}. descripcion: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo).
 Medidas de ficha SOLO en ${umF}. Si el brief ya trae 60x40x120, úsalas. empaque: estima caja si no hay dato (un poco mayor que el mueble).
@@ -472,7 +473,7 @@ costoUnitario en COP sin IVA. Para es_global true, costoUnitario es el costo del
 ${bloqueLocaleParaPrompt()}
 
 MODO ACTUAL: FASE 3 AJUSTES sobre la matriz ya listada.
-Responde breve. Si modificas ítems o el analista pide regenerar/rehacer la matriz, AL FINAL el JSON completo {"rangos":[...],"ficha":{...},"items":[...]} sin markdown. Incluye ficha si cambian título, texto o medidas.
+Responde SIEMPRE en español, breve. Si modificas ítems o el analista pide regenerar/rehacer la matriz, AL FINAL el JSON completo {"rangos":[...],"ficha":{...},"items":[...]} sin markdown. Incluye ficha si cambian título, texto o medidas.
 Si solo aclaras, no envíes JSON.
 Puede adjuntar archivos extra: úsalos. No pidas recargar la página.
 Al rellenar costos: flete, cajas máster, elaboración de troquel (dado) y setup van con es_global true y costoUnitario = COP del lote (o por caja del lote). NO copies esos valores a costos[] ni los pongas como precio de cada producto. La app diluye Costo/Q. PROHIBIDO asignar una caja o un flete entero a cada unidad del rango (ej. 5.000 cenefas). Troquelado por golpe y materiales por pieza: es_global false.
@@ -517,7 +518,12 @@ window.reiniciarSesionIA = window.limpiarMesaDeTrabajo;
 async function llamarGeminiConImagenes(promptTexto, timeoutMs) {
     const forzarPro = document.getElementById('togglePro')?.checked || false;
     const parts = [{ text: promptTexto }];
-    (window.archivosGemaBase64 || []).forEach(f => parts.push({ inlineData: { mimeType: f.mimeType, data: f.data } }));
+    const vis = (typeof window.prepararPartesGemini === "function")
+        ? await window.prepararPartesGemini()
+        : (window.archivosGemaBase64 || []).map(function (f) {
+            return { inlineData: { mimeType: f.mimeType, data: f.data } };
+        });
+    vis.forEach(function (p) { parts.push(p); });
     const data = await realizarPeticionBD({ action: 'gemini_analizar', forzarPro: forzarPro, parts: parts }, { timeoutMs: timeoutMs || 180000 });
     pintarUsoGemini(data && data.uso);
     return data;
@@ -625,8 +631,9 @@ window.procesarPlanoIA = async function() {
     actualizarBotonGenerar();
     pintarMensaje('user', reanudar ? 'Reanalizar archivos (continuar)' : 'Analizar archivos adjuntos');
     window.historialChatIA.push({ role: 'user', text: reanudar ? 'Reanalizar archivos (continuar)' : 'Analizar archivos adjuntos' });
-    const typingId = marcarEsperaIA_("Analizando archivos…");
+    const typingId = marcarEsperaIA_("Preparando archivos…");
     try {
+        esperaIATexto_("Consultando a Gemini…");
         const extra = reanudar
             ? `\nYa hay matriz y/o chat. NO reinicies la entrevista. Resume el análisis. Si el costeo está listo, pide que pulse Generar matriz.\n=== MATRIZ ACTUAL ===\n${JSON.stringify({ rangos: (typeof lotesSimulacion !== "undefined" ? lotesSimulacion.map(function (l) { return l.q; }) : [1]), items: (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []) })}\n=== HISTORIAL ===\n${historialComoTexto()}`
             : "\nInicia la Fase 1.";
@@ -672,9 +679,7 @@ window.enviarMensajeChat = async function() {
 
     try {
         const promptTexto = `${instruccionesFase(modo)}\n\n=== HISTORIAL ===\n${historialComoTexto()}\n\n=== ÚLTIMO MENSAJE DEL ANALISTA ===\n${msg}`;
-        const data = (window.archivosGemaBase64?.length)
-            ? await llamarGeminiConImagenes(promptTexto, 180000)
-            : await llamarGeminiChat(promptTexto, 120000);
+        const data = await llamarGeminiChat(promptTexto, 90000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const cotizacion = extraerCotizacionIA(texto);
@@ -709,7 +714,7 @@ function promptSoloFichaComercial() {
     return `${bloqueLocaleParaPrompt()}
 
 TAREA: rellenar SOLO la ficha comercial. NO toques costos ni matriz.
-Idioma del texto: ${langF}. Medidas SOLO en ${umF}.
+Párrafo del chat: español. Idioma de titulo/descripcion de la ficha: ${langF}. Medidas SOLO en ${umF}.
 titulo corto (como en cotización). descripcion 3–4 líneas: qué es, uso en PDV, materiales visibles. Sin receta de costo.
 dimensiones del mueble (ancho × fondo × alto). empaque de la caja (un poco mayor si no hay dato).
 Usa renders/PDF, el chat y pistas de ítems (ej. caja 155x65x45). Si el brief Odoo trae 60×40×120, úsalas.

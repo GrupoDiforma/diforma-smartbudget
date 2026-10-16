@@ -4,6 +4,65 @@ window._pdfDoc = null;
 window._pdfPage = 1;
 window._pdfIdx = -1;
 
+async function pdfAPartesGemini_(f, maxPaginas) {
+    maxPaginas = maxPaginas || 4;
+    if (!asegurarPdfJs_()) {
+        if ((f.data || "").length < 3500000) {
+            return [{ inlineData: { mimeType: "application/pdf", data: f.data } }];
+        }
+        return [];
+    }
+    const pdf = await pdfjsLib.getDocument({ data: bytesArchivoGema_(f) }).promise;
+    const n = Math.min(pdf.numPages, maxPaginas);
+    const parts = [];
+    for (let i = 1; i <= n; i++) {
+        const page = await pdf.getPage(i);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(1.35, 1100 / Math.max(1, base.width));
+        const viewport = page.getViewport({ scale: scale });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(viewport.width));
+        canvas.height = Math.max(1, Math.round(viewport.height));
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport: viewport }).promise;
+        const jpg = canvas.toDataURL("image/jpeg", 0.78);
+        const m = String(jpg).match(/^data:([^;]+);base64,(.+)$/);
+        if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+    }
+    return parts;
+}
+
+/** Imágenes recortadas + primeras páginas de PDF. Evita mandar el archivo crudo (10–40 MB) a GAS/Gemini. */
+window.prepararPartesGemini = async function () {
+    const files = window.archivosGemaBase64 || [];
+    const parts = [];
+    const MAX = 6;
+    for (let i = 0; i < files.length && parts.length < MAX; i++) {
+        const f = files[i];
+        if (f._gParts && f._gParts.length) {
+            f._gParts.forEach(function (p) { if (parts.length < MAX) parts.push(p); });
+            continue;
+        }
+        let made = [];
+        if (mimeEsImagen_(f.mimeType)) {
+            try {
+                const src = "data:" + (f.mimeType || "image/jpeg") + ";base64," + (f.data || "");
+                const jpg = await window.reducirImagenJpeg(src, 1280, 0.8);
+                const m = String(jpg).match(/^data:([^;]+);base64,(.+)$/);
+                if (m) made = [{ inlineData: { mimeType: m[1], data: m[2] } }];
+            } catch (e) {
+                if ((f.data || "").length < 2500000) {
+                    made = [{ inlineData: { mimeType: f.mimeType || "image/jpeg", data: f.data } }];
+                }
+            }
+        } else if (mimeEsPdf_(f.mimeType, f.name)) {
+            try { made = await pdfAPartesGemini_(f, 4); } catch (e2) { made = []; }
+        }
+        f._gParts = made;
+        made.forEach(function (p) { if (parts.length < MAX) parts.push(p); });
+    }
+    return parts;
+};
+
 function bytesArchivoGema_(f) {
     const bin = atob(f.data || "");
     const bytes = new Uint8Array(bin.length);

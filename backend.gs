@@ -2082,7 +2082,8 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro) {
     if (tm === "PRO") c = ordenarModelosPorPotencia(modelos.filter(function(m) { return m.indexOf("pro") !== -1 || m.indexOf("thinking") !== -1; }));
     else c = ordenarModelosPorPotencia(modelos.filter(function(m) { return m.indexOf("flash") !== -1 && m.indexOf("thinking") === -1; }));
   }
-  if (c.length === 0) c = (tm === "PRO") ? ["gemini-1.5-pro"] : ["gemini-1.5-flash"];
+  c = c.filter(function (m) { return String(m).indexOf("thinking") === -1; }).slice(0, 2);
+  if (c.length === 0) c = (tm === "PRO") ? ["gemini-2.5-pro", "gemini-1.5-pro"] : ["gemini-2.0-flash", "gemini-1.5-flash"];
   var jsonRes = null;
   var me = "";
   var err = [];
