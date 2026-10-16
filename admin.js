@@ -1,5 +1,7 @@
 // Usamos var para que la variable sea accesible globalmente por los otros archivos
 var CONFIG_GLOBAL = null;
+var _configHojaOk = false;
+var _configHojaFallo = false;
 var _umsDesdeMaestro = [];
 var UMS_MATRIZ_MIN = ["UND", "m2", "Juego"];
 var UMS_CATALOGO_BASE = ["Unidades", "UND", "Metros", "kg", "Hojas", "m2", "Litros", "Juego", "LAMINA", "ROLLO", "Rollox50mts", "—"];
@@ -339,6 +341,8 @@ function quitarComisionUI(btn) {
 }
 
 async function cargarConfiguracionGlobal() {
+    _configHojaOk = false;
+    _configHojaFallo = false;
     try {
         const resBase = await fetch('config.json');
         let baseConfig = resBase.ok ? await resBase.json() : {};
@@ -347,8 +351,18 @@ async function cargarConfiguracionGlobal() {
             try {
                 const resRemoto = await fetch(baseConfig.gasUrl, { method: 'POST', body: JSON.stringify({ action: 'obtener_config' }) });
                 const dataRemota = await resRemoto.json();
-                if (dataRemota.exito && dataRemota.data) remotaConfig = dataRemota.data;
-            } catch(e) { console.warn("Modo offline o error al traer config remota."); }
+                if (dataRemota.exito && dataRemota.data) {
+                    remotaConfig = dataRemota.data;
+                    _configHojaOk = true;
+                } else if (!(dataRemota && /Sin configuración remota/i.test(String(dataRemota.mensaje || "")))) {
+                    _configHojaFallo = true;
+                }
+            } catch(e) {
+                _configHojaFallo = true;
+                console.warn("Modo offline o error al traer config remota.");
+            }
+        } else {
+            _configHojaFallo = true;
         }
         if (remotaConfig) {
             CONFIG_GLOBAL = Object.assign({}, remotaConfig);
@@ -367,11 +381,58 @@ async function cargarConfiguracionGlobal() {
             } catch (eUms) {}
             if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
         }
+        pintarAvisoConfigRemota_();
         return CONFIG_GLOBAL;
-    } catch (err) { console.error("Error cargando config:", err); }
+    } catch (err) {
+        _configHojaFallo = true;
+        console.error("Error cargando config:", err);
+    }
+}
+
+function pintarAvisoConfigRemota_() {
+    const aviso = document.getElementById("avisoConfigRemota");
+    const btn = document.getElementById("btnGuardarAjustes");
+    const nota = document.getElementById("notaAjustesGlobal");
+    if (!_configHojaFallo) {
+        if (aviso) { aviso.classList.add("d-none"); aviso.innerHTML = ""; }
+        if (btn) { btn.disabled = false; btn.title = "Guarda estos ajustes para toda la empresa."; }
+        if (nota) nota.textContent = "Los cambios aplican a toda la empresa.";
+        return;
+    }
+    if (aviso) {
+        aviso.classList.remove("d-none");
+        aviso.innerHTML = "No se pudo leer la configuración de la empresa. Lo que aparece aquí puede ser la copia del sitio, no la hoja global. Guardar está apagado para no reemplazarla. " +
+            "<button type=\"button\" class=\"btn admin-btn btn-sm ms-1\" onclick=\"reintentarConfigAjustes()\">Reintentar</button>";
+    }
+    if (btn) { btn.disabled = true; btn.title = "Se activa cuando la hoja responda."; }
+    if (nota) nota.textContent = "Sin lectura de la hoja no se puede guardar.";
+}
+
+async function reintentarConfigAjustes() {
+    const aviso = document.getElementById("avisoConfigRemota");
+    const btn = document.getElementById("btnGuardarAjustes");
+    if (aviso) aviso.textContent = "Leyendo la configuración de la empresa…";
+    if (btn) btn.disabled = true;
+    await cargarConfiguracionGlobal();
+    pintarFormularioAjustes_();
+    pintarAvisoConfigRemota_();
+    if (!_configHojaFallo && typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("Configuración de la empresa cargada.", "success");
+    }
 }
 
 function abrirModalAdmin() {
+    if(!CONFIG_GLOBAL) return;
+    pintarFormularioAjustes_();
+    pintarAvisoConfigRemota_();
+    if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
+    new bootstrap.Modal(document.getElementById('modalAdmin')).show();
+    if (typeof refrescarEstadoCatalogo === "function") refrescarEstadoCatalogo();
+    if (typeof cargarTablaCatalogo === "function") cargarTablaCatalogo();
+    if (typeof window.refrescarEstadoPlantillaExcel === "function") window.refrescarEstadoPlantillaExcel();
+}
+
+function pintarFormularioAjustes_() {
     if(!CONFIG_GLOBAL) return;
     const d = CONFIG_GLOBAL;
     const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || (val===0?0:''); };
@@ -409,11 +470,6 @@ function abrirModalAdmin() {
     if (typeof pintarEditorMembrete === "function") pintarEditorMembrete();
     const selUm = document.getElementById("catNuevoUm");
     if (selUm) selUm.innerHTML = opcionesUmHtml("UND");
-    if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
-    new bootstrap.Modal(document.getElementById('modalAdmin')).show();
-    if (typeof refrescarEstadoCatalogo === "function") refrescarEstadoCatalogo();
-    if (typeof cargarTablaCatalogo === "function") cargarTablaCatalogo();
-    if (typeof window.refrescarEstadoPlantillaExcel === "function") window.refrescarEstadoPlantillaExcel();
 }
 
 var _catPoll = null;
@@ -1164,6 +1220,11 @@ function tycInsertarVar(k) {
 }
 
 async function guardarConfiguracion() {
+    if (_configHojaFallo) {
+        pintarAvisoConfigRemota_();
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se guardó: no se pudo leer la configuración de la empresa.", "danger");
+        return;
+    }
     const email = localStorage.getItem('smartbudget_email');
     const token = localStorage.getItem('smartbudget_token');
     if (!email || !token) return alert("Sesión inválida.");

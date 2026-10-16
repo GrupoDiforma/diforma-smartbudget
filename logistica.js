@@ -1651,16 +1651,45 @@ function logIdbPutImg_(fid, data) {
     }).catch(function () {});
 }
 
+function logUrlImgDrive_(fid) {
+    return "https://lh3.googleusercontent.com/d/" + encodeURIComponent(fid) + "=s1200";
+}
+
+function logisticaImgBlob_(fila) {
+    const ref = fila && (fila.imgRef || fila.srcRef);
+    if (!ref || fila._imgBlob) return;
+    fila._imgBlob = true;
+    realizarPeticionBD({ action: "cotizacion_imagenes", ids: [ref], modo: "blob" }, { timeoutMs: 60000 }).then(function (r) {
+        const u = r && r.exito && r.data ? r.data[ref] : "";
+        if (!u || !/^data:image\//.test(u)) return;
+        logIdbPutImg_(ref, u);
+        logisticaPonerImgFila_(fila.uid, u);
+    }).catch(function () {});
+}
+
 function logisticaPonerImgFila_(uid, src) {
     const fila = logFilaPorUid_(uid);
     if (fila) fila.img = src;
+    const aplicar = function (img) {
+        if (/^https:\/\/lh3\.googleusercontent\.com\//.test(String(src || ""))) {
+            img.onerror = function () {
+                if (img.dataset.fb) return;
+                img.dataset.fb = "1";
+                const dueña = logFilaPorUid_(uid);
+                if (dueña) logisticaImgBlob_(dueña);
+            };
+        }
+        img.src = src;
+    };
     const f = document.getElementById("logFrame");
     const doc = f && f.contentDocument;
-    if (doc) {
-        doc.querySelectorAll("img.thumb[data-r=\"" + uid + "\"]").forEach(function (img) { img.src = src; });
-    }
+    if (doc) doc.querySelectorAll("img.thumb[data-r=\"" + uid + "\"]").forEach(aplicar);
     const btn = document.querySelector("#logFilasLista .log-fila[data-r=\"" + uid + "\"] .log-fila-img");
-    if (btn) btn.innerHTML = src ? "<img src=\"" + String(src).replace(/"/g, "") + "\" alt=\"\">" : "<i class=\"bi bi-image\"></i>";
+    if (btn) {
+        btn.innerHTML = src ? "<img alt=\"\">" : "<i class=\"bi bi-image\"></i>";
+        const mini = btn.querySelector("img");
+        if (mini) aplicar(mini);
+    }
 }
 
 async function logisticaHidatarImgsCache_(filas) {
@@ -1699,36 +1728,11 @@ async function logisticaTraerImgsFaltantes_() {
     const abierta = logQuote.abierta;
     const filas = (logQuote.filas || []).filter(function (f) { return f.imgRef && !/^data:image\//.test(f.img || ""); });
     if (!filas.length) { logCargaBar_(""); return; }
-    const t0 = Date.now();
-    let i = 0;
-    const pintar = function () {
-        const s = Math.floor((Date.now() - t0) / 1000);
-        logCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando renders " +
-            (i + 1) + " de " + filas.length + (s < 1 ? "…" : " · " + s + " s"));
-    };
-    pintar();
-    const tick = setInterval(pintar, 250);
-    try {
-        for (; i < filas.length; i++) {
-            if (logQuote.abierta !== abierta) return;
-            pintar();
-            const f = filas[i];
-            try {
-                const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: [f.imgRef], modo: "blob" }, { timeoutMs: 60000 });
-                const u = r && r.exito && r.data ? r.data[f.imgRef] : "";
-                if (!u || logQuote.abierta !== abierta) continue;
-                if (/^data:image\//.test(u)) {
-                    logIdbPutImg_(f.imgRef, u);
-                    logisticaPonerImgFila_(f.uid, u);
-                } else if (/^https:\/\//.test(u)) {
-                    logisticaPonerImgFila_(f.uid, u);
-                }
-            } catch (e) { /* la siguiente fila sigue */ }
-        }
-    } finally {
-        clearInterval(tick);
-        logCargaBar_("");
-    }
+    filas.forEach(function (f) {
+        if (logQuote.abierta !== abierta) return;
+        logisticaPonerImgFila_(f.uid, logUrlImgDrive_(f.imgRef));
+    });
+    logCargaBar_("");
 }
 
 /** true si la imagen se giró o recortó; si no, el original no se guarda aparte (basta la imagen visible). */
@@ -1767,12 +1771,19 @@ function logImgPintarRotada_(cv, im, rot, esc) {
 async function logisticaAbrirEditorImagen_(uid, yaCargada) {
     const fila = logFilaPorUid_(uid);
     if (!fila || fila.tipo === "seccion" || fila.tipo === "envio") return;
-    if (!fila.imgSrc && fila.srcRef) {
-        /* el recorte necesita píxeles: se pide el archivo a Drive solo al editar */
+    let refPix = "";
+    if (fila.srcRef && !/^data:image\//.test(fila.imgSrc || "")) refPix = fila.srcRef;
+    else if (fila.imgRef && !/^data:image\//.test(fila.img || "")) refPix = fila.imgRef;
+    if (refPix) {
+        /* el recorte necesita píxeles: Drive solo al editar, no al abrir la cotización */
         try {
             if (typeof mostrarNotificacion === "function") mostrarNotificacion("Trayendo la imagen original…", "info");
-            const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: [fila.srcRef], modo: "blob" });
-            if (r && r.exito && r.data && r.data[fila.srcRef]) fila.imgSrc = r.data[fila.srcRef];
+            const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: [refPix], modo: "blob" }, { timeoutMs: 60000 });
+            const u = r && r.exito && r.data ? r.data[refPix] : "";
+            if (u && /^data:image\//.test(u)) {
+                if (refPix === fila.srcRef) fila.imgSrc = u;
+                else { fila.img = u; logIdbPutImg_(refPix, u); }
+            }
         } catch (e) { /* se edita sobre la imagen visible */ }
     }
     const fuente = logImgFuente_(fila);
@@ -2617,8 +2628,21 @@ async function logisticaGuardar_(modo) {
 }
 
 var logHistCache = { t: 0, data: null };
+var LOG_HIST_LOCAL_ = "smartbudget_hist_cots";
 
 function logisticaInvalidarHist_() { logHistCache = { t: 0, data: null }; }
+
+function logisticaLeerHistLocal_() {
+    try {
+        const o = JSON.parse(localStorage.getItem(LOG_HIST_LOCAL_) || "null");
+        if (o && Array.isArray(o.data)) return o.data;
+    } catch (e) {}
+    return null;
+}
+
+function logisticaGuardarHistLocal_(data) {
+    try { localStorage.setItem(LOG_HIST_LOCAL_, JSON.stringify({ t: Date.now(), data: data || [] })); } catch (e) {}
+}
 
 async function logisticaCargarHistorial_(force, onStatus) {
     if (!force && logHistCache.data && (Date.now() - logHistCache.t) < 180000) {
@@ -2635,6 +2659,7 @@ async function logisticaCargarHistorial_(force, onStatus) {
             if (!r || !r.exito) throw new Error((r && r.mensaje) || "Sin respuesta.");
             logHist = r.data || [];
             logHistCache = { t: Date.now(), data: logHist };
+            logisticaGuardarHistLocal_(logHist);
             return logHist;
         } catch (e) {
             ultimo = e;
@@ -2657,6 +2682,10 @@ async function logisticaAbrirHistorial_() {
     if (!el) return;
     bootstrap.Modal.getOrCreateInstance(el).show();
     const cuerpo = document.getElementById("logHistLista");
+    if (!logHistCache.data) {
+        const local = logisticaLeerHistLocal_();
+        if (local) logHistCache = { t: 0, data: local };
+    }
     if (logHistCache.data) {
         logHist = logHistCache.data;
         logisticaPintarHistorial_();
@@ -2665,7 +2694,7 @@ async function logisticaAbrirHistorial_() {
     }
     const hayCache = !!logHistCache.data;
     logBotonBusy_("btnLogHistorial", true, "Cargando…");
-    if (typeof mostrarEsperaNube === "function") mostrarEsperaNube(hayCache ? "Actualizando la lista…" : "Cargando cotizaciones guardadas…");
+    if (!hayCache && typeof mostrarEsperaNube === "function") mostrarEsperaNube("Cargando cotizaciones guardadas…");
     try {
         await logisticaCargarHistorial_(!hayCache, function (msg) {
             if (typeof textoEsperaNube === "function") textoEsperaNube(msg);

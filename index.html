@@ -27,7 +27,7 @@
         <div class="d-flex align-items-center gap-2">
           <button type="button" class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirCatalogoConsulta()"><i class="bi bi-book me-1"></i>Catálogo</button>
           <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirModalAdmin()"><i class="bi bi-gear me-1"></i>Ajustes</button>
-          <span class="app-version" id="appVersionBadge" title="Versión de la app">V1.0.27</span>
+          <span class="app-version" id="appVersionBadge" title="Versión de la app">V1.0.28</span>
         </div>
       </div>
       
@@ -677,6 +677,7 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body sb-modal-body">
+          <div id="avisoConfigRemota" class="admin-banner is-warn mb-3 d-none" role="status"></div>
           <ul class="nav admin-nav" role="tablist">
             <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#panel-catalogo" type="button">Catálogo maestro</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-tarifas" type="button">Catálogos fijos</button></li>
@@ -1058,9 +1059,9 @@
           </div>
         </div>
         <div class="modal-footer sb-modal-footer">
-          <span class="small text-muted me-auto d-none d-md-inline">Los cambios aplican a toda la empresa.</span>
+          <span class="small text-muted me-auto" id="notaAjustesGlobal">Los cambios aplican a toda la empresa.</span>
           <button type="button" class="btn admin-btn" data-bs-dismiss="modal">Cerrar</button>
-          <button type="button" class="btn admin-btn admin-btn-primary" onclick="guardarConfiguracion()">Guardar</button>
+          <button type="button" class="btn admin-btn admin-btn-primary" id="btnGuardarAjustes" onclick="guardarConfiguracion()">Guardar</button>
         </div>
       </div>
     </div>
@@ -1079,13 +1080,13 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.28"></script>
+  <script src="admin.js?v=1.0.29"></script>
     <script src="seguridad.js?v=1.0.25"></script>
-    <script src="app.js?v=1.0.31"></script>
+    <script src="app.js?v=1.0.32"></script>
   <script src="engine.js?v=1.0.34"></script>
   <script src="connectors.js?v=1.0.27"></script>
   <script src="ia-core.js?v=1.0.29"></script>
   <script src="export-excel.js?v=1.0.30"></script>
-  <script src="logistica.js?v=1.0.53"></script>
+  <script src="logistica.js?v=1.0.54"></script>
 </body>
 </html>

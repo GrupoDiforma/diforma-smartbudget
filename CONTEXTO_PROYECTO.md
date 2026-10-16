@@ -291,9 +291,11 @@ En aéreo, “Flete interno = Sí” no abre fila: ese terrestre ya va dentro de
 
 ## CHECKPOINT — 15 oct 2026 (publicado en GitHub Pages)
 
-Ingeniería + Excel + PDF Etapa 1 + **Etapa 2 Paso 1** (Incoterm / destino / cubicaje / envío a mano). Publicado en `main` / `desarrollo` como **V1.0.27**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` sigue pidiéndose a mano en Apps Script. El aviso OTP ya no se recarga solo si la nube responde “no autorizado” antes de entrar.
+Ingeniería + Excel + PDF Etapa 1 + **Etapa 2 Paso 1** (Incoterm / destino / cubicaje / envío a mano). Publicado en `main` / `desarrollo` como **V1.0.28**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` sigue pidiéndose a mano en Apps Script. El aviso OTP ya no se recarga solo si la nube responde “no autorizado” antes de entrar.
 
-**Caché UI (index.html):** `styles.css 1.0.47` · `admin.js 1.0.28` · `app.js 1.0.31` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.53`.
+**Caché UI (index.html):** `styles.css 1.0.47` · `admin.js 1.0.29` · `app.js 1.0.32` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.54`.
+
+Si Ajustes no logra leer la hoja, el aviso queda visible y **Guardar** queda apagado (`_configHojaFallo`). La copia de `config.json` no puede reemplazar `Configuracion_Global`. Historial de Costos y lista de cotizaciones se muestran al instante con la última lista de ese teléfono y se actualizan detrás. Las fotos de una cotización guardada salen por enlace de Drive; el archivo completo solo se pide al editar la imagen. Partir el JSON del presupuesto sigue pendiente. Publicado en **V1.0.28** sin cambios en `backend.gs`.
 
 **Hecho y validado con Edwin (sesión 15 oct):**
 

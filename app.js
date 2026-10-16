@@ -399,19 +399,59 @@ async function guardarProyectoBD() {
     try { const data = await realizarPeticionBD({ action: 'guardar', payload: payload }); mostrarNotificacion(data.mensaje, data.exito ? "success" : "danger"); } catch(e) { mostrarNotificacion(e.message, "danger"); }
 }
 
+var HIST_COSTOS_LOCAL_ = "smartbudget_hist_costos";
+
+function leerListaLocal_(clave) {
+    try {
+        const o = JSON.parse(localStorage.getItem(clave) || "null");
+        if (o && Array.isArray(o.data)) return o.data;
+    } catch (e) {}
+    return null;
+}
+
+function guardarListaLocal_(clave, data) {
+    try { localStorage.setItem(clave, JSON.stringify({ t: Date.now(), data: data || [] })); } catch (e) {}
+}
+
+function pintarHistorialCostos_(filas) {
+    const tbody = document.getElementById("tbodyHistorial");
+    if (!tbody) return;
+    if (!filas || !filas.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No hay proyectos.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = filas.map(function (p) {
+        const id = String(p.id || "").replace(/'/g, "");
+        return '<tr><td class="text-danger fw-bold">' + (p.noProyecto || "") + '</td><td>' + (p.cliente || "S/N") + '</td><td>' + (p.requerimiento || "S/N") + '</td><td><span class="badge ' + (p.tipo === "EXPORTACION" ? "bg-dark" : "bg-primary") + '">' + (p.tipo || "") + '</span></td><td class="text-muted" style="font-size:0.75rem;">' + (p.fechaGuardado || "") + '</td><td class="text-center"><button class="btn btn-sm btn-primary py-0 px-2 me-1" onclick="cargarProyectoBD(\'' + id + '\')"><i class="bi bi-cloud-download"></i></button><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="eliminarProyectoBD(\'' + id + '\')"><i class="bi bi-trash"></i></button></td></tr>';
+    }).join("");
+}
+
 async function abrirHistorial() {
     const tbody = document.getElementById('tbodyHistorial');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5"><div class="spinner-border text-danger mb-2"></div><div class="fw-semibold">Cargando historial de Costos…</div><div class="small text-muted">La nube puede tardar unos segundos.</div></td></tr>';
+    const previa = leerListaLocal_(HIST_COSTOS_LOCAL_);
     new bootstrap.Modal(document.getElementById('modalHistorial')).show();
-    mostrarEsperaNube("Cargando historial de Costos…");
+    if (previa && previa.length) {
+        pintarHistorialCostos_(previa);
+    } else {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5"><div class="spinner-border text-danger mb-2"></div><div class="fw-semibold">Cargando historial de Costos…</div><div class="small text-muted">La nube puede tardar unos segundos.</div></td></tr>';
+        mostrarEsperaNube("Cargando historial de Costos…");
+    }
     try {
         const data = await realizarPeticionBD({ action: 'listar' });
-        if(data.exito && data.data.length > 0) {
-            tbody.innerHTML = data.data.map(p => `<tr><td class="text-danger fw-bold">${p.noProyecto}</td><td>${p.cliente || 'S/N'}</td><td>${p.requerimiento || 'S/N'}</td><td><span class="badge ${p.tipo==='EXPORTACION'?'bg-dark':'bg-primary'}">${p.tipo}</span></td><td class="text-muted" style="font-size:0.75rem;">${p.fechaGuardado}</td><td class="text-center"><button class="btn btn-sm btn-primary py-0 px-2 me-1" onclick="cargarProyectoBD('${p.id}')"><i class="bi bi-cloud-download"></i></button><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="eliminarProyectoBD('${p.id}')"><i class="bi bi-trash"></i></button></td></tr>`).join('');
-        } else { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No hay proyectos.</td></tr>'; }
+        if (data.exito) {
+            guardarListaLocal_(HIST_COSTOS_LOCAL_, data.data || []);
+            pintarHistorialCostos_(data.data || []);
+        } else if (!(previa && previa.length)) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No hay proyectos.</td></tr>';
+        }
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4"><div class="text-danger mb-2">${e.message}</div><button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirHistorial()">Reintentar</button></td></tr>`;
+        if (previa && previa.length) {
+            pintarHistorialCostos_(previa);
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion("Mostrando el historial guardado en este teléfono. " + e.message, "warning");
+        } else {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4"><div class="text-danger mb-2">' + e.message + '</div><button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirHistorial()">Reintentar</button></td></tr>';
+        }
     } finally {
         ocultarEsperaNube();
     }
