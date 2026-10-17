@@ -36,7 +36,8 @@ function doPost(e) {
     var result = { exito: false, mensaje: "Acción no válida" };
     if (action === "guardar_config") result = guardarConfiguracionGlobal(params.payload, params.email);
     else if (action === "guardar_anchos_matriz") result = guardarAnchosMatriz(params.anchos, params.email);
-    else if (action === "guardar") result = guardarPresupuestoBD(params.payload);
+    else if (action === "guardar") result = guardarPresupuestoBD(params.payload, params.imagenes);
+    else if (action === "presupuesto_imagenes") result = guardarImagenesPresupuestoBD(params.codigo, params.imagenes);
     else if (action === "listar") result = listarPresupuestosBD();
     else if (action === "obtener") result = obtenerProyectoPorId(params.id);
     else if (action === "eliminar") result = eliminarRegistroHistorico(params.id);
@@ -47,7 +48,9 @@ function doPost(e) {
     else if (action === "listar_cotizaciones") result = listarCotizacionesBD();
     else if (action === "obtener_cotizacion") result = obtenerCotizacionBD(params.id, params.rev);
     else if (action === "cotizacion_imagenes") result = imagenesCotizacionBD(params.ids, params.modo);
+    else if (action === "resolver_imagenes_cotizacion") result = resolverImagenesCotizacionBD(params.imagenes);
     else if (action === "odoo_productos") result = proxyOdooProductos(params.query);
+    else if (action === "odoo_paises") result = proxyOdooPaises();
     else if (action === "gemini_analizar") result = proxyGeminiAnalizar(params);
     else if (action === "gemini_chat") result = proxyGeminiChat(params);
     else if (action === "gemini_uso") result = obtenerUsoGemini();
@@ -196,13 +199,50 @@ function odooSearchRead_(model, domain, fields, limit, offset, order) {
   return rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, model, "search_read", [domain || []], kw]);
 }
 
+/** Catálogo res.country de Odoo: nombre y código ISO. Lo usa el menú de Envío. */
+function proxyOdooPaises() {
+  try {
+    var cache = CacheService.getScriptCache();
+    var hit = null;
+    try { hit = cache.get("odoo_paises_v1"); } catch (e0) {}
+    if (hit) return { exito: true, data: JSON.parse(hit) };
+    var c = odooCredenciales_();
+    var uid = odooUid_();
+    var rows;
+    try {
+      rows = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, "res.country", "search_read", [[]], {
+        fields: ["name", "code"], limit: 500, order: "name", context: { lang: "es_ES" }
+      }]);
+    } catch (e1) {
+      rows = odooSearchRead_("res.country", [], ["name", "code"], 500, 0, "name");
+    }
+    var out = (rows || []).map(function (r) {
+      return { nombre: String(r.name || "").trim(), codigo: String(r.code || "").trim().toUpperCase() };
+    }).filter(function (r) { return r.nombre && r.codigo && r.codigo !== "FALSE"; });
+    try { cache.put("odoo_paises_v1", JSON.stringify(out), 21600); } catch (e2) {}
+    return { exito: true, data: out };
+  } catch (e) {
+    return { exito: false, mensaje: String(e.message || e) };
+  }
+}
+
 function proxyOdooBuscar(codigo) {
-  var records = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], [
-    "name", "partner_id", "user_id", "id_vendedor", "create_date", "pricelist_id",
-    "id_disenador", "id_presupuestador", "idioma", "lang_code", "lang_id",
-    "country_id", "tipo_medida", "funcionales", "dim_diseno", "obs_presupuesto"
-  ], 1, 0, "");
-  return (!records || records.length === 0) ? {exito: false, mensaje: "No encontrada"} : {exito: true, data: records[0]};
+  codigo = String(codigo || "").trim();
+  if (!codigo) return { exito: false, mensaje: "Falta el código." };
+  try {
+    var pedidos = [
+      "name", "partner_id", "user_id", "id_vendedor", "create_date", "pricelist_id",
+      "id_disenador", "id_presupuestador", "idioma", "lang_code", "lang_id",
+      "country_id", "tipo_medida", "funcionales", "dim_diseno", "obs_presupuesto"
+    ];
+    var meta = odooCamposExistentes_("crm.lead", pedidos);
+    var campos = pedidos.filter(function (f) { return meta[f]; });
+    if (!campos.length) campos = ["name", "partner_id", "user_id", "create_date", "pricelist_id"];
+    var records = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], campos, 1, 0, "");
+    return (!records || records.length === 0) ? { exito: false, mensaje: "No encontrada" } : { exito: true, data: records[0] };
+  } catch (e) {
+    return { exito: false, mensaje: String(e.message || e) };
+  }
 }
 
 // ==========================================
@@ -595,7 +635,20 @@ function guardarCotizacionBD(p, email) {
     var refs = {};
     var carpeta = null;
     (p.imagenes || []).forEach(function (im) {
-      if (!im || !im.k || !im.data) return;
+      if (!im || !im.k) return;
+      if (im.ref) {
+        refs[im.k] = String(im.ref);
+        return;
+      }
+      if (im.preNombre) {
+        if (!carpeta) carpeta = carpetaCotizaciones_();
+        var ya = archivoPresupuestoPorNombre_(carpeta, String(im.preNombre));
+        if (ya) {
+          refs[im.k] = ya.getId();
+          return;
+        }
+      }
+      if (!im.data) return;
       var m = String(im.data).match(/^data:([^;]+);base64,(.+)$/);
       if (!m) return;
       if (!carpeta) carpeta = carpetaCotizaciones_();
@@ -621,27 +674,51 @@ function guardarCotizacionBD(p, email) {
   }
 }
 
+function titulosFichaCot_(chunk) {
+  var s = String(chunk || "");
+  var re = /"ficha"\s*:\s*\{\s*"titulo"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+  var out = [], seen = {}, m, n = 0, t;
+  while ((m = re.exec(s)) && n < 6) {
+    t = m[1].replace(/\\n/g, " ").replace(/\\"/g, "\"").replace(/\\\\/g, "\\").trim();
+    if (!t || seen[t]) continue;
+    seen[t] = 1;
+    out.push(t);
+    n++;
+  }
+  return out.join(" · ");
+}
+
 function listarCotizacionesBD() {
   var cache = CacheService.getScriptCache();
   try {
-    var hit = cache.get("cot_list_v1");
+    var hit = cache.get("cot_list_v2");
     if (hit) return { exito: true, data: JSON.parse(hit) };
   } catch (e0) {}
   var sh = obtenerHojaCotizaciones_();
   var last = sh.getLastRow();
   if (last <= 1) return { exito: true, data: [] };
   var desde = Math.max(2, last - 399);
-  var rows = sh.getRange(desde, 1, last - desde + 1, 13).getValues();
+  var cols = Math.min(14, sh.getLastColumn());
+  var rows = sh.getRange(desde, 1, last - desde + 1, cols).getValues();
   var out = rows.map(function (r) {
+    var proyectos = String(r[5] || "");
+    var nombre = "";
+    var corte = proyectos.indexOf(" | ");
+    if (corte >= 0) {
+      nombre = proyectos.substring(corte + 3);
+      proyectos = proyectos.substring(0, corte);
+    } else if (r.length > 13) {
+      nombre = titulosFichaCot_(r[13]);
+    }
     return {
       id: String(r[0]), rev: Number(r[1]) || 1, numero: String(r[2]), tipo: String(r[3]),
-      proyecto: String(r[4]), proyectos: String(r[5]), cliente: String(r[6]), idioma: String(r[7]),
+      proyecto: String(r[4]), proyectos: proyectos, nombre: nombre, cliente: String(r[6]), idioma: String(r[7]),
       moneda: String(r[8]), total: Number(r[9]) || 0, creado: fechaCotizacion_(r[10]),
       usuario: String(r[11]), comentario: String(r[12])
     };
   });
   out.reverse();
-  try { cache.put("cot_list_v1", JSON.stringify(out), 120); } catch (e1) {}
+  try { cache.put("cot_list_v2", JSON.stringify(out), 120); } catch (e1) {}
   return { exito: true, data: out };
 }
 
@@ -680,13 +757,36 @@ function publicarArchivoCotizacion_(file) {
   try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { /* ya era público o sin permiso */ }
 }
 
+function nombreImagenHistorialOk_(nombre) {
+  nombre = String(nombre || "");
+  return /^C-\d+_r\d+_/.test(nombre) || /^PRE-img_/.test(nombre);
+}
+
+function resolverImagenesCotizacionBD(imagenes) {
+  var refs = {};
+  var carpeta = null;
+  (imagenes || []).slice(0, 40).forEach(function (im) {
+    if (!im || !im.k) return;
+    if (im.ref) {
+      refs[im.k] = String(im.ref);
+      return;
+    }
+    var nombre = String(im.preNombre || "");
+    if (!nombreImagenHistorialOk_(nombre)) return;
+    if (!carpeta) carpeta = carpetaCotizaciones_();
+    var ya = archivoPresupuestoPorNombre_(carpeta, nombre);
+    if (ya) refs[im.k] = ya.getId();
+  });
+  return { exito: true, refs: refs };
+}
+
 function imagenesCotizacionBD(ids, modo) {
   var out = {};
   var blob = String(modo || "") === "blob";
   (ids || []).slice(0, 30).forEach(function (fid) {
     try {
       var f = DriveApp.getFileById(fid);
-      if (!/^C-\d+_r\d+_/.test(f.getName())) return;
+      if (!nombreImagenHistorialOk_(f.getName())) return;
       if (!blob) {
         publicarArchivoCotizacion_(f);
         out[fid] = urlImagenDrive_(fid, 800);
@@ -2082,8 +2182,8 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro) {
     if (tm === "PRO") c = ordenarModelosPorPotencia(modelos.filter(function(m) { return m.indexOf("pro") !== -1 || m.indexOf("thinking") !== -1; }));
     else c = ordenarModelosPorPotencia(modelos.filter(function(m) { return m.indexOf("flash") !== -1 && m.indexOf("thinking") === -1; }));
   }
-  c = c.filter(function (m) { return String(m).indexOf("thinking") === -1; }).slice(0, 2);
-  if (c.length === 0) c = (tm === "PRO") ? ["gemini-2.5-pro", "gemini-1.5-pro"] : ["gemini-2.0-flash", "gemini-1.5-flash"];
+  c = c.filter(function (m) { return String(m).indexOf("thinking") === -1; }).slice(0, tm === "PRO" ? 1 : 2);
+  if (c.length === 0) c = (tm === "PRO") ? ["gemini-2.5-pro"] : ["gemini-2.0-flash", "gemini-2.5-flash"];
   var jsonRes = null;
   var me = "";
   var err = [];
@@ -2146,22 +2246,214 @@ function obtenerHojaBD() {
   return sheet;
 }
 
-function guardarPresupuestoBD(datos) {
-  var sheet = obtenerHojaBD();
-  var data = sheet.getDataRange().getValues();
+var PRE_CHUNK_ = 45000;
+
+function asegurarColumnasPresupuesto_(sheet) {
+  if (sheet.getMaxColumns() < 11) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
+  }
+  var h = sheet.getRange(1, 9, 1, 3).getValues()[0];
+  if (!String(h[0] || "").trim()) {
+    sheet.getRange(1, 9, 1, 3).setValues([["Datos_2", "Datos_3", "Datos_4"]]);
+  }
+}
+
+function partesJsonPresupuesto_(json) {
+  var partes = ["", "", "", ""];
+  for (var k = 0; k < 4; k++) partes[k] = String(json || "").substring(k * PRE_CHUNK_, (k + 1) * PRE_CHUNK_);
+  return partes;
+}
+
+function leerJsonPresupuestoFila_(row) {
+  var raw = String(row[7] || "") + String(row[8] || "") + String(row[9] || "") + String(row[10] || "");
+  if (!raw) throw new Error("Sin datos.");
+  var obj = JSON.parse(raw);
+  if (obj && obj._preDrive) {
+    obj = JSON.parse(DriveApp.getFileById(obj._preDrive).getBlob().getDataAsString());
+  }
+  return obj;
+}
+
+function preDriveIdDeFila_(row) {
+  try {
+    var o = JSON.parse(String(row[7] || ""));
+    return o && o._preDrive ? String(o._preDrive) : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function guardarJsonPresupuestoDrive_(json, fileIdViejo, no) {
+  var folder = carpetaSistema_();
+  var nombre = "PRE-" + String(no || "proyecto").replace(/[^\w\-]/g, "_") + ".json";
+  if (fileIdViejo) {
+    try { DriveApp.getFileById(fileIdViejo).setTrashed(true); } catch (e) {}
+  }
+  return folder.createFile(Utilities.newBlob(json, "application/json", nombre)).getId();
+}
+
+function refImagenEnDatos_(datos, k) {
+  var p = String(k || "").split(":");
+  var vid = p[0] || "V1";
+  var eid = p.slice(1).join(":");
+  var vers = (datos && datos.versiones) || [];
+  for (var i = 0; i < vers.length; i++) {
+    if (String(vers[i].id || "V1") !== vid) continue;
+    var els = vers[i].elementos || [];
+    for (var j = 0; j < els.length; j++) {
+      if (String(els[j].id || "") === eid && els[j].imgRef) return String(els[j].imgRef);
+    }
+  }
+  return "";
+}
+
+function archivoPresupuestoPorNombre_(carpeta, nombre) {
+  try {
+    var it = carpeta.getFilesByName(nombre);
+    while (it.hasNext()) {
+      var f = it.next();
+      try {
+        if (!f.isTrashed()) return f;
+      } catch (e1) {
+        return f;
+      }
+    }
+  } catch (e2) {}
+  return null;
+}
+
+function subirImagenesPresupuesto_(imagenes, no, refs, datos) {
+  refs = refs || {};
+  if (!imagenes || !imagenes.length) return refs;
+  var carpeta = null;
+  imagenes.forEach(function (im) {
+    if (!im || !im.k) return;
+    var ya = refImagenEnDatos_(datos, im.k);
+    if (ya && !im.reemplaza) {
+      refs[im.k] = ya;
+      return;
+    }
+    if (!im.data) {
+      if (ya) refs[im.k] = ya;
+      return;
+    }
+    var m = String(im.data).match(/^data:([^;]+);base64,(.+)$/);
+    if (!m) return;
+    if (!carpeta) carpeta = carpetaCotizaciones_();
+    var nombre = "PRE-img_" + String(no).replace(/[^\w\-]/g, "_") + "_" + String(im.k).replace(/[^\w]/g, "_") + ".jpg";
+    if (!im.reemplaza) {
+      var exist = archivoPresupuestoPorNombre_(carpeta, nombre);
+      if (exist) {
+        refs[im.k] = exist.getId();
+        return;
+      }
+    }
+    if (im.reemplaza) {
+      try { DriveApp.getFileById(String(im.reemplaza)).setTrashed(true); } catch (e3) {}
+    }
+    var file = carpeta.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], nombre));
+    publicarArchivoCotizacion_(file);
+    refs[im.k] = file.getId();
+  });
+  return refs;
+}
+
+function aplicarRefsImagenesPresupuesto_(datos, refs) {
+  (datos.versiones || []).forEach(function (v) {
+    (v.elementos || []).forEach(function (el) {
+      var k = String(v.id || "V1") + ":" + String(el.id || "");
+      if (refs[k]) el.imgRef = refs[k];
+      delete el.imgCotizacion;
+    });
+  });
+}
+
+function guardarPresupuestoBD(datos, imagenes) {
+  if (!datos || !datos.cabecera) return { exito: false, mensaje: "Carga un proyecto." };
   var no = datos.cabecera.noProyecto;
   if (!no) return { exito: false, mensaje: "Carga un proyecto." };
-  var json = JSON.stringify(datos);
-  var hoy = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  var f = -1;
-  for (var i = 1; i < data.length; i++) { if (String(data[i][1]) === String(no)) { f = i + 1; break; } }
-  invalidarListaPresupuestos_();
-  if (f > 0) {
-    sheet.getRange(f, 3, 1, 6).setValues([[ String(datos.cabecera.cliente), String(datos.cabecera.nombreProyecto), String(datos.cabecera.tipoPresupuesto), "EN_PROCESO", hoy, json ]]);
-    return { exito: true, mensaje: "Actualizado." };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var sheet = obtenerHojaBD();
+    asegurarColumnasPresupuesto_(sheet);
+    var data = sheet.getDataRange().getValues();
+    var f = -1;
+    var fileIdViejo = "";
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][1]) === String(no)) {
+        f = i + 1;
+        fileIdViejo = preDriveIdDeFila_(data[i]);
+        break;
+      }
+    }
+    var refs = {};
+    var avisoImg = "";
+    try {
+      refs = subirImagenesPresupuesto_(imagenes, no, {}, datos);
+    } catch (eImg) {
+      avisoImg = " La matriz sí se guardó; los renders no: " + eImg.message;
+    }
+    aplicarRefsImagenesPresupuesto_(datos, refs);
+    invalidarListaPresupuestos_();
+    try {
+      escribirPayloadPresupuesto_(sheet, f, datos, fileIdViejo);
+    } catch (eDrive) {
+      return { exito: false, mensaje: "El presupuesto es grande y no pude guardarlo en Drive. " + eDrive.message };
+    }
+    return { exito: true, mensaje: f > 0 ? "Actualizado." : "Guardado.", refs: refs };
+  } finally {
+    lock.releaseLock();
   }
-  sheet.appendRow([ "PRE-" + Date.now(), String(no), String(datos.cabecera.cliente), String(datos.cabecera.nombreProyecto), String(datos.cabecera.tipoPresupuesto), "EN_PROCESO", hoy, json ]);
-  return { exito: true, mensaje: "Guardado." };
+}
+
+function escribirPayloadPresupuesto_(sheet, f, datos, fileIdViejo) {
+  var json = JSON.stringify(datos);
+  var partes;
+  if (json.length > PRE_CHUNK_ * 4) {
+    var driveId = guardarJsonPresupuestoDrive_(json, fileIdViejo, datos.cabecera.noProyecto);
+    partes = partesJsonPresupuesto_(JSON.stringify({ _preDrive: driveId }));
+  } else {
+    if (fileIdViejo) {
+      try { DriveApp.getFileById(fileIdViejo).setTrashed(true); } catch (e2) {}
+    }
+    partes = partesJsonPresupuesto_(json);
+  }
+  var hoy = new Date().toISOString().replace("T", " ").substring(0, 19);
+  var meta = [String(datos.cabecera.cliente), String(datos.cabecera.nombreProyecto), String(datos.cabecera.tipoPresupuesto), "EN_PROCESO", hoy].concat(partes);
+  if (f > 0) sheet.getRange(f, 3, 1, 9).setValues([meta]);
+  else sheet.appendRow(["PRE-" + Date.now(), String(datos.cabecera.noProyecto)].concat(meta));
+}
+
+function guardarImagenesPresupuestoBD(codigo, imagenes) {
+  codigo = String(codigo || "").trim();
+  if (!codigo) return { exito: false, mensaje: "Carga un proyecto." };
+  if (!imagenes || !imagenes.length) return { exito: true, refs: {}, mensaje: "Sin renders nuevos." };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var sheet = obtenerHojaBD();
+    asegurarColumnasPresupuesto_(sheet);
+    var data = sheet.getDataRange().getValues();
+    var f = -1;
+    var fileIdViejo = "";
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][1]) === String(codigo)) {
+        f = i + 1;
+        fileIdViejo = preDriveIdDeFila_(data[i]);
+        break;
+      }
+    }
+    if (f < 0) return { exito: false, mensaje: "Guarda el presupuesto primero." };
+    var datos = leerJsonPresupuestoFila_(data[f - 1]);
+    var refs = subirImagenesPresupuesto_(imagenes, codigo, {}, datos);
+    aplicarRefsImagenesPresupuesto_(datos, refs);
+    escribirPayloadPresupuesto_(sheet, f, datos, fileIdViejo);
+    invalidarListaPresupuestos_();
+    return { exito: true, refs: refs, mensaje: "Renders guardados." };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function invalidarListaPresupuestos_() {
@@ -2199,7 +2491,9 @@ function listarPresupuestosBD() {
 function obtenerProyectoPorId(id) {
   var data = obtenerHojaBD().getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(id) || String(data[i][1]) === String(id)) return { exito: true, data: JSON.parse(data[i][7]) };
+    if (String(data[i][0]) === String(id) || String(data[i][1]) === String(id)) {
+      return { exito: true, data: leerJsonPresupuestoFila_(data[i]) };
+    }
   }
   return { exito: false, mensaje: "No encontrado." };
 }
@@ -2209,6 +2503,10 @@ function eliminarRegistroHistorico(id) {
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(id) || String(data[i][1]) === String(id)) {
+      var driveId = preDriveIdDeFila_(data[i]);
+      if (driveId) {
+        try { DriveApp.getFileById(driveId).setTrashed(true); } catch (e) {}
+      }
       sheet.deleteRow(i + 1);
       invalidarListaPresupuestos_();
       return { exito: true, mensaje: "Eliminado." };

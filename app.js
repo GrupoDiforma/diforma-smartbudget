@@ -126,10 +126,29 @@ async function _fetchGas_(payload, opts) {
         }
         return data;
     } catch (e) {
-        if (e.name === "AbortError") throw new Error("El servidor tardó demasiado. Vuelve a intentar.");
+        if (e.name === "AbortError") {
+            var actAbort = payload && payload.action;
+            if (/^gemini_/.test(String(actAbort || ""))) {
+                throw new Error("Gemini tardó más de lo esperado. En la entrevista deja PRO apagado; si acabas de cancelar, espera un minuto (el servidor puede seguir ocupado) y reintenta una sola vez.");
+            }
+            throw new Error("El servidor tardó demasiado. Vuelve a intentar.");
+        }
         const m = String(e.message || e);
         if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
-            throw new Error("No se pudo conectar con el historial. Reintenta; si sigue, pega el backend.gs actualizado.");
+            var act = String((payload && payload.action) || "");
+            if (/^gemini_/.test(act)) {
+                throw new Error("Se cortó la conexión con Gemini. Espera un minuto (el servidor puede seguir ocupado) y pulsa Generar matriz otra vez.");
+            }
+            if (/^catalogo_/.test(act)) {
+                throw new Error("No se pudo leer el catálogo maestro. Reintenta; si sigue, revisa la conexión a Apps Script.");
+            }
+            if (/^odoo_/.test(act)) {
+                throw new Error("No hubo respuesta de Apps Script al consultar Odoo. Reintenta; si sigue, en Script pulsa Implementar → Nueva implementación (aplicación web).");
+            }
+            if (/^(listar|obtener|guardar|eliminar|listar_cotizaciones|obtener_cotizacion|guardar_cotizacion)/.test(act)) {
+                throw new Error("No se pudo conectar con el historial. Reintenta; si sigue, pega el backend.gs actualizado.");
+            }
+            throw new Error("No se pudo conectar con Apps Script. Reintenta en un momento.");
         }
         throw e;
     } finally {
@@ -180,25 +199,513 @@ function compactarChatNube(chat, n, maxLen) {
     });
 }
 
+function idArchivoVisor_(f) {
+    if (!f) return "";
+    if (f.id) return f.id;
+    f.id = f._odoo
+        ? ("odoo-" + String(f.name || "img").replace(/[^\w\-]+/g, "").slice(0, 24))
+        : ("a" + Date.now().toString(36) + Math.floor(Math.random() * 10000));
+    return f.id;
+}
+
+function clonarArchivosLigeros_(files) {
+    return (files || []).map(function (f) {
+        return {
+            id: f.id || "",
+            name: f.name,
+            mimeType: f.mimeType,
+            data: f.data,
+            _odoo: !!f._odoo,
+            elemId: f.elemId || "",
+            alcance: f.alcance || "",
+            _pinCotizacion: f._pinCotizacion || ""
+        };
+    }).filter(function (f) { return f.data; });
+}
+
+function sincronizarArchivosGrupoEnVersion_(ver) {
+    if (!ver || !esPresupuestoGrupal()) return;
+    if (window.archivosGemaBase64 && window.archivosGemaBase64.length) {
+        ver.archivosGrupo = clonarArchivosLigeros_(window.archivosGemaBase64);
+    }
+}
+
+function asegurarArchivosGrupoEnUI_(ver) {
+    if (ver && esPresupuestoGrupal() && (!window.archivosGemaBase64 || !window.archivosGemaBase64.length) && ver.archivosGrupo && ver.archivosGrupo.length) {
+        window.archivosGemaBase64 = clonarArchivosLigeros_(ver.archivosGrupo);
+    }
+    if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
+}
+
+function elementoActivoObj_() {
+    const ver = versionActualObj_();
+    if (!ver || !ver.elementos) return null;
+    const id = ver.elementoActivoId || window.elementoActivoId;
+    return ver.elementos.find(function (e) { return e.id === id; }) || ver.elementos[0] || null;
+}
+
+window.imagenCotizacionElemento = function (elemId) {
+    const ver = versionActualObj_();
+    if (!ver || !ver.elementos) return "";
+    const el = ver.elementos.find(function (e) { return String(e.id) === String(elemId); });
+    return (el && el.imgCotizacion) || "";
+};
+
+window.imgRefCotizacionElemento = function (elemId, verId) {
+    const vers = window.versionesPresupuesto || [];
+    const ver = verId
+        ? vers.find(function (v) { return String(v.id) === String(verId); })
+        : versionActualObj_();
+    if (!ver || !ver.elementos) return "";
+    const el = ver.elementos.find(function (e) { return String(e.id) === String(elemId); });
+    return (el && el.imgRef) || "";
+};
+
+window.archivoEsPinCotizacion = function (file) {
+    if (!file || !/^image\//i.test(file.mimeType || "")) return false;
+    const el = elementoActivoObj_();
+    if (!el || (!el.imgCotizacion && !el.imgCotizacionFileId && !el.imgCotizacionNombre)) return false;
+    if (el.imgCotizacionFileId && file.id && file.id === el.imgCotizacionFileId) return true;
+    if (file._pinCotizacion && file._pinCotizacion === el.id) return true;
+    if (el.imgCotizacionNombre && file.name && file.name === el.imgCotizacionNombre) return true;
+    return false;
+};
+
+function huellaImgCotizacion_(data) {
+    const s = String(data || "");
+    if (!s) return "";
+    return s.length + ":" + s.slice(24, 40) + ":" + s.slice(-20);
+}
+
+window.asignarRenderCotizacionElemento = async function (idx) {
+    if (!esPresupuestoGrupal()) return;
+    const files = window.archivosGemaBase64 || [];
+    const i = idx != null ? idx : (window._visorIdx || 0);
+    const f = files[i];
+    if (!f || !/^image\//i.test(f.mimeType || "")) {
+        return typeof mostrarNotificacion === "function" && mostrarNotificacion("Elige una imagen (no PDF) para la cotización de esta pieza.", "warning");
+    }
+    snapshotVersionActual();
+    const el = elementoActivoObj_();
+    if (!el) return;
+    try {
+        const fileId = idArchivoVisor_(f);
+        f._pinCotizacion = el.id;
+        (window.archivosGemaBase64 || []).forEach(function (otro) {
+            if (otro !== f && otro._pinCotizacion === el.id) delete otro._pinCotizacion;
+        });
+        f.elemId = el.id;
+        if (el.imgCotizacionFileId === fileId && el.imgRef) {
+            el.imgCotizacionNombre = f.name || el.imgCotizacionNombre || "";
+            sincronizarArchivosGrupoEnVersion_(versionActualObj_());
+            if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
+            if (typeof mostrarNotificacion === "function") {
+                mostrarNotificacion("Ese render ya está en la cotización de «" + (el.nombre || "pieza") + "».", "success");
+            }
+            return;
+        }
+        const src = "data:" + (f.mimeType || "image/jpeg") + ";base64," + (f.data || "");
+        const thumb = typeof window.reducirImagenJpeg === "function"
+            ? await window.reducirImagenJpeg(src, 1000, 0.88)
+            : src;
+        if (el.imgRef) el.imgRefAnterior = el.imgRef;
+        el.imgCotizacion = thumb;
+        el.imgCotizacionNombre = f.name || "";
+        el.imgCotizacionFileId = fileId;
+        el.imgCotizacionHuella = huellaImgCotizacion_(thumb);
+        delete el.imgRef;
+        sincronizarArchivosGrupoEnVersion_(versionActualObj_());
+        if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Este render queda en la cotización de «" + (el.nombre || "pieza") + "». Las demás piezas no lo heredan.", "success");
+        }
+        if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+    } catch (err) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo asignar el render.", "danger");
+    }
+};
+
+function extraerImagenesPresupuesto_(payload) {
+    const imagenes = [];
+    (payload.versiones || []).forEach(function (v) {
+        delete v.archivosGrupo;
+        (v.elementos || []).forEach(function (el) {
+            const data = el.imgCotizacion;
+            const huella = huellaImgCotizacion_(data);
+            const yaEnDrive = !!(el.imgRef && (!huella || !el.imgCotizacionHuella || el.imgCotizacionHuella === huella));
+            if (data && /^data:image\//.test(data) && !yaEnDrive) {
+                imagenes.push({
+                    k: String(v.id || "V1") + ":" + String(el.id || ""),
+                    data: data,
+                    reemplaza: el.imgRef || el.imgRefAnterior || ""
+                });
+                el.imgCotizacionHuella = huella;
+                delete el.imgRef;
+            }
+            delete el.imgCotizacion;
+            delete el.imgRefAnterior;
+        });
+    });
+    return imagenes;
+}
+
 function compactarPayloadNube(payload) {
+    payload = clonarJson_(payload);
+    const imagenes = extraerImagenesPresupuesto_(payload);
+    if (payload.versiones && payload.versiones.length) {
+        delete payload.matrizItems;
+        delete payload.escalas;
+        delete payload.historialChat;
+        (payload.versiones || []).forEach(function (v) {
+            if (v.elementos && v.elementos.length) {
+                delete v.matrizItems;
+                delete v.escalas;
+                delete v.historialChat;
+                delete v.fichaComercial;
+            }
+        });
+    }
     const recortar = function (n, maxLen) {
         payload.historialChat = compactarChatNube(payload.historialChat, n, maxLen);
         (payload.versiones || []).forEach(function (v) {
+            delete v.archivosGrupo;
             v.historialChat = compactarChatNube(v.historialChat, n, maxLen);
+            (v.elementos || []).forEach(function (el) {
+                el.historialChat = compactarChatNube(el.historialChat, n, maxLen);
+            });
         });
     };
     let json = JSON.stringify(payload);
-    if (json.length < 48000) return payload;
-    recortar(16, 2500);
+    if (json.length > 160000) recortar(16, 2500);
     json = JSON.stringify(payload);
-    if (json.length < 48000) return payload;
-    recortar(8, 1200);
-    return payload;
+    if (json.length > 160000) recortar(8, 1200);
+    return { payload: payload, imagenes: imagenes };
+}
+
+function aplicarRefsImagenesVivas_(refs) {
+    if (!refs) return;
+    (window.versionesPresupuesto || []).forEach(function (v) {
+        (v.elementos || []).forEach(function (el) {
+            const k = String(v.id || "V1") + ":" + String(el.id || "");
+            if (refs[k]) {
+                el.imgRef = refs[k];
+                delete el.imgRefAnterior;
+                if (el.imgCotizacion) el.imgCotizacionHuella = huellaImgCotizacion_(el.imgCotizacion);
+            }
+        });
+    });
+}
+
+async function hidratarRendersCotizacionNube_() {
+    const dest = [];
+    (window.versionesPresupuesto || []).forEach(function (v) {
+        (v.elementos || []).forEach(function (el) {
+            if (el.imgRef && !el.imgCotizacion) dest.push(el);
+        });
+    });
+    if (!dest.length || typeof realizarPeticionBD !== "function") return;
+    try {
+        const ids = dest.map(function (el) { return el.imgRef; });
+        const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: ids, modo: "blob" }, { timeoutMs: 60000 });
+        const map = (r && r.data) || {};
+        dest.forEach(function (el) {
+            if (map[el.imgRef] && /^data:image\//.test(map[el.imgRef])) el.imgCotizacion = map[el.imgRef];
+        });
+        if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+    } catch (e) { /* el pin se reintenta al abrir la cotización */ }
+}
+
+function mensajeGuardarNube_(m) {
+    m = String(m || "");
+    if (/50000 characters|maximum of 50000|too large/i.test(m)) {
+        return "Este presupuesto no cabe en la hoja. Pega el backend.gs actualizado en Apps Script y vuelve a Guardar en Nube.";
+    }
+    return m;
 }
 
 function clonarJson_(o) {
     return JSON.parse(JSON.stringify(o == null ? null : o));
 }
+
+function tipoEstructuraActual() {
+    const el = document.getElementById("selTipoEstructura");
+    const v = el ? String(el.value || "").toUpperCase() : String(window.tipoEstructura || "");
+    return v === "GRUPAL" ? "GRUPAL" : "INDIVIDUAL";
+}
+
+function esPresupuestoGrupal() {
+    return tipoEstructuraActual() === "GRUPAL";
+}
+
+function nuevoIdElemento_() {
+    return "e" + Date.now().toString(36) + Math.floor(Math.random() * 1000);
+}
+
+function elementoVacio_(nombre) {
+    return {
+        id: nuevoIdElemento_(),
+        nombre: String(nombre || "Pieza 1").trim() || "Pieza 1",
+        cantidad: 1,
+        matrizItems: [],
+        escalas: [{ id: "l1", q: 1 }],
+        historialChat: [],
+        faseIA: "idle",
+        fichaComercial: typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {}
+    };
+}
+
+function versionActualObj_() {
+    const id = window.versionActivaId || "V1";
+    return (window.versionesPresupuesto || []).find(function (v) { return v.id === id; }) || null;
+}
+
+function sincronizarElementoActivoEnVersion_(ver) {
+    if (!ver || !esPresupuestoGrupal()) return ver;
+    if (!Array.isArray(ver.elementos) || !ver.elementos.length) {
+        const nombre = (ver.fichaComercial && ver.fichaComercial.titulo) || "Pieza 1";
+        ver.elementos = [Object.assign(elementoVacio_(nombre), {
+            matrizItems: clonarJson_(ver.matrizItems || []),
+            escalas: clonarJson_(ver.escalas && ver.escalas.length ? ver.escalas : [{ id: "l1", q: 1 }]),
+            historialChat: clonarJson_(ver.historialChat || []),
+            faseIA: ver.faseIA || "idle",
+            fichaComercial: clonarJson_(ver.fichaComercial || {})
+        })];
+        ver.elementoActivoId = ver.elementos[0].id;
+    }
+    const id = ver.elementoActivoId || window.elementoActivoId || ver.elementos[0].id;
+    const el = ver.elementos.find(function (e) { return e.id === id; }) || ver.elementos[0];
+    ver.elementoActivoId = el.id;
+    window.elementoActivoId = el.id;
+    el.matrizItems = clonarJson_(ver.matrizItems || []);
+    el.escalas = clonarJson_(ver.escalas && ver.escalas.length ? ver.escalas : [{ id: "l1", q: 1 }]);
+    el.historialChat = clonarJson_(ver.historialChat || []);
+    el.faseIA = ver.faseIA || "idle";
+    el.fichaComercial = clonarJson_(ver.fichaComercial || {});
+    return ver;
+}
+
+function cargarElementoEnUI_(el, ver) {
+    if (!el) return;
+    window.elementoActivoId = el.id;
+    if (ver) ver.elementoActivoId = el.id;
+    if (typeof itemsPresupuesto !== "undefined") itemsPresupuesto = clonarJson_(el.matrizItems || []);
+    if (typeof lotesSimulacion !== "undefined") {
+        lotesSimulacion = clonarJson_(el.escalas && el.escalas.length ? el.escalas : (ver && ver.escalas) || [{ id: "l1", q: 1 }]);
+    }
+    if (typeof pintarFichaComercial === "function") pintarFichaComercial(el.fichaComercial);
+    if (typeof window.pintarHistorialChatIA === "function") {
+        window.pintarHistorialChatIA(el.historialChat || [], el.faseIA);
+    } else {
+        window.historialChatIA = el.historialChat || [];
+        window.faseIA = el.faseIA || "idle";
+    }
+    const nom = document.getElementById("nombreElementoActivo");
+    if (nom) nom.value = el.nombre || "";
+    asegurarArchivosGrupoEnUI_(ver);
+}
+
+function aplanarVersionesAIndividual_() {
+    (window.versionesPresupuesto || []).forEach(function (ver) {
+        if (!ver.elementos || !ver.elementos.length) {
+            delete ver.elementos;
+            delete ver.elementoActivoId;
+            delete ver.briefGrupal;
+            return;
+        }
+        const el = ver.elementos.find(function (e) { return e.id === ver.elementoActivoId; }) || ver.elementos[0];
+        ver.matrizItems = clonarJson_(el.matrizItems || ver.matrizItems || []);
+        ver.escalas = clonarJson_(el.escalas && el.escalas.length ? el.escalas : ver.escalas);
+        ver.historialChat = clonarJson_(el.historialChat || ver.historialChat || []);
+        ver.faseIA = el.faseIA || ver.faseIA;
+        ver.fichaComercial = clonarJson_(el.fichaComercial || ver.fichaComercial || {});
+        delete ver.elementos;
+        delete ver.elementoActivoId;
+        delete ver.briefGrupal;
+    });
+    window.elementoActivoId = "";
+}
+
+function pintarBarraElementos() {
+    const bar = document.getElementById("barraElementos");
+    const box = document.getElementById("chipsElementos");
+    if (!bar) return;
+    const on = esPresupuestoGrupal();
+    bar.classList.toggle("d-none", !on);
+    if (!on) {
+        const rs = document.getElementById("resumenStand");
+        if (rs) { rs.classList.add("d-none"); rs.innerHTML = ""; }
+        pintarEtiquetasElemento_("", false);
+        return;
+    }
+    const ver = versionActualObj_();
+    if (ver) sincronizarElementoActivoEnVersion_(ver);
+    const elems = (ver && ver.elementos) || [];
+    const activa = (ver && ver.elementoActivoId) || window.elementoActivoId;
+    if (box) {
+        box.innerHTML = elems.map(function (e) {
+            const isOn = e.id === activa ? " is-on" : "";
+            const nom = String(e.nombre || "Pieza").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+            return '<button type="button" class="elem-chip' + isOn + '" onclick="aplicarElementoEnUI(\'' + e.id + '\')">' + nom + "</button>";
+        }).join("");
+    }
+    const inp = document.getElementById("nombreElementoActivo");
+    const cur = elems.find(function (e) { return e.id === activa; });
+    if (inp) inp.value = cur ? (cur.nombre || "") : "";
+    pintarEtiquetasElemento_(cur ? (cur.nombre || "Pieza") : "", true);
+}
+
+function pintarEtiquetasElemento_(nombre, on) {
+    const aviso = document.getElementById("avisoElementoActivo");
+    if (aviso) {
+        if (on && nombre) {
+            aviso.textContent = "Ahora: " + nombre;
+            aviso.classList.remove("d-none");
+        } else {
+            aviso.classList.add("d-none");
+        }
+    }
+    ["badgePrearmadoElemento", "badgeMatrizElemento", "badgeSimuladorElemento"].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (on && nombre) {
+            el.textContent = nombre;
+            el.classList.remove("d-none");
+        } else {
+            el.classList.add("d-none");
+        }
+    });
+    const btn = document.getElementById("btnRenderCotizacion");
+    if (btn) btn.classList.toggle("d-none", !on);
+}
+
+function compactarChatParaBrief_(chat) {
+    return (chat || []).filter(function (h) { return h && h.text; }).map(function (h) {
+        return (h.role === "user" ? "ANALISTA" : "IA") + ": " + String(h.text).replace(/\s+/g, " ").trim();
+    }).join("\n").slice(0, 4500);
+}
+
+function marcarSaltoElemento_(nombre, opts) {
+    opts = opts || {};
+    const bar = document.getElementById("barraElementos");
+    const mtx = document.querySelector(".matriz-scroll");
+    const chat = document.getElementById("chatBox");
+    [bar, mtx, chat].forEach(function (el) {
+        if (!el) return;
+        el.classList.remove("elem-flash");
+        void el.offsetWidth;
+        el.classList.add("elem-flash");
+    });
+    if (!opts.silencio && typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("Cambiaste a «" + (nombre || "pieza") + "». Chat y matriz son de este elemento.", "info");
+    }
+}
+
+function aplicarTipoEstructura(val, opts) {
+    opts = opts || {};
+    val = val === "GRUPAL" ? "GRUPAL" : "INDIVIDUAL";
+    const prev = window.tipoEstructura || tipoEstructuraActual();
+    const sel = document.getElementById("selTipoEstructura");
+    if (sel) sel.value = val;
+    if (val === "INDIVIDUAL" && prev === "GRUPAL" && !opts.hidratar) {
+        snapshotVersionActual();
+        const ver = versionActualObj_();
+        if (ver && ver.elementos && ver.elementos.length > 1) {
+            if (sel) sel.value = "GRUPAL";
+            window.tipoEstructura = "GRUPAL";
+            pintarBarraElementos();
+            return typeof mostrarNotificacion === "function" && mostrarNotificacion("Deja una sola pieza para volver a Individual.", "warning");
+        }
+        aplanarVersionesAIndividual_();
+    }
+    window.tipoEstructura = val;
+    if (val === "GRUPAL" && !opts.hidratar) {
+        snapshotVersionActual();
+        const ver = versionActualObj_();
+        if (ver) sincronizarElementoActivoEnVersion_(ver);
+    }
+    pintarBarraElementos();
+    if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+function aplicarElementoEnUI(id) {
+    if (!esPresupuestoGrupal()) return;
+    const prev = window.elementoActivoId;
+    snapshotVersionActual();
+    const ver = versionActualObj_();
+    if (!ver || !ver.elementos) return;
+    const el = ver.elementos.find(function (e) { return e.id === id; });
+    if (!el) return;
+    cargarElementoEnUI_(el, ver);
+    if (typeof renderizarTablaItems === "function") renderizarTablaItems();
+    pintarBarraElementos();
+    if (prev && prev !== el.id) marcarSaltoElemento_(el.nombre || "pieza");
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+function abrirModalNuevoElemento() {
+    if (!esPresupuestoGrupal()) return;
+    snapshotVersionActual();
+    const inp = document.getElementById("nuevoElementoNombre");
+    if (inp) inp.value = "";
+    const el = document.getElementById("modalNuevoElemento");
+    if (el) new bootstrap.Modal(el).show();
+}
+
+function confirmarNuevoElemento() {
+    snapshotVersionActual();
+    const ver = versionActualObj_();
+    if (!ver) return;
+    sincronizarElementoActivoEnVersion_(ver);
+    const nombre = (document.getElementById("nuevoElementoNombre")?.value || "").trim() || ("Pieza " + (ver.elementos.length + 1));
+    const nuevo = elementoVacio_(nombre);
+    nuevo.escalas = clonarJson_(ver.escalas && ver.escalas.length ? ver.escalas : [{ id: "l1", q: 1 }]);
+    ver.elementos.push(nuevo);
+    const modal = bootstrap.Modal.getInstance(document.getElementById("modalNuevoElemento"));
+    if (modal) modal.hide();
+    cargarElementoEnUI_(nuevo, ver);
+    if (typeof renderizarTablaItems === "function") renderizarTablaItems();
+    pintarBarraElementos();
+    marcarSaltoElemento_(nombre, { silencio: true });
+    if (typeof mostrarNotificacion === "function") mostrarNotificacion(nombre + " agregada. Matriz vacía; el brief del grupo se reutiliza en el chat.", "success");
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+function renombrarElementoActivo(nombre) {
+    if (!esPresupuestoGrupal()) return;
+    snapshotVersionActual();
+    const ver = versionActualObj_();
+    const el = ver && ver.elementos ? ver.elementos.find(function (e) { return e.id === ver.elementoActivoId; }) : null;
+    if (!el) return;
+    el.nombre = String(nombre || "").trim() || el.nombre;
+    pintarBarraElementos();
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+function eliminarElementoActivo() {
+    if (!esPresupuestoGrupal()) return;
+    snapshotVersionActual();
+    const ver = versionActualObj_();
+    if (!ver || !ver.elementos || ver.elementos.length < 2) {
+        return typeof mostrarNotificacion === "function" && mostrarNotificacion("El grupal necesita al menos una pieza. Cambia a Individual si ya no es grupal.", "warning");
+    }
+    const id = ver.elementoActivoId;
+    ver.elementos = ver.elementos.filter(function (e) { return e.id !== id; });
+    const sig = ver.elementos[0];
+    cargarElementoEnUI_(sig, ver);
+    if (typeof renderizarTablaItems === "function") renderizarTablaItems();
+    pintarBarraElementos();
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+window.esPresupuestoGrupal = esPresupuestoGrupal;
+window.aplicarTipoEstructura = aplicarTipoEstructura;
+window.aplicarElementoEnUI = aplicarElementoEnUI;
+window.abrirModalNuevoElemento = abrirModalNuevoElemento;
+window.confirmarNuevoElemento = confirmarNuevoElemento;
+window.renombrarElementoActivo = renombrarElementoActivo;
+window.eliminarElementoActivo = eliminarElementoActivo;
 
 function versionVacia_(id, comentario) {
     return {
@@ -222,7 +729,8 @@ function versionVacia_(id, comentario) {
 
 function snapshotDesdeUI_(id, comentario) {
     const prev = (window.versionesPresupuesto || []).find(function (v) { return v.id === id; });
-    return {
+    const fuente = prev || versionActualObj_();
+    const snap = {
         id: id,
         comentario: comentario != null ? comentario : (prev ? prev.comentario : ""),
         creado: prev && prev.creado ? prev.creado : new Date().toISOString(),
@@ -237,8 +745,18 @@ function snapshotDesdeUI_(id, comentario) {
         escalas: clonarJson_(typeof lotesSimulacion !== "undefined" && lotesSimulacion.length ? lotesSimulacion : [{ id: "l1", q: 1 }]),
         historialChat: clonarJson_(window.historialChatIA || []),
         faseIA: window.faseIA || "idle",
-        fichaComercial: clonarJson_(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : (prev && prev.fichaComercial) || {})
+        fichaComercial: clonarJson_(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : (fuente && fuente.fichaComercial) || {})
     };
+    if (esPresupuestoGrupal()) {
+        snap.elementos = clonarJson_((fuente && fuente.elementos) || []);
+        snap.elementoActivoId = (fuente && fuente.elementoActivoId) || window.elementoActivoId || "";
+        snap.briefGrupal = (fuente && fuente.briefGrupal) || "";
+        if (!snap.briefGrupal && (window.historialChatIA || []).length >= 2) {
+            snap.briefGrupal = compactarChatParaBrief_(window.historialChatIA);
+        }
+        sincronizarElementoActivoEnVersion_(snap);
+    }
+    return snap;
 }
 
 function asegurarV1_() {
@@ -284,15 +802,21 @@ function aplicarVersionEnUI(id, omitirSnapshot) {
         });
     }
     if (typeof aplicarMercado === "function") aplicarMercado(ver.tipoPresupuesto || "NACIONAL");
-    if (typeof pintarFichaComercial === "function") pintarFichaComercial(ver.fichaComercial);
-    if (typeof window.pintarHistorialChatIA === "function") {
-        window.pintarHistorialChatIA(ver.historialChat || [], ver.faseIA);
+    if (esPresupuestoGrupal() && ver.elementos && ver.elementos.length) {
+        const el = ver.elementos.find(function (e) { return e.id === ver.elementoActivoId; }) || ver.elementos[0];
+        cargarElementoEnUI_(el, ver);
     } else {
-        window.historialChatIA = ver.historialChat || [];
-        window.faseIA = ver.faseIA || "idle";
+        if (typeof pintarFichaComercial === "function") pintarFichaComercial(ver.fichaComercial);
+        if (typeof window.pintarHistorialChatIA === "function") {
+            window.pintarHistorialChatIA(ver.historialChat || [], ver.faseIA);
+        } else {
+            window.historialChatIA = ver.historialChat || [];
+            window.faseIA = ver.faseIA || "idle";
+        }
     }
     if (typeof renderizarTablaItems === "function") renderizarTablaItems();
     pintarSelectorVersiones();
+    pintarBarraElementos();
     if (typeof programarGuardarSesion === "function") programarGuardarSesion();
 }
 
@@ -318,13 +842,31 @@ function hidratarVersionesDesdePayload(p) {
         }];
         window.versionActivaId = "V1";
     }
+    (window.versionesPresupuesto || []).forEach(function (ver) {
+        if (!ver.elementos || !ver.elementos.length) return;
+        const el = ver.elementos.find(function (e) { return e.id === ver.elementoActivoId; }) || ver.elementos[0];
+        if (!el) return;
+        if (!ver.matrizItems || !ver.matrizItems.length) ver.matrizItems = clonarJson_(el.matrizItems || []);
+        if (!ver.escalas || !ver.escalas.length) ver.escalas = clonarJson_(el.escalas && el.escalas.length ? el.escalas : [{ id: "l1", q: 1 }]);
+        if (!ver.historialChat || !ver.historialChat.length) ver.historialChat = clonarJson_(el.historialChat || []);
+        if (!ver.fichaComercial || !Object.keys(ver.fichaComercial).length) ver.fichaComercial = clonarJson_(el.fichaComercial || {});
+        if (!ver.faseIA) ver.faseIA = el.faseIA || "idle";
+    });
+    const tipo = (p.cabecera && p.cabecera.tipoEstructura) ||
+        ((window.versionesPresupuesto || []).some(function (v) { return v.elementos && v.elementos.length > 1; }) ? "GRUPAL" : "INDIVIDUAL");
+    window.tipoEstructura = tipo === "GRUPAL" ? "GRUPAL" : "INDIVIDUAL";
+    const selT = document.getElementById("selTipoEstructura");
+    if (selT) selT.value = window.tipoEstructura;
     aplicarVersionEnUI(window.versionActivaId, true);
+    pintarBarraElementos();
 }
 
 function resetearVersionesProyecto() {
     window.versionesPresupuesto = [versionVacia_("V1", "")];
     window.versionActivaId = "V1";
+    window.elementoActivoId = "";
     pintarSelectorVersiones();
+    pintarBarraElementos();
 }
 
 function pintarSelectorVersiones() {
@@ -339,7 +881,13 @@ function pintarSelectorVersiones() {
         return '<button type="button" class="ver-chip' + on + '" title="' + title + '" onclick="aplicarVersionEnUI(\'' + v.id + '\')">' + v.id + "</button>";
     }).join("");
     const ver = window.versionesPresupuesto.find(function (v) { return v.id === activa; });
-    if (nota) nota.textContent = ver && ver.comentario ? ver.comentario : "";
+    let extra = ver && ver.comentario ? ver.comentario : "";
+    if (esPresupuestoGrupal()) {
+        const cod = (document.getElementById("inputCodigo")?.value || "").trim();
+        const etiqueta = (cod || "proyecto") + "-" + (activa || "V1");
+        extra = extra ? etiqueta + " · " + extra : etiqueta;
+    }
+    if (nota) nota.textContent = extra;
 }
 
 function abrirModalNuevaVersion() {
@@ -347,6 +895,12 @@ function abrirModalNuevaVersion() {
     const next = siguienteIdVersion();
     const tit = document.getElementById("tituloNuevaVersion");
     if (tit) tit.textContent = "Nueva versión " + next;
+    const sub = document.querySelector("#modalNuevaVersion .sb-modal-sub");
+    if (sub) {
+        sub.textContent = esPresupuestoGrupal()
+            ? "Se copian todas las piezas del grupal. El comentario es opcional y va al Excel."
+            : "Se copia la versión actual. El comentario es opcional y va al Excel en Observaciones.";
+    }
     const inp = document.getElementById("nuevaVersionComentario");
     if (inp) inp.value = "";
     const el = document.getElementById("modalNuevaVersion");
@@ -377,12 +931,13 @@ async function guardarProyectoBD() {
     if (!codigo) return mostrarNotificacion("Ingresa un código de oportunidad (Paso 1).", "warning");
     snapshotVersionActual();
     const activa = window.versionActivaId || "V1";
-    const payload = compactarPayloadNube({
+    const empaquetado = compactarPayloadNube({
         cabecera: {
             noProyecto: codigo,
             cliente: document.getElementById('cliente')?.value || '',
             nombreProyecto: document.getElementById('noProyecto')?.value || '',
             tipoPresupuesto: (typeof mercadoActual === "function" ? mercadoActual() : (document.getElementById('badgeTipo')?.innerText || 'NACIONAL')),
+            tipoEstructura: tipoEstructuraActual(),
             versionActiva: activa,
             locale: typeof localeProyectoActual === "function" ? localeProyectoActual() : (window.localeProyecto || {})
         },
@@ -395,8 +950,36 @@ async function guardarProyectoBD() {
         versiones: window.versionesPresupuesto || [],
         versionActivaId: activa
     });
-    mostrarNotificacion("Guardando en la Nube...", "info");
-    try { const data = await realizarPeticionBD({ action: 'guardar', payload: payload }); mostrarNotificacion(data.mensaje, data.exito ? "success" : "danger"); } catch(e) { mostrarNotificacion(e.message, "danger"); }
+    mostrarEsperaNube("Guardando en la nube…");
+    try {
+        const data = await realizarPeticionBD({
+            action: "guardar",
+            payload: empaquetado.payload
+        }, { timeoutMs: 180000 });
+        if (!data || !data.exito) {
+            mostrarNotificacion(mensajeGuardarNube_((data && data.mensaje) || "No se pudo guardar."), "danger");
+            return;
+        }
+        let refs = data.refs || (data.data && data.data.refs) || {};
+        const pendientes = empaquetado.imagenes || [];
+        if (pendientes.length && !Object.keys(refs).length) {
+            try {
+                const img = await realizarPeticionBD({
+                    action: "presupuesto_imagenes",
+                    codigo: codigo,
+                    imagenes: pendientes
+                }, { timeoutMs: 180000 });
+                if (img && img.exito) refs = img.refs || (img.data && img.data.refs) || refs;
+            } catch (eImg) { /* el presupuesto ya quedó; el render se reintenta en el próximo guardado */ }
+        }
+        aplicarRefsImagenesVivas_(refs);
+        if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        mostrarNotificacion(data.mensaje || "Guardado.", "success");
+    } catch (e) {
+        mostrarNotificacion(mensajeGuardarNube_(e.message), "danger");
+    } finally {
+        ocultarEsperaNube();
+    }
 }
 
 var HIST_COSTOS_LOCAL_ = "smartbudget_hist_costos";
@@ -473,7 +1056,8 @@ async function cargarProyectoBD(idProyecto) {
             }
             hidratarVersionesDesdePayload(p);
             bootstrap.Modal.getInstance(document.getElementById('modalHistorial'))?.hide();
-            if (typeof window.cargarImagenOdooEnVisor === "function") window.cargarImagenOdooEnVisor();
+            await hidratarRendersCotizacionNube_();
+            if (typeof window.cargarImagenOdooEnVisor === "function") window.cargarImagenOdooEnVisor({ force: true });
             const nVer = (window.versionesPresupuesto || []).length;
             const nChat = (window.historialChatIA || []).length;
             mostrarNotificacion((nVer > 1 ? (nVer + " versiones. ") : "") + (nChat ? "Proyecto y chat cargados." : "Proyecto cargado."), "success");
@@ -486,7 +1070,7 @@ var SESION_TRABAJO_KEY = "smartbudget_sesion_v1";
 var _sesionGuardarT = null;
 
 function idsCabeceraSesion() {
-    return ["inputCodigo", "noProyecto", "cliente", "fecha", "comercial", "disenador", "analista", "simFee", "selMercado"];
+    return ["inputCodigo", "noProyecto", "cliente", "fecha", "comercial", "disenador", "analista", "simFee", "selMercado", "selTipoEstructura"];
 }
 
 function programarGuardarSesion() {
@@ -557,7 +1141,7 @@ function restaurarSesionTrabajo() {
         aplicarLocaleProyecto(s.locale || {}, { silencio: true });
     }
     hidratarVersionesDesdePayload({
-        cabecera: { tipoPresupuesto: s.cabecera && s.cabecera.selMercado, versionActiva: s.versionActivaId },
+        cabecera: { tipoPresupuesto: s.cabecera && s.cabecera.selMercado, tipoEstructura: s.cabecera && s.cabecera.selTipoEstructura, versionActiva: s.versionActivaId },
         datosAdicionales: {
             fecha: s.cabecera && s.cabecera.fecha,
             comercial: s.cabecera && s.cabecera.comercial,
@@ -591,20 +1175,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 2. Ejecutar funciones externas (Si existen en otros archivos)
     if(typeof obtenerTRMOficial === "function") await obtenerTRMOficial();
     restaurarSesionTrabajo();
+    if (typeof window.cargarImagenOdooEnVisor === "function") {
+        const hayOdoo = (window.archivosGemaBase64 || []).some(function (f) { return f && f._odoo; });
+        if (!hayOdoo) window.cargarImagenOdooEnVisor();
+    }
     asegurarV1_();
     pintarSelectorVersiones();
+    pintarBarraElementos();
     if(typeof renderizarTablaItems === "function") renderizarTablaItems();
     if(typeof inicializarDragAndDropArchivos === "function") inicializarDragAndDropArchivos();
     if(typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
     
     // 3. Listeners
-    ['simTRM', 'simComision', 'simFee'].forEach(id => { const el = document.getElementById(id); if(el) el.onchange = () => { if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero(); programarGuardarSesion(); }; });
+    ['simTRM', 'simComision', 'simFee'].forEach(id => { const el = document.getElementById(id); if(el) el.onchange = () => { if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero(); if (id === "simFee" && typeof logisticaFeeLibreCambio_ === "function") logisticaFeeLibreCambio_(); programarGuardarSesion(); }; });
     idsCabeceraSesion().forEach(function (id) {
         const el = document.getElementById(id);
         if (el) el.addEventListener("change", programarGuardarSesion);
         if (el) el.addEventListener("input", programarGuardarSesion);
     });
-    ["fichaTitulo", "fichaDesc", "fichaDimAncho", "fichaDimFondo", "fichaDimAlto", "fichaEmpAncho", "fichaEmpFondo", "fichaEmpAlto", "fichaEmpUnd"].forEach(function (id) {
+    ["fichaTitulo", "fichaDesc", "fichaDimAncho", "fichaDimFondo", "fichaDimAlto", "fichaEmpAncho", "fichaEmpFondo", "fichaEmpAlto", "fichaEmpUnd", "fichaEmpPeso"].forEach(function (id) {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener("change", programarGuardarSesion);

@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.47">
+  <link rel="stylesheet" href="styles.css?v=1.0.55">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -64,6 +64,14 @@
             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="abrirModalNuevaVersion()"><i class="bi bi-plus-lg me-1"></i>Nueva versión</button>
             <span id="comentarioVersionActiva" class="small text-muted"></span>
           </div>
+          <div class="d-none align-items-center gap-2 flex-wrap mb-3" id="barraElementos">
+            <span class="small text-muted mb-0">Elemento</span>
+            <div id="chipsElementos" class="d-flex gap-1 flex-wrap"></div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="abrirModalNuevoElemento()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+            <input type="text" id="nombreElementoActivo" class="form-control form-control-sm" style="max-width:200px;" maxlength="40" placeholder="Nombre de la pieza" onchange="renombrarElementoActivo(this.value)">
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="eliminarElementoActivo()" title="Quitar esta pieza"><i class="bi bi-trash"></i></button>
+            <span id="avisoElementoActivo" class="elem-ahora d-none"></span>
+          </div>
           <div class="row g-3">
             <div class="col-md-3">
               <label class="form-label text-uppercase">Cód. Oportunidad</label>
@@ -82,6 +90,13 @@
                 <option value="EXPORTACION">Exportación</option>
               </select>
               <span id="badgeTipo" class="d-none">NACIONAL</span>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label text-uppercase">Tipo</label>
+              <select id="selTipoEstructura" class="form-select form-select-sm" title="Individual: una pieza. Grupal: varias piezas o una campaña POP." onchange="aplicarTipoEstructura(this.value)">
+                <option value="INDIVIDUAL">Individual</option>
+                <option value="GRUPAL">Grupal</option>
+              </select>
             </div>
             <div class="col-md-3"><label class="form-label text-uppercase">Fecha</label><input type="date" id="fecha" class="form-control form-control-sm"></div>
             <div class="col-md-4"><label class="form-label text-uppercase">Comercial</label><input type="text" id="comercial" class="form-control form-control-sm"></div>
@@ -114,20 +129,21 @@
                 <textarea id="fichaDesc" class="form-control form-control-sm" rows="3" maxlength="700" placeholder="Texto comercial para cotización y logística. Lo propone la IA al generar la matriz; puedes editarlo."></textarea>
               </div>
               <div class="col-md-6">
-                <label class="form-label text-uppercase">Medidas generales <span class="ficha-um">cm</span></label>
-                <div class="input-group input-group-sm">
-                  <input type="number" step="0.1" min="0" id="fichaDimAncho" class="form-control" placeholder="Ancho">
-                  <input type="number" step="0.1" min="0" id="fichaDimFondo" class="form-control" placeholder="Fondo">
-                  <input type="number" step="0.1" min="0" id="fichaDimAlto" class="form-control" placeholder="Alto">
+                <div class="form-label text-uppercase">Medidas generales <span class="ficha-um">cm</span></div>
+                <div class="ficha-meds">
+                  <label class="ficha-med" for="fichaDimAncho"><span>Ancho</span><input type="number" step="0.1" min="0" id="fichaDimAncho" class="form-control form-control-sm"></label>
+                  <label class="ficha-med" for="fichaDimFondo"><span>Fondo</span><input type="number" step="0.1" min="0" id="fichaDimFondo" class="form-control form-control-sm"></label>
+                  <label class="ficha-med" for="fichaDimAlto"><span>Alto</span><input type="number" step="0.1" min="0" id="fichaDimAlto" class="form-control form-control-sm"></label>
                 </div>
               </div>
               <div class="col-md-6">
-                <label class="form-label text-uppercase">Empaque <span class="ficha-um">cm</span></label>
-                <div class="input-group input-group-sm">
-                  <input type="number" step="0.1" min="0" id="fichaEmpAncho" class="form-control" placeholder="Ancho">
-                  <input type="number" step="0.1" min="0" id="fichaEmpFondo" class="form-control" placeholder="Fondo">
-                  <input type="number" step="0.1" min="0" id="fichaEmpAlto" class="form-control" placeholder="Alto">
-                  <input type="number" step="1" min="0" id="fichaEmpUnd" class="form-control" placeholder="Und. por caja" title="Unidades por empaque (aparece en la cotización: «1 und. por caja»)">
+                <div class="form-label text-uppercase">Empaque <span class="ficha-um">cm</span></div>
+                <div class="ficha-meds">
+                  <label class="ficha-med" for="fichaEmpAncho"><span>Ancho</span><input type="number" step="0.1" min="0" id="fichaEmpAncho" class="form-control form-control-sm"></label>
+                  <label class="ficha-med" for="fichaEmpFondo"><span>Fondo</span><input type="number" step="0.1" min="0" id="fichaEmpFondo" class="form-control form-control-sm"></label>
+                  <label class="ficha-med" for="fichaEmpAlto"><span>Alto</span><input type="number" step="0.1" min="0" id="fichaEmpAlto" class="form-control form-control-sm"></label>
+                  <label class="ficha-med ficha-med-und" for="fichaEmpUnd"><span>Und. por caja</span><input type="number" step="1" min="0" id="fichaEmpUnd" class="form-control form-control-sm" title="Unidades por empaque (aparece en la cotización: «1 und. por caja»)"></label>
+                  <label class="ficha-med" for="fichaEmpPeso"><span>Peso <span class="ficha-um-peso">kg</span></span><input type="number" step="0.01" min="0" id="fichaEmpPeso" class="form-control form-control-sm" title="Peso de una caja. En sistema internacional es kg; en sistema inglés, lb. Se suma en Envío."></label>
                 </div>
               </div>
             </div>
@@ -137,7 +153,10 @@
 
         <!-- P2: IA -->
         <div class="mb-5">
-          <h6 class="fw-bold mb-3"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente</h6>
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <h6 class="fw-bold mb-0"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente<span id="badgePrearmadoElemento" class="elem-ahora d-none ms-2"></span></h6>
+            <button type="button" class="btn btn-sm btn-outline-secondary" title="Vuelve a pedir a Odoo la imagen del código de este proyecto" onclick="forzarImagenOdooEnVisor()"><i class="bi bi-cloud-arrow-down me-1"></i>Imagen Odoo</button>
+          </div>
           <div class="row g-3 ia-split">
             <div class="col-lg-6 d-flex flex-column">
               <input type="file" id="fileRender" accept="image/*,application/pdf" multiple class="d-none" onchange="window.procesarArchivosNativos(this.files); this.value='';">
@@ -152,6 +171,8 @@
                     <span id="visorNombre" class="text-truncate small fw-semibold"></span>
                     <div class="d-flex gap-1 flex-shrink-0">
                       <button type="button" class="btn btn-sm btn-outline-secondary" title="Pantalla completa" onclick="visorPantallaCompleta()"><i class="bi bi-arrows-fullscreen"></i></button>
+                      <button type="button" id="btnAlcanceGrupo" class="btn btn-sm btn-outline-secondary d-none" onclick="alternarAlcanceArchivoVisor()">Grupo</button>
+                      <button type="button" id="btnRenderCotizacion" class="btn btn-sm btn-outline-dark d-none" title="Usar esta imagen en la cotización de este elemento" onclick="asignarRenderCotizacionElemento()"><i class="bi bi-card-image me-1"></i>Cotización</button>
                       <label for="fileRender" class="btn btn-sm btn-outline-primary mb-0">+ Agregar</label>
                     </div>
                   </div>
@@ -201,7 +222,7 @@
         <!-- P3 & P4: Matriz y Simulador -->
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0"><span class="step-badge">3</span><i class="bi bi-table section-icon"></i> Matriz de Costos Directos (Escalas)</h6>
+            <h6 class="fw-bold mb-0"><span class="step-badge">3</span><i class="bi bi-table section-icon"></i> Matriz de Costos Directos (Escalas)<span id="badgeMatrizElemento" class="elem-ahora d-none ms-2"></span></h6>
             <div>
               <button class="btn btn-outline-success btn-sm bg-white fw-bold" onclick="agregarLote()">+ Agregar Rango</button>
               <button class="btn btn-outline-primary btn-sm bg-white fw-bold text-primary border-primary" onclick="abrirModalOdooMateriales()"><i class="bi bi-search me-1"></i> Odoo</button>
@@ -219,7 +240,7 @@
 
         <div class="mb-4 border-top pt-4">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0"><span class="step-badge">4</span><i class="bi bi-calculator section-icon"></i> Simulador AIU</h6>
+            <h6 class="fw-bold mb-0"><span class="step-badge">4</span><i class="bi bi-calculator section-icon"></i> Simulador AIU<span id="badgeSimuladorElemento" class="elem-ahora d-none ms-2"></span></h6>
             <div class="input-group input-group-sm w-auto"><span class="input-group-text text-success bg-white fw-bold">TRM Hoy</span><input type="number" id="simTRM" class="form-control text-center fw-bold" style="width:100px;" value="4150"></div>
           </div>
           <div class="row g-3 bg-white p-3 rounded border mb-3">
@@ -227,6 +248,7 @@
             <div class="col-md-6"><label class="form-label">Fee Libre (%)</label><input type="number" id="simFee" value="0" class="form-control form-control-sm text-end"></div>
           </div>
           <div class="row g-3" id="panelFinanciero"><div class="col-12 text-center py-4 border rounded text-muted">Agrega materiales.</div></div>
+          <div id="resumenStand" class="d-none mt-3"></div>
         </div>
 
         </div><!-- /tabIngenieria -->
@@ -260,7 +282,7 @@
                   <div class="form-check"><input class="form-check-input" type="checkbox" id="logTotChk" checked><label class="form-check-label" for="logTotChk">Mostrar total al final</label></div>
                 </div>
               </div>
-              <button type="button" id="btnLogOdoo" class="btn btn-sm btn-outline-secondary" title="Vuelve a leer contacto, cargo, comercial e imagen desde Odoo (descarta lo editado en la hoja)"><i class="bi bi-cloud-arrow-down me-1"></i>Actualizar desde Odoo</button>
+              <button type="button" id="btnLogOdoo" class="btn btn-sm btn-outline-secondary" title="Vuelve a leer en Odoo el proyecto de esta cotización, no el presupuesto que esté abierto en Costos. Si Odoo responde, descarta lo editado en la hoja."><i class="bi bi-cloud-arrow-down me-1"></i>Actualizar desde Odoo</button>
               <button type="button" id="btnLogReset" class="btn btn-sm btn-outline-secondary" title="Vuelve a los anchos y altos por defecto"><i class="bi bi-arrow-counterclockwise me-1"></i>Restablecer diseño</button>
               <button type="button" id="btnLogHistorial" class="btn btn-sm btn-outline-primary ms-auto" title="Cotizaciones guardadas: abrir y editar"><i class="bi bi-clock-history me-1"></i>Guardadas</button>
               <button type="button" id="btnLogGuardar" class="btn btn-sm btn-outline-primary" title="Guardar esta cotización en el historial"><i class="bi bi-save me-1"></i>Guardar</button>
@@ -303,6 +325,18 @@
                       </select>
                     </div>
                     <div>
+                      <label class="form-label small mb-1" for="logTRM">TRM</label>
+                      <input type="number" id="logTRM" class="form-control form-control-sm text-end" min="1" step="0.01" title="Sale del simulador de Costos. Aquí lo puedes cambiar solo para esta cotización (conversión a USD).">
+                    </div>
+                    <div>
+                      <label class="form-label small mb-1" for="logDecimales">Centavos</label>
+                      <select id="logDecimales" class="form-select form-select-sm" title="Redondeo de los precios de esta cotización. Sin centavos es el valor por defecto.">
+                        <option value="0">Sin centavos</option>
+                        <option value="1">1 decimal</option>
+                        <option value="2">2 decimales</option>
+                      </select>
+                    </div>
+                    <div>
                       <label class="form-label small mb-1" for="logMargen">Margen (mm)</label>
                       <input type="number" id="logMargen" class="form-control form-control-sm text-end" value="16" min="5" max="40" step="1">
                     </div>
@@ -340,6 +374,20 @@
                   </div>
                   <div id="logComisionValores" class="mt-2"></div>
                 </section>
+                <section class="log-card" id="logDescuentoCard">
+                  <h6>Descuento o recargo</h6>
+                  <p class="text-muted small mb-2">Trae el Fee libre de Costos. Con el candado cerrado sale una línea después del precio subtotal y antes de la logística y del gran total. Negativo descuenta, positivo recarga. No entra en la comisión ni en el flete.</p>
+                  <div class="d-flex align-items-end gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="logDescuentoLock" title="Candado abierto: el fee sigue dentro del precio."><i class="bi bi-unlock"></i></button>
+                    <div class="flex-grow-1">
+                      <label class="form-label small mb-1" for="logDescuentoPct">%</label>
+                      <input type="number" id="logDescuentoPct" class="form-control form-control-sm text-end" step="0.1" value="0">
+                    </div>
+                  </div>
+                  <label class="form-label small mb-1 mt-2" for="logDescuentoNota">Comentario</label>
+                  <textarea id="logDescuentoNota" class="form-control form-control-sm" rows="2" maxlength="220" placeholder="Opcional. Aclara a qué obedece. Sale bajo el título de la línea."></textarea>
+                  <div id="logDescuentoInfo" class="small text-muted mt-2"></div>
+                </section>
                 <section class="log-card">
                   <h6>Envío</h6>
                   <div class="log-env-bar">
@@ -369,7 +417,24 @@
                       <label class="form-label small mb-1" for="logDestPuerto">Puerto <span class="text-muted">interno</span></label>
                       <input type="text" id="logDestPuerto" class="form-control form-control-sm" maxlength="80" placeholder="No sale en el PDF" title="Dato para la IA en marítimo. No se imprime." autocomplete="off">
                     </div>
-                    <div id="logCubica" class="log-cubica" title="Cajas y m³ según empaque de la ficha y la cantidad de cada fila. No calcula el precio del flete."></div>
+                    <div id="logCubica" class="log-cubica" title="Cajas, m³, peso real y, en aéreo o courier, kg vol. No calcula el precio del flete ni sale en el PDF."></div>
+                  </div>
+                </section>
+                <section class="log-card" id="logIaCard">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <h6 class="mb-0">Asistente de logística</h6>
+                    <div class="form-check form-switch mb-0 ms-auto">
+                      <input class="form-check-input" type="checkbox" id="logIaPro">
+                      <label class="form-check-label" for="logIaPro">Gemini PRO</label>
+                    </div>
+                  </div>
+                  <p class="text-muted small mb-2">Chat aparte del de Costos. Pregunta lo que falte y sugiere la modalidad. Al generar, llena las filas del envío que ya elegiste. Esos valores se pueden corregir.</p>
+                  <div id="logIaSugerencia" class="log-ia-sug d-none"></div>
+                  <button type="button" id="btnLogIaGenerar" class="btn btn-sm btn-diforma-blue mb-2">Generar datos logísticos</button>
+                  <div id="logIaBox" class="log-ia-box"></div>
+                  <div class="d-flex gap-2 align-items-end mt-2">
+                    <textarea id="logIaInput" class="form-control form-control-sm" rows="2" placeholder="Escribe aquí. Enter envía, Shift+Enter salto de línea."></textarea>
+                    <button type="button" id="btnLogIaEnviar" class="btn btn-sm btn-primary" title="Enviar"><i class="bi bi-send-fill"></i></button>
                   </div>
                 </section>
                 <section class="log-card log-env-panel">
@@ -390,12 +455,16 @@
                         <label class="small mb-0" for="logResumenPct">% visible</label>
                         <input type="number" id="logResumenPct" class="form-control form-control-sm" min="0" max="100" step="1" value="100" style="width:64px" title="El resto se reparte en los proyectos según su subtotal. No se imprime.">
                       </div>
+                      <div id="logMargenWrap" class="d-flex align-items-center gap-1">
+                        <label class="small mb-0" for="logMargenLog">Margen %</label>
+                        <input type="number" id="logMargenLog" class="form-control form-control-sm" min="0" max="200" step="1" value="20" style="width:64px" title="Se suma al costo de cada fila para la cotización. No aplica a Duties ni Taxes. No se imprime.">
+                      </div>
                       <button type="button" id="btnLogEnvReset" class="btn btn-sm btn-link text-secondary px-1" title="Vuelve a las filas del Incoterm">Restaurar</button>
                       <button type="button" id="btnLogEnvLibre" class="btn btn-sm btn-outline-secondary log-env-add" title="Agregar una fila libre">+</button>
                     </div>
                   </div>
                   <div id="logCostosCuerpo">
-                    <p class="text-muted small mb-2">Arrastra, duplica o quita filas. Duties y Taxes: el % y la nota se quedan en pantalla.</p>
+                    <p class="text-muted small mb-2">El valor es el costo. El margen se suma al pasarlo a la cotización y no se imprime. Duties y Taxes no llevan margen. En nacional, envío, montaje, bodegaje y otro tienen cada uno su %.</p>
                     <div id="logEnvLineas"></div>
                   </div>
                 </section>
@@ -454,10 +523,10 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <input type="search" id="logHistBuscar" class="form-control form-control-sm mb-2" placeholder="Buscar por número, cliente, proyecto o comentario…">
+          <input type="search" id="logHistBuscar" class="form-control form-control-sm mb-2" placeholder="Buscar por número, cliente, nombre, proyecto o comentario…">
           <div class="table-responsive sb-tabla-scroll">
             <table class="table table-sm align-middle mb-0">
-              <thead><tr><th>Cotización</th><th>Cliente</th><th>Proyectos</th><th class="text-end">Total</th><th>Guardada</th><th>Comentario</th><th></th></tr></thead>
+              <thead><tr><th>Cotización</th><th>Cliente</th><th>Nombre</th><th>Proyectos</th><th class="text-end">Total</th><th>Guardada</th><th>Comentario</th><th></th></tr></thead>
               <tbody id="logHistLista"></tbody>
             </table>
           </div>
@@ -525,6 +594,28 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button type="button" class="btn btn-diforma-blue" data-lacc="ok">Aplicar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="modalNuevoElemento" tabindex="-1">
+    <div class="modal-dialog sb-modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header sb-modal-header">
+          <div>
+            <h5 class="modal-title">Agregar elemento</h5>
+            <p class="sb-modal-sub mb-0">Nueva pieza del grupal. La matriz queda vacía; las demás no se tocan.</p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label" for="nuevoElementoNombre">Nombre</label>
+          <input type="text" id="nuevoElementoNombre" class="form-control" maxlength="40" placeholder="Ej. Counter, Torre central, Piso">
+        </div>
+        <div class="modal-footer sb-modal-footer">
+          <button type="button" class="btn admin-btn" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn admin-btn admin-btn-primary" onclick="confirmarNuevoElemento()">Agregar</button>
         </div>
       </div>
     </div>
@@ -828,7 +919,7 @@
                 <header class="admin-card-head">
                   <div>
                     <h3 class="admin-card-title">Prompt de presupuestos y costos</h3>
-                    <p class="admin-card-desc">Oficio y reglas de fabricación. Las fases, el JSON, las UM y la prioridad de precios las fija el código.</p>
+                    <p class="admin-card-desc">Oficio de costeo (merma, POP, cómo desarrollar una lámina termoformada, tiras de 6 m). El código ya exige la cuenta en el nombre del ítem. La holgura de termoformado la estima Gemini según altura y forma; aquí puedes afinar el criterio de planta.</p>
                   </div>
                 </header>
                 <div class="admin-card-body">
@@ -1097,11 +1188,11 @@
   
   <script src="admin.js?v=1.0.29"></script>
     <script src="seguridad.js?v=1.0.25"></script>
-    <script src="app.js?v=1.0.32"></script>
-  <script src="engine.js?v=1.0.34"></script>
-  <script src="connectors.js?v=1.0.28"></script>
-  <script src="ia-core.js?v=1.0.31"></script>
-  <script src="export-excel.js?v=1.0.30"></script>
-  <script src="logistica.js?v=1.0.58"></script>
+    <script src="app.js?v=1.0.46"></script>
+  <script src="engine.js?v=1.0.37"></script>
+  <script src="connectors.js?v=1.0.34"></script>
+  <script src="ia-core.js?v=1.0.39"></script>
+  <script src="export-excel.js?v=1.0.32"></script>
+  <script src="logistica.js?v=1.0.77"></script>
 </body>
 </html>
