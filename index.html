@@ -27,7 +27,7 @@
         <div class="d-flex align-items-center gap-2">
           <button type="button" class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirCatalogoConsulta()"><i class="bi bi-book me-1"></i>Catálogo</button>
           <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirModalAdmin()"><i class="bi bi-gear me-1"></i>Ajustes</button>
-          <span class="app-version" id="appVersionBadge" title="Versión de la app">V1.0.32</span>
+          <span class="app-version" id="appVersionBadge" title="Versión de la app">V1.0.33</span>
         </div>
       </div>
       
@@ -155,7 +155,7 @@
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
             <h6 class="fw-bold mb-0"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente<span id="badgePrearmadoElemento" class="elem-ahora d-none ms-2"></span></h6>
-            <button type="button" class="btn btn-sm btn-outline-secondary" title="Vuelve a pedir a Odoo la imagen del código de este proyecto" onclick="forzarImagenOdooEnVisor()"><i class="bi bi-cloud-arrow-down me-1"></i>Imagen Odoo</button>
+            <button type="button" id="btnCargarRenders" class="btn btn-sm btn-outline-secondary" title="Trae la imagen de Odoo (Grupo) y el render con pin de cotización de cada pieza" onclick="cargarRendersVisor()"><i class="bi bi-cloud-arrow-down me-1"></i>Cargar Renders</button>
           </div>
           <div class="row g-3 ia-split">
             <div class="col-lg-6 d-flex flex-column">
@@ -1212,9 +1212,9 @@
   
   <script src="admin.js?v=1.0.29"></script>
     <script src="seguridad.js?v=1.0.25"></script>
-    <script src="app.js?v=1.0.48"></script>
+    <script src="app.js?v=1.0.49"></script>
   <script src="engine.js?v=1.0.37"></script>
-  <script src="connectors.js?v=1.0.35"></script>
+  <script src="connectors.js?v=1.0.36"></script>
   <script src="ia-core.js?v=1.0.39"></script>
   <script src="export-excel.js?v=1.0.32"></script>
   <script src="logistica.js?v=1.0.86"></script>

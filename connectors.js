@@ -282,6 +282,7 @@ window.cargarImagenOdooEnVisor = async function (opts) {
 };
 
 window.forzarImagenOdooEnVisor = function () {
+    if (typeof window.cargarRendersVisor === "function") return window.cargarRendersVisor();
     return window.cargarImagenOdooEnVisor({ force: true, avisar: true });
 };
 

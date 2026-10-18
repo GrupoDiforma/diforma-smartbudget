@@ -438,13 +438,13 @@ async function recuperarRendersDesdeCotizaciones_() {
     (window.versionesPresupuesto || []).forEach(function (v) {
         (v.elementos || []).forEach(function (el) {
             if (el.imgCotizacion && /^data:image\//.test(el.imgCotizacion)) return;
-            if (el.imgRef) return;
-            if (!(el.imgCotizacionNombre || el.imgCotizacionHuella || el.imgCotizacionFileId)) return;
+            if (!(el.imgRef || el.imgCotizacionNombre || el.imgCotizacionHuella || el.imgCotizacionFileId)) return;
             pend.push(el);
         });
     });
     if (!pend.length || typeof realizarPeticionBD !== "function") return 0;
-    const codigo = String(document.getElementById("inputCodigo")?.value || "").trim();
+    const codigo = String(document.getElementById("inputCodigo")?.value || "").trim()
+        || String(document.getElementById("noProyecto")?.value || "").trim().split(/\s+/)[0];
     if (!codigo) return 0;
     let lista = [];
     try {
@@ -467,7 +467,7 @@ async function recuperarRendersDesdeCotizaciones_() {
         const clave = String(c.id) + ":" + String(c.rev || "");
         if (vistos[clave]) continue;
         vistos[clave] = true;
-        const faltan = pend.filter(function (el) { return !el.imgRef; });
+        const faltan = pend.filter(function (el) { return !(el.imgCotizacion && /^data:image\//.test(el.imgCotizacion)); });
         if (!faltan.length) break;
         let filas = [];
         try {
@@ -529,6 +529,44 @@ function ponerRendersCotizacionEnVisor_() {
     if (pin >= 0) window._visorIdx = pin;
     if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
 }
+
+let _cargaRendersP = null;
+
+/** Imagen de Odoo (Grupo) y el render con pin de cotización de cada pieza. */
+window.cargarRendersVisor = function (opts) {
+    opts = opts || {};
+    if (_cargaRendersP) return _cargaRendersP;
+    _cargaRendersP = (async function () {
+        const btn = document.getElementById("btnCargarRenders");
+        if (btn) btn.disabled = true;
+        if (!opts.silencio && typeof mostrarEsperaNube === "function") mostrarEsperaNube("Cargando renders…");
+        let odooOk = false;
+        let nPins = 0;
+        try {
+            if (typeof window.cargarImagenOdooEnVisor === "function") {
+                await window.cargarImagenOdooEnVisor({ force: true });
+                odooOk = (window.archivosGemaBase64 || []).some(function (f) { return f && f._odoo; });
+            }
+            await hidratarRendersCotizacionNube_();
+            nPins = await recuperarRendersDesdeCotizaciones_();
+            ponerRendersCotizacionEnVisor_();
+            nPins = (window.archivosGemaBase64 || []).filter(function (f) { return f && f._pinCotizacion; }).length || nPins;
+        } finally {
+            if (btn) btn.disabled = false;
+            if (!opts.silencio && typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+        }
+        if (!opts.silencio && typeof mostrarNotificacion === "function") {
+            const partes = [];
+            if (odooOk) partes.push("La imagen de Odoo quedó como Grupo.");
+            else partes.push("Odoo no trajo imagen para este código.");
+            if (nPins) partes.push(nPins + " render" + (nPins === 1 ? "" : "s") + " con pin de cotización.");
+            else partes.push("No hay renders con pin de cotización para recuperar.");
+            mostrarNotificacion(partes.join(" "), odooOk || nPins ? "success" : "warning");
+        }
+        return nPins;
+    })().finally(function () { _cargaRendersP = null; });
+    return _cargaRendersP;
+};
 
 function mensajeGuardarNube_(m) {
     m = String(m || "");
@@ -1179,10 +1217,9 @@ async function cargarProyectoBD(idProyecto) {
             }
             hidratarVersionesDesdePayload(p);
             bootstrap.Modal.getInstance(document.getElementById('modalHistorial'))?.hide();
-            await hidratarRendersCotizacionNube_();
-            const nRenders = await recuperarRendersDesdeCotizaciones_();
-            if (typeof window.cargarImagenOdooEnVisor === "function") await window.cargarImagenOdooEnVisor({ force: true });
-            ponerRendersCotizacionEnVisor_();
+            const nRenders = typeof window.cargarRendersVisor === "function"
+                ? await window.cargarRendersVisor({ silencio: true })
+                : 0;
             const nVer = (window.versionesPresupuesto || []).length;
             const nChat = (window.historialChatIA || []).length;
             const avisoRenders = nRenders ? (" Se recuperaron " + nRenders + " render" + (nRenders === 1 ? "" : "s") + " de la cotización guardada.") : "";
