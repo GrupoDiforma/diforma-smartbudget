@@ -4,6 +4,40 @@ window._pdfDoc = null;
 window._pdfPage = 1;
 window._pdfIdx = -1;
 
+function asegurarAlcanceArchivo_(f) {
+    if (!f) return f;
+    if (f.alcance === "grupo" || f.alcance === "pieza") return f;
+    if (f._odoo) f.alcance = "grupo";
+    else if (f.elemId) f.alcance = "pieza";
+    else f.alcance = "grupo";
+    return f;
+}
+
+function archivoEsDelGrupo_(f) {
+    asegurarAlcanceArchivo_(f);
+    return !!(f && f.alcance === "grupo");
+}
+
+function esVisorGrupal_() {
+    return typeof esPresupuestoGrupal === "function" && esPresupuestoGrupal();
+}
+
+function archivosVisiblesIA_() {
+    const all = window.archivosGemaBase64 || [];
+    all.forEach(asegurarAlcanceArchivo_);
+    if (!esVisorGrupal_()) {
+        return all.map(function (f, i) { return { f: f, i: i }; });
+    }
+    const id = window.elementoActivoId || "";
+    return all.map(function (f, i) { return { f: f, i: i }; }).filter(function (x) {
+        return archivoEsDelGrupo_(x.f) || (x.f.elemId && x.f.elemId === id);
+    });
+}
+
+window.archivosParaIA = function () {
+    return archivosVisiblesIA_().map(function (x) { return x.f; });
+};
+
 async function pdfAPartesGemini_(f, maxPaginas) {
     maxPaginas = maxPaginas || 4;
     if (!asegurarPdfJs_()) {
@@ -33,7 +67,7 @@ async function pdfAPartesGemini_(f, maxPaginas) {
 
 /** Imágenes recortadas + primeras páginas de PDF. Evita mandar el archivo crudo (10–40 MB) a GAS/Gemini. */
 window.prepararPartesGemini = async function () {
-    const files = window.archivosGemaBase64 || [];
+    const files = typeof window.archivosParaIA === "function" ? window.archivosParaIA() : (window.archivosGemaBase64 || []);
     const parts = [];
     const MAX = 6;
     for (let i = 0; i < files.length && parts.length < MAX; i++) {
@@ -108,9 +142,24 @@ window.procesarArchivosNativos = function(files) {
         const reader = new FileReader();
         reader.onload = function (e) {
             if (!e.target.result) return;
-            window.archivosGemaBase64.push({ name: file.name, mimeType: file.type || "image/jpeg", data: e.target.result.split(",")[1] });
+            const grupal = typeof esPresupuestoGrupal === "function" && esPresupuestoGrupal();
+            const elemId = grupal ? (window.elementoActivoId || "") : "";
+            const rec = {
+                id: "a" + Date.now().toString(36) + Math.floor(Math.random() * 10000),
+                name: file.name,
+                mimeType: file.type || "image/jpeg",
+                data: e.target.result.split(",")[1],
+                elemId: elemId,
+                alcance: grupal ? "pieza" : "grupo"
+            };
+            window.archivosGemaBase64.push(rec);
             window._visorIdx = window.archivosGemaBase64.length - 1;
             window.actualizarListaUI();
+            if (elemId && /^image\//i.test(rec.mimeType) && typeof window.asignarRenderCotizacionElemento === "function") {
+                const ver = (window.versionesPresupuesto || []).find(function (v) { return v.id === (window.versionActivaId || "V1"); });
+                const el = ver && ver.elementos ? ver.elementos.find(function (e) { return e.id === elemId; }) : null;
+                if (el && !el.imgCotizacion) window.asignarRenderCotizacionElemento(window._visorIdx);
+            }
         };
         reader.readAsDataURL(file);
     });
@@ -194,28 +243,51 @@ window.traerImagenOdoo = function (codigo, force) {
     return prom;
 };
 
-/** Pone la imagen de Odoo del proyecto como único archivo del visor del Paso 2 (sin duplicar la descarga). */
-window.cargarImagenOdooEnVisor = async function () {
-    /* mismo código que usa Logística (primera palabra del nombre del proyecto), para compartir la descarga */
+/** Pone la imagen de Odoo del proyecto en el visor del Paso 2 (sin duplicar la descarga). */
+window.cargarImagenOdooEnVisor = async function (opts) {
+    opts = opts || {};
+    const avisar = !!opts.avisar;
     const codigoActual = function () {
         const nombre = String(document.getElementById("noProyecto")?.value || "").trim();
         return (nombre.split(/\s+/)[0] || String(document.getElementById("inputCodigo")?.value || "")).trim();
     };
     const codigo = codigoActual();
-    if (!codigo) return;
-    const r = await window.traerImagenOdoo(codigo, false);
-    if (r.estado !== "ok" || /svg/i.test(r.mime || "")) return;
-    if (codigoActual() !== codigo) return; /* mientras llegaba, abrieron otro proyecto */
+    if (!codigo) {
+        if (avisar && typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("No hay código de proyecto. Búscalo en Odoo o ábrelo del historial.", "warning");
+        }
+        return;
+    }
+    const r = await window.traerImagenOdoo(codigo, !!opts.force);
+    if (codigoActual() !== codigo) return;
+    if (r.estado !== "ok" || /svg/i.test(r.mime || "")) {
+        if (avisar && typeof mostrarNotificacion === "function") {
+            mostrarNotificacion(r.mensaje || "Odoo no trajo imagen para este código.", r.estado === "sin" ? "warning" : "danger");
+        }
+        return;
+    }
     const m = String(r.url).match(/^data:([^;]+);base64,(.+)$/);
     if (!m) return;
     const lista = (window.archivosGemaBase64 || []).filter(function (f) { return !f._odoo; });
     (window.archivosGemaBase64 || []).filter(function (f) { return f._odoo; }).forEach(revocarUrlArchivo_);
-    lista.unshift({ name: "Imagen Odoo · " + codigo + ".jpg", mimeType: m[1], data: m[2], _odoo: true });
+    const odoo = { id: "odoo-" + codigo, name: "Imagen Odoo · " + codigo + ".jpg", mimeType: m[1], data: m[2], _odoo: true, alcance: "grupo" };
+    const elPin = typeof elementoActivoObj_ === "function" ? elementoActivoObj_() : null;
+    if (elPin && (elPin.imgCotizacionFileId === odoo.id || elPin.imgCotizacionNombre === odoo.name)) {
+        odoo._pinCotizacion = elPin.id;
+    }
+    lista.unshift(odoo);
     window.archivosGemaBase64 = lista;
     window._visorIdx = 0;
     window._pdfDoc = null;
     window._pdfIdx = -1;
     window.actualizarListaUI();
+    if (avisar && typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("Imagen de Odoo en el visor. Márcala Pieza si no debe verse en las otras.", "success");
+    }
+};
+
+window.forzarImagenOdooEnVisor = function () {
+    return window.cargarImagenOdooEnVisor({ force: true, avisar: true });
 };
 
 /** Quita todos los archivos del Paso 2 (visor, miniaturas y adjuntos de la IA). */
@@ -227,10 +299,15 @@ window.vaciarArchivosIA = function () {
 };
 
 window.actualizarListaUI = function() {
-    const files = window.archivosGemaBase64 || [];
-    const n = files.length;
+    const vis = archivosVisiblesIA_();
+    const n = vis.length;
+    const visibles = vis.map(function (x) { return x.i; });
+    if (visibles.indexOf(window._visorIdx) < 0) {
+        window._visorIdx = n ? vis[0].i : 0;
+        window._pdfDoc = null;
+        window._pdfIdx = -1;
+    }
     if (n === 0) {
-        /* sin archivos: el visor no debe conservar el PDF/imagen anterior */
         window._pdfDoc = null;
         window._pdfPage = 1;
         window._pdfIdx = -1;
@@ -242,7 +319,12 @@ window.actualizarListaUI = function() {
     const box = document.getElementById("dropzoneBox");
     const activo = document.getElementById("visorActivo");
     const s = document.getElementById("dropzoneStatusText");
-    if (s) s.innerText = n > 0 ? "+ agregar más (" + n + ")" : "Renders, planos, fichas, PDF, JPG o PNG";
+    const total = (window.archivosGemaBase64 || []).length;
+    if (s) {
+        if (!n) s.innerText = "Renders, planos, fichas, PDF, JPG o PNG";
+        else if (esVisorGrupal_() && total > n) s.innerText = "+ agregar más (" + n + " en esta pieza · " + (total - n) + " en otras)";
+        else s.innerText = "+ agregar más (" + n + ")";
+    }
     if (box) {
         box.classList.toggle("d-none", n > 0);
         box.classList.remove("is-compact");
@@ -251,19 +333,32 @@ window.actualizarListaUI = function() {
         activo.classList.toggle("d-none", n === 0);
         activo.classList.toggle("d-flex", n > 0);
     }
-    if (n > 0) pintarVisorArchivos_(files);
+    if (n > 0) pintarVisorArchivos_(vis);
     const bar = document.getElementById("chatAdjuntosBar");
-    if (bar) bar.innerHTML = n ? '<small class="text-muted"><i class="bi bi-paperclip"></i> ' + n + " archivo(s) irán con el próximo mensaje a la IA</small>" : "";
+    if (bar) {
+        bar.innerHTML = n
+            ? '<small class="text-muted"><i class="bi bi-paperclip"></i> ' + n + " archivo(s) de esta vista irán con el próximo mensaje a la IA</small>"
+            : "";
+    }
+    pintarBotonAlcanceGrupo_();
     if (typeof actualizarBotonGenerar === "function") actualizarBotonGenerar();
 };
 
-function pintarVisorArchivos_(files) {
+function pintarVisorArchivos_(vis) {
+    vis = vis || archivosVisiblesIA_();
+    const reals = vis.map(function (x) { return x.i; });
     let idx = Number(window._visorIdx) || 0;
-    if (idx < 0 || idx >= files.length) idx = 0;
+    if (reals.indexOf(idx) < 0) idx = vis.length ? vis[0].i : 0;
     window._visorIdx = idx;
-    const f = files[idx];
+    const f = (window.archivosGemaBase64 || [])[idx];
+    const pos = Math.max(0, reals.indexOf(idx));
     const nom = document.getElementById("visorNombre");
-    if (nom) nom.textContent = (f && f.name ? f.name : "Archivo") + (files.length > 1 ? "  ·  " + (idx + 1) + "/" + files.length : "");
+    if (nom) {
+        const marca = esVisorGrupal_() && f
+            ? (archivoEsDelGrupo_(f) ? " · Grupo" : " · Esta pieza")
+            : "";
+        nom.textContent = (f && f.name ? f.name : "Archivo") + marca + (vis.length > 1 ? "  ·  " + (pos + 1) + "/" + vis.length : "");
+    }
     const lienzo = document.getElementById("visorLienzo");
     if (lienzo && f) {
         if (mimeEsPdf_(f.mimeType, f.name)) {
@@ -276,20 +371,85 @@ function pintarVisorArchivos_(files) {
             window._pdfDoc = null;
             window._pdfIdx = -1;
             lienzo.classList.remove("is-pdf");
-            lienzo.innerHTML = '<img alt="" src="' + urlArchivoGema_(f) + '">';
+            const pinLienzo = (typeof window.archivoEsPinCotizacion === "function" && window.archivoEsPinCotizacion(f))
+                ? '<span class="visor-lienzo-pin" title="Render de la cotización de esta pieza"><i class="bi bi-pin-angle-fill"></i></span>'
+                : "";
+            lienzo.innerHTML = '<img alt="" src="' + urlArchivoGema_(f) + '">' + pinLienzo;
         }
     }
     const thumbs = document.getElementById("visorThumbs");
     if (!thumbs) return;
-    thumbs.innerHTML = files.map(function (file, i) {
+    thumbs.innerHTML = vis.map(function (x) {
+        const file = x.f;
+        const i = x.i;
         const on = i === idx ? " is-on" : "";
         let inner;
         if (mimeEsImagen_(file.mimeType)) inner = '<img alt="" src="' + urlArchivoGema_(file) + '">';
         else inner = '<span class="visor-thumb-pdf"><i class="bi bi-file-earmark-pdf"></i></span>';
-        return '<button type="button" class="visor-thumb' + on + '" title="' + String(file.name || "").replace(/"/g, "") + '" onclick="seleccionarVisor(' + i + ')">' +
-            inner + '<span class="visor-thumb-x" onclick="event.stopPropagation();eliminarGemaArchivo(' + i + ')">&times;</span></button>';
+        const esPin = typeof window.archivoEsPinCotizacion === "function" && window.archivoEsPinCotizacion(file);
+        const quoteOn = esPin ? " is-quote" : "";
+        const pin = esPin ? '<span class="visor-thumb-pin" title="Render de la cotización de esta pieza"><i class="bi bi-pin-angle-fill"></i></span>' : "";
+        const grupo = archivoEsDelGrupo_(file);
+        const badge = esVisorGrupal_()
+            ? '<span class="visor-thumb-alcance' + (grupo ? " is-grupo" : "") + '" title="' + (grupo ? "Se ve en todas las piezas. Clic: solo esta." : "Solo esta pieza. Clic: ver en todas.") + '" onclick="event.stopPropagation();alternarAlcanceArchivo(' + i + ')">' + (grupo ? "Grupo" : "Pieza") + "</span>"
+            : "";
+        const titulo = (esPin ? "En cotización · " : "") + String(file.name || "").replace(/"/g, "");
+        return '<button type="button" class="visor-thumb' + on + quoteOn + '" title="' + titulo + '" onclick="seleccionarVisor(' + i + ')">' +
+            inner + pin + badge + '<span class="visor-thumb-x" onclick="event.stopPropagation();eliminarGemaArchivo(' + i + ')">&times;</span></button>';
     }).join("");
+    pintarBotonPinCotizacion_();
 }
+
+function pintarBotonPinCotizacion_() {
+    const btn = document.getElementById("btnRenderCotizacion");
+    if (!btn || btn.classList.contains("d-none")) return;
+    const f = (window.archivosGemaBase64 || [])[window._visorIdx];
+    const pinned = typeof window.archivoEsPinCotizacion === "function" && window.archivoEsPinCotizacion(f);
+    btn.classList.toggle("is-pin", pinned);
+    btn.innerHTML = pinned
+        ? '<i class="bi bi-pin-angle-fill me-1"></i>En cotización'
+        : '<i class="bi bi-pin-angle me-1"></i>Cotización';
+    btn.title = pinned
+        ? "Esta imagen es la de la cotización de esta pieza"
+        : "Usar esta imagen en la cotización de este elemento";
+}
+
+function pintarBotonAlcanceGrupo_() {
+    const btn = document.getElementById("btnAlcanceGrupo");
+    if (!btn) return;
+    const on = esVisorGrupal_() && (window.archivosGemaBase64 || []).length;
+    btn.classList.toggle("d-none", !on);
+    if (!on) return;
+    const f = (window.archivosGemaBase64 || [])[window._visorIdx];
+    const grupo = archivoEsDelGrupo_(f);
+    btn.classList.toggle("is-on", grupo);
+    btn.innerHTML = grupo
+        ? '<i class="bi bi-people me-1"></i>Grupo'
+        : '<i class="bi bi-person me-1"></i>Esta pieza';
+    btn.title = grupo
+        ? "Este archivo se ve en todas las piezas. Clic para dejarlo solo en esta."
+        : "Este archivo es solo de esta pieza. Clic para verlo en todas.";
+}
+
+window.alternarAlcanceArchivo = function (idx) {
+    if (!esVisorGrupal_()) return;
+    const f = (window.archivosGemaBase64 || [])[idx];
+    if (!f) return;
+    asegurarAlcanceArchivo_(f);
+    if (archivoEsDelGrupo_(f)) {
+        f.alcance = "pieza";
+        f.elemId = window.elementoActivoId || f.elemId || "";
+    } else {
+        f.alcance = "grupo";
+    }
+    window._visorIdx = idx;
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+    window.actualizarListaUI();
+};
+
+window.alternarAlcanceArchivoVisor = function () {
+    window.alternarAlcanceArchivo(window._visorIdx);
+};
 
 window.visorPdfPagina = function (delta) {
     if (!window._pdfDoc) return;
@@ -351,9 +511,10 @@ window.eliminarGemaArchivo = function(idx) {
     const f = (window.archivosGemaBase64 || [])[idx];
     revocarUrlArchivo_(f);
     window.archivosGemaBase64.splice(idx, 1);
-    window._pdfDoc = null; /* los índices cambiaron: el visor debe volver a cargar el archivo que toque */
+    window._pdfDoc = null;
     window._pdfIdx = -1;
-    if (window._visorIdx >= window.archivosGemaBase64.length) window._visorIdx = Math.max(0, window.archivosGemaBase64.length - 1);
+    if (window._visorIdx === idx) window._visorIdx = 0;
+    else if (window._visorIdx > idx) window._visorIdx -= 1;
     window.actualizarListaUI();
 };
 
@@ -473,6 +634,7 @@ function fichaComercialVacia() {
         empFondo: "",
         empAlto: "",
         empUnd: "",
+        empPeso: "",
         um: umFichaActual()
     };
 }
@@ -494,6 +656,7 @@ function leerFichaComercialUI() {
         empFondo: n("fichaEmpFondo"),
         empAlto: n("fichaEmpAlto"),
         empUnd: n("fichaEmpUnd"),
+        empPeso: n("fichaEmpPeso"),
         um: umFichaActual()
     };
 }
@@ -508,6 +671,7 @@ function pintarLocaleProyecto() {
     if (pais) pais.textContent = loc.pais ? ("País " + loc.pais) : "País —";
     const um = umFichaActual();
     document.querySelectorAll(".ficha-um").forEach(function (el) { el.textContent = um; });
+    document.querySelectorAll(".ficha-um-peso").forEach(function (el) { el.textContent = loc.sistema === "imperial" ? "lb" : "kg"; });
 }
 
 function pintarFichaComercial(ficha) {
@@ -525,6 +689,7 @@ function pintarFichaComercial(ficha) {
     set("fichaEmpFondo", ficha.empFondo);
     set("fichaEmpAlto", ficha.empAlto);
     set("fichaEmpUnd", ficha.empUnd);
+    set("fichaEmpPeso", ficha.empPeso);
     pintarLocaleProyecto();
 }
 
@@ -564,7 +729,8 @@ function aplicarFichaComercial(ficha, opts) {
         empAncho: pick(emp.ancho, src.empAncho, cur.empAncho),
         empFondo: pick(emp.fondo, emp.largo, src.empFondo, cur.empFondo),
         empAlto: pick(emp.alto, src.empAlto, cur.empAlto),
-        empUnd: pick(emp.unidades, emp.und, src.empUnd, cur.empUnd),
+        empUnd: pick(emp.unidades, emp.und, emp.und_por_caja, emp.unidadesPorCaja, emp.qty, src.empUnd, src.undPorCaja, cur.empUnd),
+        empPeso: pick(emp.peso, emp.weight, emp.peso_caja, src.empPeso, cur.empPeso),
         um: umFichaActual()
     });
     if (!opts.silencio && typeof programarGuardarSesion === "function") programarGuardarSesion();
@@ -594,7 +760,7 @@ async function buscarProyectoOdooServerless() {
     if(!cod) return mostrarAlertaOdoo("Ingresa código.", "warning");
     mostrarAlertaOdoo("Conectando con Servidor...", "info", true);
     try {
-        const data = await realizarPeticionBD({ action: 'odoo_buscar', codigo: cod });
+        const data = await realizarPeticionBD({ action: 'odoo_buscar', codigo: cod }, { timeoutMs: 75000 });
         if(!data.exito) throw new Error(data.mensaje);
         const rec = data.data;
         let tipo = (rec.pricelist_id && rec.pricelist_id[1] && rec.pricelist_id[1].toLowerCase().includes("usd")) ? "EXPORTACION" : "NACIONAL";

@@ -211,6 +211,50 @@ function actualizarSimuladorFinanciero() {
           </div>`;
     });
     panel.innerHTML = htmlCartas;
+    pintarResumenStand_(trm);
+}
+
+function pintarResumenStand_(trm) {
+    const box = document.getElementById("resumenStand");
+    if (!box) return;
+    if (typeof esPresupuestoGrupal !== "function" || !esPresupuestoGrupal()) {
+        box.classList.add("d-none");
+        box.innerHTML = "";
+        return;
+    }
+    if (typeof snapshotVersionActual === "function") snapshotVersionActual();
+    const ver = (window.versionesPresupuesto || []).find(function (v) { return v.id === window.versionActivaId; });
+    const elems = (ver && ver.elementos) || [];
+    if (elems.length < 2) {
+        box.classList.add("d-none");
+        box.innerHTML = "";
+        return;
+    }
+    const filas = elems.map(function (el) {
+        const copia = Object.assign({}, ver, {
+            id: String(ver.id) + "::" + el.id,
+            matrizItems: el.matrizItems || [],
+            escalas: el.escalas && el.escalas.length ? el.escalas : ver.escalas
+        });
+        const pr = calcularPreciosVersion_(copia);
+        const esc = pr && pr.escalas && pr.escalas[0];
+        return {
+            nombre: el.nombre || "Pieza",
+            pu: esc ? esc.puCop : 0,
+            q: esc ? esc.q : 0
+        };
+    });
+    const tot = filas.reduce(function (s, f) { return s + (f.pu || 0); }, 0);
+    box.classList.remove("d-none");
+    box.className = "stand-resumen mt-3";
+    box.innerHTML = "<div class=\"fw-semibold mb-2\">Total Grupal · suma de piezas (primer rango de cada una)</div>" +
+        "<table class=\"table table-sm mb-0\"><thead><tr><th>Elemento</th><th class=\"text-end\">Unitario</th><th class=\"text-end\">USD</th></tr></thead><tbody>" +
+        filas.map(function (f) {
+            const usd = trm ? (f.pu / trm) : 0;
+            return "<tr><td>" + String(f.nombre).replace(/</g, "&lt;") + "</td><td class=\"text-end\">" + copFmt(f.pu) + "</td><td class=\"text-end\">US$ " + usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "</td></tr>";
+        }).join("") +
+        "<tr><th>Total Grupal</th><th class=\"text-end\">" + copFmt(tot) + "</th><th class=\"text-end\">US$ " + (trm ? (tot / trm).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00") + "</th></tr>" +
+        "</tbody></table>";
 }
 
 function inicializarDragAndDropMatrix() {
@@ -225,8 +269,15 @@ function inicializarDragAndDropMatrix() {
 
 var MTX_TOPE_ = {
     num: [36, 56], fuente: [88, 170], desc: [160, 640],
-    cat: [108, 200], cant: [56, 88], um: [70, 120], glob: [100, 160]
+    cat: [108, 200], cant: [56, 88], um: [70, 120], glob: [100, 160],
+    unit: [112, 220], tot: [116, 240]
 };
+
+function topeColMatriz_(id) {
+    if (/^unit_/.test(id)) return MTX_TOPE_.unit;
+    if (/^tot_/.test(id)) return MTX_TOPE_.tot;
+    return MTX_TOPE_[id] || [36, 400];
+}
 
 function esProcesoPorPieza_(n) {
     n = String(n || "");
@@ -279,19 +330,59 @@ function asegurarCostosGlobales_(item) {
 }
 
 function anchoColMatriz_(w, id, def) {
-    const t = MTX_TOPE_[id] || [36, 400];
+    const t = topeColMatriz_(id);
     const x = parseInt(w && w[id], 10);
     if (!x) return def;
     return Math.max(t[0], Math.min(t[1], x));
 }
 
+function medirTextoMatriz_(s) {
+    try {
+        if (!window._mtxMeasureCtx) {
+            const c = document.createElement("canvas");
+            window._mtxMeasureCtx = c.getContext("2d");
+        }
+        window._mtxMeasureCtx.font = "700 13px system-ui, Segoe UI, sans-serif";
+        return Math.ceil(window._mtxMeasureCtx.measureText(String(s || "")).width + 32);
+    } catch (e) {
+        return Math.ceil(String(s || "").length * 8.4 + 32);
+    }
+}
+
+function anchosUnitTotalMatriz_() {
+    let unit = 120;
+    let tot = 128;
+    (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []).forEach(function (i) {
+        lotesSimulacion.forEach(function (lt) {
+            const v = (i.costos && i.costos[lt.id] != null) ? Number(i.costos[lt.id]) : (Number(i.costoUnitario) || 0);
+            const unitVal = i.es_global ? (Math.round(v * 100) / 100) : v;
+            const totVal = (v * (Number(i.cantidad) || 0)) || 0;
+            const totTxt = "$" + totVal.toLocaleString("es-CO", { maximumFractionDigits: (Math.abs(totVal) < 100 ? 2 : 0) });
+            unit = Math.max(unit, medirTextoMatriz_(String(unitVal)) + 36);
+            tot = Math.max(tot, medirTextoMatriz_(totTxt) + 8);
+        });
+    });
+    return {
+        unit: Math.max(MTX_TOPE_.unit[0], Math.min(MTX_TOPE_.unit[1], unit)),
+        tot: Math.max(MTX_TOPE_.tot[0], Math.min(MTX_TOPE_.tot[1], tot))
+    };
+}
+
+function idsUnitTotalLote_(lt, i) {
+    return { uid: "unit_" + (lt.id || i), tid: "tot_" + (lt.id || i) };
+}
+
 function colgroupMatriz_(w) {
     const defs = [["num", 40], ["fuente", 110], ["desc", 220], ["cat", 128], ["cant", 62], ["um", 84], ["glob", 118]];
+    const ut = anchosUnitTotalMatriz_();
     const box = document.querySelector(".matriz-scroll");
     const avail = box ? box.clientWidth : 0;
     const anchos = {};
     let fijo = 76;
-    lotesSimulacion.forEach(function () { fijo += 168; });
+    lotesSimulacion.forEach(function (lt, i) {
+        const ids = idsUnitTotalLote_(lt, i);
+        fijo += anchoColMatriz_(w, ids.uid, ut.unit) + anchoColMatriz_(w, ids.tid, ut.tot);
+    });
     defs.forEach(function (d) {
         if (d[0] === "desc") return;
         anchos[d[0]] = anchoColMatriz_(w, d[0], d[1]);
@@ -309,9 +400,17 @@ function colgroupMatriz_(w) {
         const th = document.querySelector('#theadItems th[data-col="' + d[0] + '"]');
         if (th) { th.style.width = x + "px"; th.style.minWidth = x + "px"; }
     });
-    lotesSimulacion.forEach(function () {
-        html += '<col style="width:80px"><col style="width:88px">';
-        total += 168;
+    lotesSimulacion.forEach(function (lt, i) {
+        const ids = idsUnitTotalLote_(lt, i);
+        const uw = anchoColMatriz_(w, ids.uid, ut.unit);
+        const tw = anchoColMatriz_(w, ids.tid, ut.tot);
+        html += '<col data-col="' + ids.uid + '" style="width:' + uw + 'px">';
+        html += '<col data-col="' + ids.tid + '" style="width:' + tw + 'px">';
+        total += uw + tw;
+        const thu = document.querySelector('#theadItems th[data-col="' + ids.uid + '"]');
+        const tht = document.querySelector('#theadItems th[data-col="' + ids.tid + '"]');
+        if (thu) { thu.style.width = uw + "px"; thu.style.minWidth = uw + "px"; }
+        if (tht) { tht.style.width = tw + "px"; tht.style.minWidth = tw + "px"; }
     });
     html += '<col style="width:36px"><col style="width:40px">';
     total += 76;
@@ -343,6 +442,7 @@ function renderizarTablaItems() {
     if(!thead || !tbody) return;
 
     const w = anchosColumnasMatriz();
+    const ut = anchosUnitTotalMatriz_();
     const thStyle = (id, def) => { const x = anchoColMatriz_(w, id, def); return `width:${x}px;min-width:${x}px;`; };
     let th = `<tr>
         <th rowspan="2" class="text-center mtx-th" data-col="num" style="${thStyle("num", 36)}">#<span class="col-resizer"></span></th>
@@ -357,7 +457,10 @@ function renderizarTablaItems() {
     const todosCand = itemsPresupuesto.length > 0 && nCand === itemsPresupuesto.length;
     lotesSimulacion.forEach(lt => th += `<th colspan="2" class="text-center" style="background:#0f172a; color:#e5e5e5;">Q: ${lt.q} · ${merHead} <i class="bi bi-x-circle text-danger ms-1 cursor-pointer" onclick="eliminarLote('${lt.id}')"></i></th>`);
     th += `<th rowspan="2" class="text-center mtx-lock-th" title="${todosCand ? "Clic: liberar toda la matriz" : "Clic: candar toda la matriz (no suman; se conservan los valores)"}" style="width:36px;" onclick="alternarCandadosMasivo()"><i class="bi ${todosCand ? "bi-lock-fill" : "bi-unlock"} mtx-lock-head${todosCand ? " mtx-lock-on" : ""}"></i></th><th rowspan="2" class="text-center" style="width:35px;"><i class="bi bi-trash"></i></th></tr><tr>`;
-    lotesSimulacion.forEach(lt => th += `<th class="text-center" style="background:#334155; color:white; font-size:0.7rem; width:80px;">$ UNIT.</th><th class="text-center" style="background:#475569; color:white; font-size:0.7rem; width:88px;">$ TOTAL</th>`);
+    lotesSimulacion.forEach((lt, i) => {
+        const ids = idsUnitTotalLote_(lt, i);
+        th += `<th class="text-center mtx-th" data-col="${ids.uid}" style="background:#334155; color:white; font-size:0.7rem; ${thStyle(ids.uid, ut.unit)}">$ UNIT.<span class="col-resizer"></span></th><th class="text-center mtx-th" data-col="${ids.tid}" style="background:#475569; color:white; font-size:0.7rem; ${thStyle(ids.tid, ut.tot)}">$ TOTAL<span class="col-resizer"></span></th>`;
+    });
     thead.innerHTML = th + `</tr>`;
     colgroupMatriz_(w);
 
@@ -391,8 +494,8 @@ function renderizarTablaItems() {
             let v = i.costos[lt.id] || 0;
             const unitVal = i.es_global ? (Math.round(v * 100) / 100) : v;
             const unitAttr = i.es_global ? "disabled" : "";
-            tb += `<td style="border-left:2px solid #cbd5e1;"><input type="number" step="0.01" class="form-control form-control-sm text-center fw-bold text-primary px-1" value="${unitVal}" ${unitAttr} onchange="actualizarCostoItem(${i.id},'${lt.id}',this.value)"></td>
-            <td class="text-end fw-bold align-middle" style="font-size:0.8rem;">$${((v*i.cantidad)||0).toLocaleString('es-CO',{maximumFractionDigits: (Math.abs(v*i.cantidad) < 100 ? 2 : 0)})}</td>`;
+            tb += `<td class="mtx-unit" style="border-left:2px solid #cbd5e1;"><input type="number" step="0.01" class="form-control form-control-sm text-center fw-bold text-primary px-1" value="${unitVal}" ${unitAttr} onchange="actualizarCostoItem(${i.id},'${lt.id}',this.value)"></td>
+            <td class="mtx-tot text-end fw-bold align-middle">$${((v*i.cantidad)||0).toLocaleString('es-CO',{maximumFractionDigits: (Math.abs(v*i.cantidad) < 100 ? 2 : 0)})}</td>`;
         });
         tb += `<td class="text-center align-middle"><i class="bi ${itemEstaCandado(i) ? "bi-lock-fill" : "bi-unlock"} mtx-lock" title="${itemEstaCandado(i) ? "Liberar: vuelve a sumar" : "Candar: no suma; conserva el valor"}" onclick="alternarCandado(${i.id})"></i></td><td class="text-center align-middle"><i class="bi bi-trash text-danger cursor-pointer fs-6" onclick="eliminarItem(${i.id})"></i></td></tr>`;
     });

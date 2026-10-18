@@ -1,53 +1,168 @@
 {
   "gasUrl": "https://script.google.com/a/macros/grupodiforma.com/s/AKfycbwuAaCodxVFzmjqmRDXBSVffTeIO-RlG-9zNnpzR4pEoEmTZv4Z-38kMYa9j7Ddaa8p/exec",
-  "tarifasFijas": "[{\"nombre\":\"Mesa de corte x cm lineal\",\"um\":\"Cml\",\"costo\":12000,\"es_global\":false},{\"nombre\":\"Transporte local estandar\",\"um\":\"UND\",\"costo\":150000,\"es_global\":true},{\"nombre\":\"Pintura Electroestática m2\",\"um\":\"m2\",\"costo\":18000,\"es_global\":false}]",
+  "tarifasFijas": "[{\"nombre\":\"Mesa de corte x cm lineal\",\"um\":\"Cml\",\"costo\":12,\"es_global\":false},{\"nombre\":\"Transporte local estandar\",\"um\":\"UND\",\"costo\":150000,\"es_global\":true},{\"nombre\":\"Pintura Electroestática m2\",\"um\":\"m2\",\"costo\":18000,\"es_global\":false},{\"nombre\":\"Router CNC x hora\",\"um\":\"UND\",\"costo\":120000,\"es_global\":false}]",
   "unidades": "[{\"um\":\"UND\",\"um_catalogo\":\"Unidades\",\"factor\":1,\"regla\":\"1 UND = 1 pieza en Odoo (Unidades). Perfiles/tubos: 1 UND = tira de 6 m. Láminas: 1 UND = 1 placa, nunca Hojas.\"},{\"um\":\"Metros\",\"um_catalogo\":\"Metros\",\"factor\":1,\"regla\":\"1 = 1 metro lineal. cantidad = metros + merma.\"},{\"um\":\"kg\",\"um_catalogo\":\"kg\",\"factor\":1,\"regla\":\"1 = 1 kilogramo.\"},{\"um\":\"m2\",\"um_catalogo\":\"m2\",\"factor\":1,\"regla\":\"Precio por m² (pintura, impresión, área). Si el maestro vende la lámina en UND, calcula placas; no cambies la UM del maestro.\"},{\"um\":\"Juego\",\"um_catalogo\":\"Unidades\",\"factor\":1,\"regla\":\"1 Juego = 1 kit. Odoo lo compra en Unidades.\"},{\"um\":\"Cml\",\"um_catalogo\":\"Metros\",\"factor\":0.01,\"regla\":\"1 Cml = 1 cm lineal de corte (mesa/router). 100 Cml = 1 Metro.\"}]",
   "diasVigencia": { "materiales": 180, "procesos": 90 },
   "geminiCupoTokens": 2000000,
   "geminiCupoUsd": 20,
   "geminiUsdPor1MIn": 1.25,
   "geminiUsdPor1MOut": 10,
-  "promptMaestro": "ROL Y OBJETIVO\nActúa como especialista senior en costeo industrial de Diformainstore. Analizas renders/PDF (sin planos) como diseñador e ingeniero industrial: interpretas lo visible y la estructura oculta para fabricar al mejor costo sin perder la esencia del cliente.\n\nPREGUNTAS: solo las que cambian el costo. Nada obvio. Máximo 3-5 en el primer turno. Rangos: si no vienen en el PDF, pregunta; si no responden, usa 1, 50 y 100.\n\nFUENTES: [Matriz Drive] > [Tarifa Fija] > [Odoo ERP] (<6 meses) > [Estimado IA] (COP sin IVA) > [Manual] (costo 0).\n\nFASE 1 entrevista: NO JSON. FASE 2 cuando el analista diga listo/cotizar: JSON {rangos, items}. FASE 3 el mismo chat ajusta ítems.\n\nREGLAS A-D: cubicación en nombre; MO Externa e Interna; categorías Materias Primas / Procesos Externos / Procesos Internos / Mano de Obra / Empaque y Fletes / Comercialización; fletes es_global; TRM +100 import / -100 export.",
+  "promptMaestro": "ROL Y OBJETIVO\nEspecialista senior en costeo POP de Diformainstore (Grupo Diforma). Lees renders y PDF (no son planos de taller) como diseñador e ingeniero industrial: interpretas lo visible y la estructura oculta para fabricar al mejor costo sin perder la esencia del cliente.\n\nEVIDENCIA\n1) Archivos cargados (PDF, render) y lo que el analista escribe en el chat.\n2) Medidas, materiales, und. por caja y rangos salen solo de (1).\n3) Odoo = cabecera (cliente, código, idioma de la ficha, sistema de medida, país). Funcionales, dim_diseno y obs del Lead son pistas no verificadas: si chocan con el plano o el chat, pregunta; no las copies a la ficha.\n\nPREGUNTAS\nSolo las que cambian el costo. Nada obvio si ya se ve en el archivo. Máximo 3–5 en el primer turno.\nRangos: si no vienen en el PDF, pregunta; si no responden, usa 1, 50 y 100.\n\nEMPAQUE\nSi hay caja, empaque.unidades = und. por caja (nunca vacío ni 0). Si el analista dice «caja con 200U», unidades=200.\nCajas máster / corrugado del pedido: es_global true. cantidad = cajas del LOTE; costoUnitario = COP de UNA caja. PROHIBIDO 0,05 por pieza.\n\nFUENTES DE PRECIO\n[Tarifa Fija] si el concepto es un proceso de la lista del panel.\n[Matriz Drive] / catálogo maestro para materiales.\n[Estimado IA] (COP sin IVA) si no hay match.\n[Manual] (costo 0) si no hay base.\nNo inventes que consultaste Drive u Odoo.\n\nNOMBRE AUDITABLE\nEl campo es nombre (no existe descripcion). Forma: título corto + \" — \" + cuenta con cifras. El analista audita el costeo leyendo el nombre. PROHIBIDO un título solo («Lámina PS Cal.60»).\nfuente va en el campo fuente, nunca dentro de nombre.\n\nTubos / perfiles: Tc vs Tr. Suma de tramos + 10% merma = metros; cuántas tiras de 6 m y qué sobra.\nEj.: «Tc 1/2 — 4×0,80 + 4×0,40 = 4,80 m +10% = 5,28 m → 1 tira 6 m (sobra 0,72)».\n\nAlambre: retículas; longitud total + merma; / 6 m si se compra en tira.\n\nLámina plana (PS, acrílico, MDF, no termoformada): rectángulo envolvente en cm y m² (+ merma si aplica).\n\nImpresión: fila aparte, m² exactos del arte (no mezclar con la lámina).\n\nTERMOFORMADO PS — la holgura NO es un mm fijo\nCalcula la lámina según altura y forma (patrón de chapa):\n1) Planta = largo × ancho de la pieza terminada (plano/render).\n2) Desarrollo = suma el tiro/altura en cada lado que baja o se curva. Si es L, aleta o bajo corte, desarrolla esa sección.\n3) Pestaña de marco/refile: proporcional a altura y forma (relieve bajo ~1,5–2,5 cm/lado; medio 2,5–4 cm; alto, cerrado o bajo corte, más). Declara los cm que usaste.\n4) Lámina bruta = planta + desarrollo + pestañas → m² (o placas UND con yield).\nEj.: «PS Cal.60 frente — planta 60,3×7,9; h 3,0; paredes 2×3,0; pestaña 2 cm/lado = 64,3×15,9 cm = 0,102 m²».\nPROHIBIDO esconder eso en 0,035 UND sin cuenta.\n\nMANO DE OBRA Y PROCESOS\nObligatorio el par: Mano de obra Externa (soldadura, metalmecánica, corte metal, ensamble estructura, refile de termoformado si aplica) y Mano de obra Interna (armado final, limpieza, pegado, empacado).\nCorte CNC: detalla qué cobras. Corte recto de metal no va aparte: va en MO Externa.\nPintura electrostática: m² en planos; desarrollo abierto/volumen en estructuras.\n\nCATEGORÍAS\nMaterias Primas / Procesos Externos / Procesos Internos / Mano de Obra / Empaque y Fletes / Comercialización.\nFletes / transporte local, moldes, elaboración de troquel (el DADO, no el golpe) y setup CNC: es_global true.\nTroquelado por golpe, materiales y MO: es_global false.\n\nTRM\nImportaciones: TRM base + 100 COP. Exportaciones: TRM base − 100 COP.",
   "promptLogistico": "Calcular volumen y embalaje para despacho.",
-  "comisiones": "Ejecutiva Estándar: 3.0\nEjecutiva Senior: 5.0\nSin Comisión: 0.0",
+  "comisiones": "[{\"nombre\":\"Venta Socios\",\"pct\":3},{\"nombre\":\"Venta Asesor Nacional\",\"pct\":5},{\"nombre\":\"Venta Asesor Exterior\",\"pct\":8},{\"nombre\":\"Sin Comisión\",\"pct\":0}]",
   "operativos": {
-    "topeFab": 50000000,
-    "topeCom": 20000000,
-    "impFab": {
-      "max": 5,
-      "min": 2
-    },
-    "indFab": {
-      "max": 12,
-      "min": 5
-    },
-    "indCom": {
-      "max": 8,
-      "min": 3
-    }
+    "topeFab": 180000000,
+    "topeCom": 180000000,
+    "impFab": { "max": 5, "min": 2 },
+    "indFab": { "max": 15, "min": 10 },
+    "indCom": { "max": 8, "min": 3 }
   },
   "utilidadNal": {
-    "fab": {
-      "tope": 50000000,
-      "max": 35,
-      "min": 20
-    },
-    "com": {
-      "tope": 20000000,
-      "max": 25,
-      "min": 15
-    }
+    "fab": { "tope": 180000000, "max": 50, "min": 25 },
+    "com": { "tope": 180000000, "max": 30, "min": 15 }
   },
   "utilidadExp": {
-    "fab": {
-      "tope": 50000000,
-      "max": 40,
-      "min": 25
+    "fab": { "tope": 180000000, "max": 55, "min": 30 },
+    "com": { "tope": 180000000, "max": 35, "min": 20 }
+  },
+  "tyc": {
+    "vars": {
+      "validez": "30",
+      "tope_prototipo": "$200 USD",
+      "min_orden_prototipo": "$10,000 USD",
+      "plazo_prod": "25 y 30",
+      "plazo_prod_en": "25 to 30",
+      "dias_bodega": "10",
+      "anticipo": "50%",
+      "saldo": "50%",
+      "garantia": "3"
     },
-    "com": {
-      "tope": 20000000,
-      "max": 30,
-      "min": 20
+    "es": {
+      "titulo": "TÉRMINOS Y CONDICIONES DE NEGOCIACIÓN",
+      "secciones": [
+        {
+          "id": "s1",
+          "t": "PRE-PRODUCCIÓN",
+          "items": [
+            { "k": "Alcance de la cotización:", "v": "Grupo Diforma incluye dentro del valor de esta propuesta la adaptación de artes o archivos gráficos suministrados por el cliente para el desarrollo del proyecto. No se incluye el costo por concepto de diseño gráfico conceptual, retoque de imágenes ni la compra de imágenes de bancos fotográficos." },
+            { "k": "Validez de la propuesta:", "v": "{{validez}} días calendario a partir de la fecha de emisión." },
+            { "k": "Prototipos y muestras:", "v": "La elaboración de cualquier tipo de muestra o prototipo será cobrada si no es seguida por una Orden de Compra formal que asegure la producción del proyecto. En caso de aprobarse el proyecto, el valor de esta muestra se amortizará en el costo total de la producción, pero los gastos de envío correrán por cuenta del cliente. Esta condición aplica siempre y cuando el prototipo no exceda un valor unitario de {{tope_prototipo}} y la orden final sea superior a {{min_orden_prototipo}}." }
+          ]
+        },
+        {
+          "id": "s2",
+          "t": "PRODUCCIÓN",
+          "items": [
+            { "k": "Inicio:", "v": "Toda solicitud de producción requiere el respaldo de una Orden de Compra formal por parte del cliente, la cual debe incluir el valor de transportes, montajes y bodegajes, según el tipo de proyecto a desarrollar." },
+            { "k": "Plazo de producción:", "v": "Entre {{plazo_prod}} días hábiles (excluyendo domingos y días festivos en Colombia), contados a partir del cumplimiento de las condiciones estipuladas en el siguiente punto." },
+            { "k": "Plazo de entrega:", "v": "El tiempo de entrega estipulado comenzará a correr una vez se cumplan estrictamente las siguientes condiciones: (i) Recepción formal de la Orden de Compra, (ii) Pago efectivo del anticipo (si aplica), (iii) Aprobación formal y por escrito de un prototipo o primera unidad por parte del cliente, (iv) Recepción de los artes finalizados en alta resolución y medidas por parte del cliente (si aplica)." },
+            { "k": "Modificaciones:", "v": "Cualquier cambio en las especificaciones, materiales o cantidades acordadas en la cotización inicial, una vez iniciada la producción, se considerará un servicio adicional y generará sobrecostos a cargo del cliente." }
+          ]
+        },
+        {
+          "id": "s3",
+          "t": "BODEGAJE, TRANSPORTE E INSTALACIÓN",
+          "items": [
+            { "k": "Bodegaje:", "v": "Toda mercancía finalizada dentro del periodo acordado podrá permanecer en las instalaciones de Grupo Diforma por un máximo de {{dias_bodega}} días sin costo adicional antes de su despacho. A partir de esta fecha, se generará un cobro adicional por concepto de bodegaje a cargo del cliente (dependiendo del volumen y fragilidad)." },
+            { "k": "Transporte:", "v": "En caso de que el cliente contrate los servicios de transporte con Grupo Diforma, la información de entrega (dirección exacta, contacto, teléfono y correo) deberá suministrarse con anticipación para su efectiva coordinación. De lo contrario, o por factores de terceros (cambios en itinerarios de transportadoras, aerolíneas o navieras), los tiempos de entrega al destino final podrán sufrir variaciones sin previo aviso. Todo sobrecosto generado en la operación logística por causas ajenas a Grupo Diforma será asumido por el cliente." },
+            { "k": "Instalación:", "v": "Si el cliente contrata los servicios de instalación y montaje con Grupo Diforma, deberá proveer con anticipación la dirección exacta, personas de contacto, horarios y cualquier información relevante del lugar para asegurar una correcta coordinación. Toda instalación o montaje cancelado o retrasado por causas ajenas a Grupo Diforma generará un costo adicional." },
+            { "k": "Fecha de entrega:", "v": "Por determinar." }
+          ]
+        },
+        {
+          "id": "s4",
+          "t": "TÉRMINOS DE PAGO",
+          "items": [
+            { "k": "Estructura:", "v": "{{anticipo}} de anticipo y {{saldo}} contra entrega. Cualquier retraso en el pago del anticipo generará un retraso proporcional en la fecha de entrega acordada." },
+            { "k": "Acuerdos adicionales:", "v": "Cualquier condición o forma de pago diferente a la estipulada generará costos financieros adicionales a la propuesta inicial." }
+          ]
+        },
+        {
+          "id": "s5",
+          "t": "PROPIEDAD INTELECTUAL",
+          "items": [
+            { "k": "", "v": "Todos los diseños, especificaciones e ideas técnicas presentadas son propiedad intelectual exclusiva de Grupo Diforma, y están protegidos por las leyes de derechos de autor, salvo que el cliente sea el propietario original o haya adquirido dicha propiedad mediante un acuerdo expreso y por escrito con Grupo Diforma. De lo contrario, el cliente solo tiene permiso de uso para este proyecto en específico." }
+          ]
+        },
+        {
+          "id": "s6",
+          "t": "SERVICIO POST VENTA",
+          "items": [
+            { "k": "Cobertura:", "v": "Grupo Diforma ofrece una garantía de {{garantia}} meses contra defectos de fabricación. Esta garantía no cubre daños ocasionados por maltrato, uso inadecuado o desgaste natural." },
+            { "k": "Validez:", "v": "La garantía únicamente se hará efectiva una vez Grupo Diforma haya recibido el pago total de la factura." },
+            { "k": "Cuidados:", "v": "Grupo Diforma entregará un instructivo de armado y manipulación del producto con el fin de asegurar su uso correcto y prolongar su vida útil." }
+          ]
+        }
+      ]
+    },
+    "en": {
+      "titulo": "TERMS AND CONDITIONS",
+      "secciones": [
+        {
+          "id": "s1",
+          "t": "PRE-PRODUCTION",
+          "items": [
+            { "k": "Scope of Estimate:", "v": "This estimate includes adjustments to client-supplied artwork or creative files for project development. It does not include the conception of new graphic artworks or the licensing of stock images from professional databases." },
+            { "k": "Proposal Validity:", "v": "This proposal remains valid for {{validez}} calendar days from the date of issue." },
+            { "k": "Prototypes and Samples:", "v": "The creation of a prototype or sample will be billed if it is not followed by a formal Purchase Order from the client. The sample price will depend on its production cost, and all shipping fees will be at the client's expense. This charge applies unless the prototype's unit value is under {{tope_prototipo}} and the final order value exceeds {{min_orden_prototipo}}." }
+          ]
+        },
+        {
+          "id": "s2",
+          "t": "PRODUCTION",
+          "items": [
+            { "k": "Commencement:", "v": "Production will begin upon receipt of the official Purchase Order, which must include freight, assembly, and storage costs as outlined in the agreed estimate sent by Diforma Group." },
+            { "k": "Production Timeline:", "v": "{{plazo_prod_en}} business days (excluding Sundays and Colombian public holidays), commencing once the conditions stipulated in the following point are met." },
+            { "k": "Delivery Timeline:", "v": "The delivery schedule is strictly dependent on the completion of the following conditions: (i) Official receipt of the Purchase Order, (ii) Receipt of the advance payment (if applicable), (iii) Formal written approval of the prototype or first unit by the client (if applicable), (iv) Delivery of final, high-resolution artworks by the client (if applicable)." },
+            { "k": "Modifications:", "v": "Any changes to quantities, concepts, materials, or specifications not stipulated in this proposal or the initial Purchase Order will be considered additional services and will incur extra costs." }
+          ]
+        },
+        {
+          "id": "s3",
+          "t": "STORAGE, FREIGHT AND INSTALLATION",
+          "items": [
+            { "k": "Storage:", "v": "Finished goods may remain at Diforma Group’s facilities for a maximum of {{dias_bodega}} days post-production at no extra cost. After this period, a storage fee will be applied based on the size, quantity, weight, and fragility of the goods." },
+            { "k": "Freight:", "v": "If you choose our transport services, Diforma Group must receive all logistics information in advance (exact address, on-site contact name, phone number, and email) to ensure effective coordination. Failure to provide this, or reliance on third-party carriers (airlines/shipping companies), may result in delivery variations without prior notice. Any extra charges arising from additional logistics, handling, or unforeseen delays outside of Diforma Group's control will be billed to the client." },
+            { "k": "Installation:", "v": "If you choose our installation services, Diforma Group must receive the exact address, site contact details, and any other relevant site information in advance to ensure proper coordination." },
+            { "k": "Delivery Date:", "v": "To be determined." }
+          ]
+        },
+        {
+          "id": "s4",
+          "t": "PAYMENT TERMS",
+          "items": [
+            { "k": "Structure:", "v": "{{anticipo}} advance deposit, {{saldo}} upon delivery. Any delays in the advance payment will result in corresponding delays to the production and delivery schedule." },
+            { "k": "Alternative Arrangements:", "v": "Any payment agreements outside of these terms may incur additional costs." }
+          ]
+        },
+        {
+          "id": "s5",
+          "t": "INTELLECTUAL PROPERTY",
+          "items": [
+            { "k": "", "v": "All designs, specifications, and technical ideas remain the exclusive property of Diforma Group, unless pre-owned by the client or explicitly transferred via a formal written agreement. Otherwise, the client is granted a license for single-project use only. Diforma Group retains authorship and ownership of all artworks and ideas, which are protected by applicable federal, state, and international copyright and statutory laws." }
+          ]
+        },
+        {
+          "id": "s6",
+          "t": "AFTER-SALES SERVICE AND WARRANTIES",
+          "items": [
+            { "k": "Coverage:", "v": "Diforma Group provides a {{garantia}}-month warranty against manufacturing defects. This warranty does not cover damages resulting from improper handling or misuse." },
+            { "k": "Validity:", "v": "This warranty will only become effective once Diforma Group has received full payment for the invoice." },
+            { "k": "Care:", "v": "Diforma Group will provide usage instructions to ensure proper handling and maximize the product's lifespan." }
+          ]
+        }
+      ]
     }
-  }
+  },
+  "membrete": {
+    "web": "www.diformagroup.com",
+    "logo": "",
+    "qr": "",
+    "firmaImg": "",
+    "oficinas": [
+      { "titulo": "USA Office", "dir1": "1701 Sunset Harbour DR UNIT 706", "dir2": "Miami Beach FL 33139. United States", "tel": "561- 927- 8476" },
+      { "titulo": "Production Facility", "dir1": "Cra 90 No. 17b – 9", "dir2": "Bogotá D.C – Colombia", "tel": "+57 315 899 4202" }
+    ]
+  },
+  "anchosMatriz": {}
 }

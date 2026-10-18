@@ -25,11 +25,12 @@ Fase 1 — Entrevista: describe en breve cómo fabricarías el mueble. Pregunta 
 Fase 2 — Costeo: solo cuando el analista pulse "Generar matriz".
 Fase 3 — Ajustes: el mismo chat puede corregir ítems ya listados.
 
-REGLA A — campo nombre (no existe "descripcion"): título + explicación matemática.
-- Tubos: Tc vs Tr. Metros lineales + 10% merma / 6m.
-- Alambre: retículas; longitud / 6m.
-- Láminas (PS, acrílico, MDF): m2 con rectángulo envolvente.
-- Impresión: fila aparte, m2 exactos.
+REGLA A — campo nombre (no existe "descripcion"): título corto + " — " + cuenta con cifras. El analista audita el costeo leyendo el nombre.
+- Tubos: Tc vs Tr. Suma de tramos + 10% merma = metros; cuántas tiras de 6 m y qué sobra.
+- Alambre: retículas; longitud / 6 m.
+- Láminas planas (PS, acrílico, MDF): rectángulo envolvente en cm y m².
+- PS termoformado: la holgura NO es un mm fijo. Desarrolla la lámina según altura y forma (planta + paredes/tiro + pestaña de sujeción/refile). Escribe esa cuenta en el nombre.
+- Impresión: fila aparte, m² exactos.
 El campo "fuente" va aparte. No pongas la etiqueta de fuente dentro de "nombre".
 
 REGLA B — procesos y mano de obra
@@ -72,18 +73,23 @@ function tarifasParaPrompt() {
     return (CONFIG_GLOBAL && CONFIG_GLOBAL.tarifasFijas) ? String(CONFIG_GLOBAL.tarifasFijas) : "";
 }
 
+function archivosActivosIA_() {
+    if (typeof window.archivosParaIA === "function") return window.archivosParaIA() || [];
+    return window.archivosGemaBase64 || [];
+}
+
 function hayTrabajoIA() {
     if (window.faseIA === "entrevista" || window.faseIA === "matriz") return true;
     if (typeof itemsPresupuesto !== "undefined" && itemsPresupuesto.length > 0) return true;
     if ((window.historialChatIA || []).length > 0) return true;
-    if (window.archivosGemaBase64 && window.archivosGemaBase64.length > 0) return true;
+    if (archivosActivosIA_().length > 0) return true;
     return false;
 }
 
 function promoverFaseIA() {
     const hayItems = typeof itemsPresupuesto !== "undefined" && itemsPresupuesto.length > 0;
     const hayChat = (window.historialChatIA || []).length > 0;
-    const hayArchivos = !!(window.archivosGemaBase64 && window.archivosGemaBase64.length);
+    const hayArchivos = archivosActivosIA_().length > 0;
     if (window.faseIA === "idle" && (hayItems || hayChat || hayArchivos)) {
         window.faseIA = hayItems ? "matriz" : "entrevista";
     }
@@ -235,6 +241,40 @@ function textoSinJson(texto, cotizacion) {
     return t || (cotizacion ? 'Matriz actualizada.' : texto);
 }
 
+function rellenarEmpUndDesdeChat_(ficha) {
+    if (!ficha || typeof ficha !== "object") return ficha;
+    const emp = ficha.empaque || ficha.pack || {};
+    const ya = emp.unidades || emp.und || emp.und_por_caja || emp.unidadesPorCaja || ficha.empUnd;
+    if (ya !== undefined && ya !== null && ya !== "" && Number(ya) > 0) return ficha;
+    const textos = [];
+    if (ficha.descripcion) textos.push(ficha.descripcion);
+    try {
+        (window.historialChatIA || []).forEach(function (h) { textos.push(h.text || ""); });
+    } catch (e) {}
+    const blob = textos.join("\n");
+    const m = blob.match(/(\d{1,4})\s*(?:u(?:nd(?:s|idades)?)?)\s*(?:por|\/)\s*caja/i)
+        || blob.match(/caja(?:es)?\s*(?:de|con|para)\s*(\d{1,4})\s*(?:u(?:nd)?s?|unidades)?/i)
+        || blob.match(/(\d{1,4})\s*(?:und|u)\s*(?:por|\/)\s*(?:caja|emp)/i);
+    if (!m) return ficha;
+    ficha.empaque = emp;
+    ficha.empaque.unidades = Number(m[1]);
+    return ficha;
+}
+
+function avisarEmpaqueVsPieza_() {
+    if (typeof leerFichaComercialUI !== "function") return;
+    const f = leerFichaComercialUI();
+    const da = Number(f.dimAlto);
+    const ea = Number(f.empAlto);
+    if (!(da > 0 && ea > 0) || ea + 0.5 >= da) return;
+    const desc = String(f.descripcion || "").toLowerCase();
+    const kd = /desarm|knock.?down|\bkd\b|en plano|panel a panel|plegad/.test(desc);
+    if (kd) return;
+    if (typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("La caja mide " + ea + " de alto y la pieza " + da + ". Si viaja armada, el empaque debe ser un poco mayor. Revisa o indica si va desarmada.", "warning");
+    }
+}
+
 async function aplicarCotizacionEnUI(cotizacion) {
     if (!cotizacion) return false;
     let ok = false;
@@ -246,10 +286,105 @@ async function aplicarCotizacionEnUI(cotizacion) {
         ok = true;
     }
     if (cotizacion.ficha && typeof aplicarFichaComercial === "function") {
+        rellenarEmpUndDesdeChat_(cotizacion.ficha);
         aplicarFichaComercial(cotizacion.ficha);
+        avisarEmpaqueVsPieza_();
         ok = true;
     }
+    if (Array.isArray(cotizacion.items)) avisarCubicacionCorta_();
     return ok;
+}
+
+function nEntrepanosDesdeTexto_(t) {
+    const m = String(t || "").match(/(\d{1,2})\s*(?:entrepa[nñ]os?|bandejas?|anaqueles?|estantes?|shelv(?:es|ing)?)/i);
+    return m ? Number(m[1]) : 0;
+}
+
+function despieceMuebleMinimo_() {
+    const f = typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : {};
+    const a = Number(f.dimAncho) || 0;
+    const p = Number(f.dimFondo) || 0;
+    const h = Number(f.dimAlto) || 0;
+    if (!(a > 0 && p > 0 && h > 0)) return null;
+    const nEst = nEntrepanosDesdeTexto_((f.descripcion || "") + " " + (f.titulo || "")) || 4;
+    const zH = Math.min(20, Math.max(10, Math.round(h * 0.08)));
+    const parts = [
+        { nom: "laterales", n: 2, L: p, W: h },
+        { nom: "fondo", n: 1, L: a, W: h },
+        { nom: "entrepaños", n: nEst, L: a, W: p },
+        { nom: "zócalo", n: 1, L: a, W: zH },
+        { nom: "tapa", n: 1, L: a, W: p }
+    ];
+    let cml = 0, m2 = 0;
+    parts.forEach(function (x) {
+        cml += x.n * 2 * (x.L + x.W);
+        m2 += x.n * (x.L / 100) * (x.W / 100);
+    });
+    cml = Math.round(cml * 1.2);
+    const merma = m2 * 1.18;
+    const placa = 1.22 * 2.44;
+    return {
+        a: a, p: p, h: h, nEst: nEst, zH: zH, parts: parts,
+        cml: cml, m2: m2, merma: merma,
+        placas: Math.max(2, Math.ceil(merma / placa))
+    };
+}
+
+function bloqueCubicacionMuebleParaPrompt() {
+    const d = despieceMuebleMinimo_();
+    const um = (typeof umFichaActual === "function") ? umFichaActual() : "cm";
+    if (!d) {
+        return [
+            "=== DESPIECE DE MUEBLE (obligatorio si no es un panel suelto) ===",
+            "Antes de costear, lista CADA parte visible u oculta: laterales, fondo, cuerpo, entrepaños/bandejas, zócalo, tapa, divisiones, pestañas de ensamble.",
+            "Cartonplast: NO uses un solo rectángulo envolvente. Área = suma de L×W de cada parte. Cml = suma de 2×(L+W) de cada parte + hendidos/pestañas.",
+            "Placa típica 122×244 cm (2,98 m²). cantidad en UND = ceil(m² con merma / 2,98). PROHIBIDO 1 placa o 0,x m² para un mueble de piso."
+        ].join("\n");
+    }
+    const lineasPartes = d.parts.map(function (x) {
+        return "- " + x.n + " " + x.nom + " " + x.L + "×" + x.W + " " + um + " → " + (x.n * 2 * (x.L + x.W)) + " Cml, " + (x.n * (x.L / 100) * (x.W / 100)).toFixed(2) + " m²";
+    });
+    return [
+        "=== DESPIECE MÍNIMO (mueble / exhibidor / cartonplast) ===",
+        "Medidas ficha: " + d.a + " × " + d.p + " × " + d.h + " " + um + ". Entrepaños/bandejas: " + d.nEst + " (ajusta solo si el render muestra otra cantidad).",
+        "Lista y costea TODAS estas partes. PROHIBIDO un único rectángulo " + d.a + "×" + d.h + ".",
+        lineasPartes.join("\n"),
+        "Área neta mínima ≈ " + d.m2.toFixed(2) + " m². Con merma/yield 18% ≈ " + d.merma.toFixed(2) + " m².",
+        "Placa 122×244 = 2,98 m² → mínimo " + d.placas + " UND de cartonplast (nunca 1 ni fracción de placa para este mueble).",
+        "Cml mínimo (perímetros + 20% pestañas/hendidos de ensamble): " + d.cml + " Cml.",
+        "Si tu lámina o tu mesa de corte quedan por debajo, está MAL: sube, no bajes.",
+        "nombre lámina: «Cartonplast — 2 lat " + d.p + "×" + d.h + " + fondo " + d.a + "×" + d.h + " + " + d.nEst + " bandejas " + d.a + "×" + d.p + " + zócalo " + d.a + "×" + d.zH + " = " + d.merma.toFixed(2) + " m² → " + d.placas + " placas 122×244».",
+        "nombre corte: «Mesa de corte — laterales + fondo + bandejas + zócalo + tapa = " + d.cml + " Cml» (o más)."
+    ].join("\n");
+}
+
+function avisarCubicacionCorta_() {
+    const d = despieceMuebleMinimo_();
+    if (!d || typeof itemsPresupuesto === "undefined" || !itemsPresupuesto.length) return;
+    const avisos = [];
+    let m2Lamina = 0, undPlaca = 0, cml = 0;
+    itemsPresupuesto.forEach(function (it) {
+        const n = String(it.nombre || "");
+        const um = String(it.um || "");
+        const cant = Number(it.cantidad) || 0;
+        if (/cartonplast|cart[oó]n\s*plast/i.test(n)) {
+            if (/m2|m²/i.test(um)) m2Lamina += cant;
+            if (/^und/i.test(um)) undPlaca += cant;
+        }
+        if (/mesa de corte|cml/i.test(n) || /^cml$/i.test(um)) cml += cant;
+    });
+    if (undPlaca > 0 && undPlaca + 0.05 < d.placas) {
+        avisos.push("Cartonplast: " + undPlaca + " placa(s) vs mínimo " + d.placas + " para este despiece.");
+    }
+    if (m2Lamina > 0 && m2Lamina < d.m2 * 0.75) {
+        avisos.push("Cartonplast: " + m2Lamina.toFixed(2) + " m² vs área neta mínima " + d.m2.toFixed(2) + " m².");
+    }
+    if (cml > 0 && cml < d.cml * 0.7) {
+        avisos.push("Mesa de corte: " + cml + " Cml vs mínimo " + d.cml + " Cml (todas las partes).");
+    }
+    if (avisos.length && typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("Cubicación corta frente al despiece del mueble. " + avisos.join(" "), "warning");
+    }
 }
 
 function bloqueLocaleParaPrompt() {
@@ -257,15 +392,82 @@ function bloqueLocaleParaPrompt() {
     const um = loc.sistema === "imperial" ? "in" : "cm";
     const idioma = loc.idioma === "en" ? "English" : "español";
     const pistas = window.odooPistas || {};
+    const hayPista = !!(pistas.funcionales || pistas.dimDiseno || pistas.obsPresupuesto);
     const lineas = [
-        "=== FICHA COMERCIAL / LOCALE (Odoo Brief) ===",
+        "=== CABECERA (sí usar) ===",
         "idioma de la FICHA (no del chat): " + idioma + " (lang Odoo=" + (loc.langOdoo || "") + ")",
         "sistema de medida: " + (loc.sistema === "imperial" ? "Sistema Ingles" : "Sistema Internacional") + " → um=" + um,
         "país: " + (loc.pais || "—"),
-        pistas.funcionales ? ("funcionales Odoo: " + pistas.funcionales) : "",
-        pistas.dimDiseno ? ("dimensiones diseño Odoo: " + pistas.dimDiseno) : "",
-        pistas.obsPresupuesto ? ("obs presupuesto Odoo: " + pistas.obsPresupuesto) : ""
-    ].filter(Boolean);
+        "=== EVIDENCIA ===",
+        "Mandan, en este orden: (1) PDF/render cargados (2) lo que el analista escribe en el chat (3) la ficha que él ya editó.",
+        "El Lead de Odoo NO es fuente de medidas, materiales ni empaque. Puede estar desactualizado o copiado de otro proyecto."
+    ];
+    if (hayPista) {
+        lineas.push("=== PISTAS ODOO NO VERIFICADAS (solo para preguntar si chocan con archivos/chat) ===");
+        if (pistas.funcionales) lineas.push("funcionales: " + pistas.funcionales);
+        if (pistas.dimDiseno) lineas.push("dim_diseno: " + pistas.dimDiseno);
+        if (pistas.obsPresupuesto) lineas.push("obs_presupuesto: " + pistas.obsPresupuesto);
+        lineas.push("Si una pista choca con el plano o con el analista, GANA el plano/analista. NUNCA copies dim_diseno a la ficha sin confirmar.");
+    }
+    return lineas.join("\n");
+}
+
+function compactarChatParaBrief_(chat) {
+    return (chat || []).filter(function (h) { return h && h.text; }).map(function (h) {
+        return (h.role === "user" ? "ANALISTA" : "IA") + ": " + String(h.text).replace(/\s+/g, " ").trim();
+    }).join("\n").slice(0, 4500);
+}
+
+function versionGrupalActual_() {
+    return (window.versionesPresupuesto || []).find(function (v) { return v.id === (window.versionActivaId || "V1"); }) || null;
+}
+
+function briefGrupalTexto_() {
+    if (typeof esPresupuestoGrupal !== "function" || !esPresupuestoGrupal()) return "";
+    const ver = versionGrupalActual_();
+    if (!ver) return "";
+    if (ver.briefGrupal) return String(ver.briefGrupal);
+    const activo = ver.elementoActivoId || window.elementoActivoId;
+    const otro = (ver.elementos || []).find(function (e) {
+        return e.id !== activo && (e.historialChat || []).length >= 2;
+    });
+    return otro ? compactarChatParaBrief_(otro.historialChat) : "";
+}
+
+function bloqueGrupalParaPrompt() {
+    if (typeof esPresupuestoGrupal !== "function" || !esPresupuestoGrupal()) {
+        return "=== TIPO DE PRESUPUESTO ===\nINDIVIDUAL: una sola pieza. Costea solo eso. No preguntes si vienen más elementos.";
+    }
+    const ver = versionGrupalActual_();
+    const elems = (ver && ver.elementos) || [];
+    const activoId = (ver && ver.elementoActivoId) || window.elementoActivoId;
+    const activo = elems.find(function (e) { return e.id === activoId; }) || elems[0];
+    const nombreActivo = (activo && activo.nombre) || "Pieza 1";
+    const lista = elems.map(function (e, i) {
+        const on = e.id === (activo && activo.id) ? " ← ESTÁS COSTANDO ESTA" : "";
+        const tieneMtx = (e.matrizItems || []).length > 0;
+        return (i + 1) + ") " + (e.nombre || ("Pieza " + (i + 1))) + (tieneMtx ? " [ya tiene matriz; NO la toques]" : " [pendiente]") + on;
+    }).join("\n");
+    const primer = !elems.length || (elems[0] && activo && elems[0].id === activo.id);
+    const brief = briefGrupalTexto_();
+    const lineas = [
+        "=== PRESUPUESTO GRUPAL ===",
+        "Esto YA es un presupuesto grupal: varias piezas/elementos SEPARADOS (mueble, POP, display, campaña; NO asumas que es un stand).",
+        "Cada elemento se analiza y se costea SOLO. No preguntes si son varios proyectos: ya lo son. No pidas la lista del grupo: ya está abajo.",
+        "Pieza activa (única que costeas ahora): " + nombreActivo,
+        "Piezas del grupo:",
+        lista || ("1) " + nombreActivo)
+    ];
+    if (brief && !primer) {
+        lineas.push("=== BRIEF GRUPAL (ya resuelto en la primera entrevista; NO repreguntar) ===");
+        lineas.push(brief);
+        lineas.push("En esta pieza pregunta SOLO lo específico de ella (medidas, partes, materiales propios). Rangos, destino, acabado común, tipo de empaque y Q del pedido ya están resueltos si aparecen arriba.");
+    } else if (primer) {
+        lineas.push("Esta es la PRIMERA pieza del grupo. En esta entrevista resuelve también lo que aplica a TODO el grupo: rangos/Q del pedido, destino, acabados comunes, tipo de empaque, quién instala, familia de materiales. Máximo 3–5 preguntas, nada obvio.");
+        lineas.push("No preguntes «¿son varias piezas?», «¿esto es un stand?» ni «¿vienen más elementos?».");
+    } else {
+        lineas.push("Otras piezas ya existen. Pregunta solo lo de ESTA pieza. No reinicies una entrevista de campaña.");
+    }
     return lineas.join("\n");
 }
 
@@ -283,15 +485,39 @@ function tokensCatalogo(s) {
 }
 
 function extraerDimsCatalogo(s) {
-    const t = normalizarTextoCatalogo(s);
+    const t = String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[×*]/g, "x").replace(/,/g, ".");
     const out = [];
-    const re = /(\d+)\s*x\s*(\d+)(?:\s*x\s*(\d+(?:\.\d+)?))?/g;
+    const seen = {};
+    const re = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*x\s*(\d+(?:\.\d+)?))?/g;
     let m;
     while ((m = re.exec(t))) {
-        out.push(m[1] + "x" + m[2]);
-        if (m[3]) out.push(m[1] + "x" + m[2] + "x" + m[3]);
+        const key2 = m[1] + "x" + m[2];
+        if (!seen[key2]) { seen[key2] = true; out.push(key2); }
+        if (m[3]) {
+            const key3 = key2 + "x" + m[3];
+            if (!seen[key3]) { seen[key3] = true; out.push(key3); }
+        }
     }
     return out;
+}
+
+function familiaUmCatalogo_(um) {
+    const u = String(um || "").toLowerCase();
+    if (/m2|m²/.test(u)) return "area";
+    if (/^kg|kilo/.test(u)) return "masa";
+    if (/cml|metro/.test(u)) return "largo";
+    if (/rollo/.test(u)) return "rollo";
+    return "und";
+}
+
+function umCatalogoCompatible_(umItem, umCat) {
+    const a = familiaUmCatalogo_(umItem);
+    const b = familiaUmCatalogo_(umCat);
+    if (a === b) return true;
+    if (a === "area" && (b === "masa" || b === "largo")) return false;
+    if (a === "largo" && b === "masa") return false;
+    if (a === "masa" && (b === "area" || b === "largo")) return false;
+    return true;
 }
 
 function extraerCalibreCatalogo(s) {
@@ -311,9 +537,8 @@ function scoreCatalogo(query, nombreCat) {
     });
     const den = Math.max(1, Math.min(a.length, 5));
     let score = hit / den;
-    const compactCat = normalizarTextoCatalogo(nombreCat).replace(/\s/g, "");
     extraerDimsCatalogo(qn).forEach(function (d) {
-        if (compactCat.indexOf(d.replace(/\s/g, "")) !== -1) score += 1.4;
+        if (extraerDimsCatalogo(nombreCat).indexOf(d) !== -1) score += 1.4;
     });
     const calQ = extraerCalibreCatalogo(qn);
     const calC = extraerCalibreCatalogo(nombreCat);
@@ -375,9 +600,10 @@ function mejorTarifaParaItem(nombre, tarifas) {
     return best;
 }
 
-function mejorFilaCatalogo(nombre, indice) {
+function mejorFilaCatalogo(nombre, indice, umItem) {
     let best = null, bestS = 0.72;
     (indice || []).forEach(function (r) {
+        if (umItem && r.um && !umCatalogoCompatible_(umItem, r.um)) return;
         const s = scoreCatalogo(nombre, r.nombre);
         if (s > bestS) { bestS = s; best = r; }
     });
@@ -405,7 +631,7 @@ async function enriquecerItemsConCatalogo(items) {
     const indice = await buscarCatalogoPorTokens(pendientes);
     let cruzados = 0;
     pendientes.forEach(function (it) {
-        const hit = mejorFilaCatalogo(it.nombre, indice);
+        const hit = mejorFilaCatalogo(it.nombre, indice, it.um);
         if (!hit || !(Number(hit.costo_cop) > 0)) return;
         it.fuente = "[Matriz Drive]";
         it.costoUnitario = Number(hit.costo_cop);
@@ -429,7 +655,16 @@ function instruccionesFase(modo) {
 
 === REGLAS DEL SISTEMA (mandan sobre el texto de Ajustes) ===
 IDIOMA DEL CHAT: SIEMPRE español. El analista es de Diforma. Aunque el Brief, el PDF o la ficha vayan en inglés, preguntas, resúmenes y aclaraciones van en español. El idioma Odoo (es/en) SOLO aplica a ficha.titulo y ficha.descripcion (texto para el cliente).
+EVIDENCIA: PDF/render + chat del analista mandan sobre el Lead de Odoo. Locale (idioma/sistema/país) sí sale de Odoo. Medidas, materiales y und. por caja NO se copian del Brief.
 Las fases las controla la app: entrevista hasta que el analista pulse Generar matriz; entonces JSON. No uses herramientas inventadas ni busques en Drive archivo por archivo. El catálogo ya viene abajo. campo um = UND (nunca escribas Unidades). campo fuente aparte; no lo metas en nombre.
+NOMBRE AUDITABLE: cada ítem de material/proceso con cubicación lleva en nombre la cuenta (cifras). PROHIBIDO un título solo («Lámina PS Cal.60»). Forma: «título — pieza + extras = bruto → compra».
+Ej. tubo: «Tc 1/2 — 4×0,80 + 4×0,40 = 4,80 m +10% = 5,28 m → 1 tira 6 m (sobra 0,72)».
+Ej. PS termoformado: «PS Cal.60 frente — planta 60,3×7,9 cm; h tiro 3,0 cm; desarrollo paredes 2×3,0; pestaña ~2 cm/lado (relieve bajo, borde abierto) = lámina 64,3×15,9 cm = 0,102 m²».
+TERMOFORMADO — cómo calcular la lámina (no inventes un mm único):
+1) Planta = largo × ancho de la pieza terminada (plano/render).
+2) Desarrollo = suma el tiro/altura en cada lado que baja o se curva (como patrón de chapa; si es L o aleta, desarrolla esa sección).
+3) Pestaña de marco/refile: proporcional a altura y forma (relieve bajo ~1,5–2,5 cm/lado; medio 2,5–4 cm; alto o bajo corte / forma cerrada, más). Declara el cm que usaste.
+4) Lámina bruta = planta + desarrollo + pestañas. cantidad en m² (o placas UND con yield). PROHIBIDO 0,035 UND sin esa cuenta.
 Prioridad: 1) [Tarifa Fija] si el ítem coincide con la lista de tarifas (procesos internos). 2) Catálogo maestro / [Matriz Drive] para materiales. 3) [Estimado IA]. 4) [Manual].
 
 UNIDADES DE LA MATRIZ (copia el código UM exacto; aplica factor y regla):
@@ -439,12 +674,24 @@ CÓMO LEER EL CATÁLOGO: costo_cop es el precio de UNA unidad de la UM del maest
 Si el maestro trae UND de perfil 6 m, no pongas Metros con el mismo costo. Láminas en Odoo = UND (placa), nunca Hojas.
 
 TARIFAS FIJAS (mandan sobre el maestro si el concepto coincide):
-${tarifas || '(vacío)'}`;
+${tarifas || '(vacío)'}
+
+LÁMINAS (cartonplast, MDF, PS, acrílico, corrugado): el maestro vende PLACAS en UND. costoUnitario = COP de UNA placa del calibre/espesor correcto. cantidad = placas a comprar (ceil de m² netos / m² de la placa + merma). Escribe la cuenta en nombre. PROHIBIDO poner m² con el precio de una placa, o UND con un precio de m² inventado. Cartonplast: usa la fila del maestro con el espesor que se ve (3, 4, 5 mm), no otra lámina barata.
+
+MESA DE CORTE (Cml): UM = Cml = centímetros lineales de TODOS los cortes, no el perímetro de una silueta. Un mueble = fondo + cuerpo + laterales + bandejas + zócalo + tapas + divisiones. Suma los filos reales de CADA parte. nombre: «Mesa de corte — fondo 2×A+2×B; cuerpo …; bandejas n×(…); zócalo … = N Cml».
+
+MANO DE OBRA: mueble/exhibidor/showroom con varias partes = horas reales de taller + armado. PROHIBIDO 0,2–1 h para un gabinete de ~185 cm con bandejas. Siempre dos ítems: Mano de obra Externa y Mano de obra Interna.
+
+EMPAQUE: caja un poco MAYOR que la pieza en las 3 cotas si viaja armada (holgura 2–8 cm). Si pieza.alto = 185, caja.alto NO puede ser 100 salvo que declares desarmado/KD en ficha.descripcion y entonces la caja cubre el panel más grande.`;
 
     if (modo === 'entrevista') {
         return `${base}
 
 ${bloqueLocaleParaPrompt()}
+
+${bloqueGrupalParaPrompt()}
+
+${bloqueCubicacionMuebleParaPrompt()}
 
 MODO ACTUAL: FASE 1 ENTREVISTA.
 Responde SIEMPRE en español, breve. Aunque el proyecto sea exportación o el Brief esté en inglés. PROHIBIDO JSON, arrays de ítems o costos. NO desgloses la matriz.
@@ -460,20 +707,29 @@ Cuando el costeo ya puede salir, invita a pulsar Generar matriz y menciona que, 
 
 ${bloqueLocaleParaPrompt()}
 
+${bloqueGrupalParaPrompt()}
+
+${bloqueCubicacionMuebleParaPrompt()}
+
 MODO ACTUAL: FASE 2 GENERAR COTIZACIÓN.
 El analista confirmó. Usa rangos que haya dicho; si no hay, [1, 50, 100].
 Primero un párrafo corto EN ESPAÑOL (chat interno). AL FINAL un único JSON (sin markdown) con esta forma:
-{"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"}},"items":[{"fuente":"[Estimado IA]","nombre":"...","categoria":"Materias Primas","cantidad":1,"um":"UND","costoUnitario":0,"es_global":false}]}
-ficha.titulo y ficha.descripcion en ${langF}. descripcion: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo).
-Medidas de ficha SOLO en ${umF}. Si el brief ya trae 60x40x120, úsalas. empaque: estima caja si no hay dato (un poco mayor que el mueble).
+{"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0}},"items":[{"fuente":"[Estimado IA]","nombre":"PS Cal.60 frente — planta 60,3x7,9; h 3,0; paredes 2x3,0; pestaña 2 cm/lado = 64,3x15,9 cm = 0,102 m2","categoria":"Materias Primas","cantidad":0.102,"um":"m2","costoUnitario":0,"es_global":false}]}
+nombre de cada ítem: título + cuenta con cifras (pieza, tolerancia, merma, tiras de 6 m). ficha.titulo y ficha.descripcion en ${langF}. descripcion de ficha: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo). La receta de costo va en items.nombre, no en la ficha.
+Medidas de ficha SOLO en ${umF}, tomadas del PDF/render o de lo que confirmó el analista. PROHIBIDO copiar dim_diseno u otras medidas del Lead Odoo.
+empaque: caja un poco MAYOR que la pieza (holgura 2–8 cm por lado) si viaja armada. empaque.alto >= dimensiones.alto. PROHIBIDO caja más baja que el mueble (ej. pieza 185 y caja 100) salvo KD declarado. empaque.unidades = und. por caja, OBLIGATORIO si hay caja (si el analista dijo 200U, unidades=200; no lo dejes 0 ni lo omitas). empaque.peso = peso de una caja en kg si el sistema es cm, o en lb si es in; solo si el analista lo dijo, si no 0.
 costoUnitario en COP sin IVA. Para es_global true, costoUnitario es el costo del LOTE (o por cada cantidad del lote), NO por producto. No rellenes costos[] en ítems globales: la app hace costoUnitario/Q. PROHIBIDO poner el valor de una caja o un flete en cada unidad del rango (ej. 5.000 cenefas).`;
     }
     return `${base}
 
 ${bloqueLocaleParaPrompt()}
 
+${bloqueGrupalParaPrompt()}
+
+${bloqueCubicacionMuebleParaPrompt()}
+
 MODO ACTUAL: FASE 3 AJUSTES sobre la matriz ya listada.
-Responde SIEMPRE en español, breve. Si modificas ítems o el analista pide regenerar/rehacer la matriz, AL FINAL el JSON completo {"rangos":[...],"ficha":{...},"items":[...]} sin markdown. Incluye ficha si cambian título, texto o medidas.
+Responde SIEMPRE en español, breve. Si modificas ítems o el analista pide regenerar/rehacer la matriz, AL FINAL el JSON completo {"rangos":[...],"ficha":{...},"items":[...]} sin markdown. Incluye ficha si cambian título, texto o medidas. Cada items.nombre debe conservar la cuenta (cifras, merma, tiras 6 m, tolerancia de termoformado).
 Si solo aclaras, no envíes JSON.
 Puede adjuntar archivos extra: úsalos. No pidas recargar la página.
 Al rellenar costos: flete, cajas máster, elaboración de troquel (dado) y setup van con es_global true y costoUnitario = COP del lote (o por caja del lote). NO copies esos valores a costos[] ni los pongas como precio de cada producto. La app diluye Costo/Q. PROHIBIDO asignar una caja o un flete entero a cada unidad del rango (ej. 5.000 cenefas). Troquelado por golpe y materiales por pieza: es_global false.
@@ -515,16 +771,19 @@ async function obtenerCatalogoDriveTexto() {
 
 window.reiniciarSesionIA = window.limpiarMesaDeTrabajo;
 
-async function llamarGeminiConImagenes(promptTexto, timeoutMs) {
-    const forzarPro = document.getElementById('togglePro')?.checked || false;
+async function llamarGeminiConImagenes(promptTexto, timeoutMs, opts) {
+    opts = opts || {};
+    const toggle = document.getElementById('togglePro')?.checked || false;
+    const forzarPro = (opts.forzarPro !== undefined) ? !!opts.forzarPro : toggle;
     const parts = [{ text: promptTexto }];
     const vis = (typeof window.prepararPartesGemini === "function")
         ? await window.prepararPartesGemini()
-        : (window.archivosGemaBase64 || []).map(function (f) {
+        : archivosActivosIA_().map(function (f) {
             return { inlineData: { mimeType: f.mimeType, data: f.data } };
         });
     vis.forEach(function (p) { parts.push(p); });
-    const data = await realizarPeticionBD({ action: 'gemini_analizar', forzarPro: forzarPro, parts: parts }, { timeoutMs: timeoutMs || 180000 });
+    const ms = timeoutMs || (forzarPro ? 300000 : 240000);
+    const data = await realizarPeticionBD({ action: 'gemini_analizar', forzarPro: forzarPro, parts: parts }, { timeoutMs: ms });
     pintarUsoGemini(data && data.uso);
     return data;
 }
@@ -613,8 +872,8 @@ function bloquearChatIA_(on) {
 }
 
 window.procesarPlanoIA = async function() {
-    if (!window.archivosGemaBase64 || window.archivosGemaBase64.length === 0) {
-        return mostrarNotificacion("Sube un render o PDF.", "warning");
+    if (!archivosActivosIA_().length) {
+        return mostrarNotificacion("Sube un render o PDF, o marca uno como Grupo para verlo en esta pieza.", "warning");
     }
     const btn = document.getElementById('btnEjecutarIA');
     const txtOriginal = btn ? btn.innerHTML : '';
@@ -637,8 +896,8 @@ window.procesarPlanoIA = async function() {
         const extra = reanudar
             ? `\nYa hay matriz y/o chat. NO reinicies la entrevista. Resume el análisis. Si el costeo está listo, pide que pulse Generar matriz.\n=== MATRIZ ACTUAL ===\n${JSON.stringify({ rangos: (typeof lotesSimulacion !== "undefined" ? lotesSimulacion.map(function (l) { return l.q; }) : [1]), items: (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []) })}\n=== HISTORIAL ===\n${historialComoTexto()}`
             : "\nInicia la Fase 1.";
-        const promptTexto = `${instruccionesFase(hayItems ? "ajustes" : "entrevista")}\n\nEl analista acaba de cargar ${window.archivosGemaBase64.length} archivo(s).${extra}`;
-        const data = await llamarGeminiConImagenes(promptTexto, 180000);
+        const promptTexto = `${instruccionesFase(hayItems ? "ajustes" : "entrevista")}\n\nEl analista acaba de cargar ${archivosActivosIA_().length} archivo(s) de esta vista.${extra}`;
+        const data = await llamarGeminiConImagenes(promptTexto, 240000, { forzarPro: false });
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const sinJson = textoSinJson(texto, extraerCotizacionIA(texto));
@@ -648,7 +907,7 @@ window.procesarPlanoIA = async function() {
         promoverFaseIA();
         if (textoInvitaGenerarMatriz(sinJson)) mostrarHintGeminiPro(true);
     } catch (err) {
-        mostrarNotificacion("Error Servidor: " + err.message, "danger");
+        mostrarNotificacion(err.message || "No se pudo analizar. Reintenta.", "danger");
         promoverFaseIA();
     } finally {
         quitarEsperaIA_(typingId);
@@ -660,7 +919,7 @@ window.procesarPlanoIA = async function() {
 window.enviarMensajeChat = async function() {
     const input = document.getElementById('chatInput');
     let msg = input?.value.trim() || '';
-    if (!msg && !(window.archivosGemaBase64 || []).length) return;
+    if (!msg && !archivosActivosIA_().length) return;
     if (!msg) msg = '(Archivos adicionales adjuntos)';
     if (input) input.value = '';
     pintarMensaje('user', msg.replace(/</g, '&lt;').replace(/\n/g, '<br>'));
@@ -687,6 +946,7 @@ window.enviarMensajeChat = async function() {
             esperaIATexto_("Aplicando la matriz…");
             await aplicarCotizacionEnUI(cotizacion);
         } else if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
+            rellenarEmpUndDesdeChat_(cotizacion.ficha);
             aplicarFichaComercial(cotizacion.ficha);
         }
         const charla = textoSinJson(texto, cotizacion);
@@ -713,21 +973,24 @@ function promptSoloFichaComercial() {
     const fichaHoy = (typeof leerFichaComercialUI === "function") ? leerFichaComercialUI() : {};
     return `${bloqueLocaleParaPrompt()}
 
+${bloqueGrupalParaPrompt()}
+
 TAREA: rellenar SOLO la ficha comercial. NO toques costos ni matriz.
 Párrafo del chat: español. Idioma de titulo/descripcion de la ficha: ${langF}. Medidas SOLO en ${umF}.
 titulo corto (como en cotización). descripcion 3–4 líneas: qué es, uso en PDV, materiales visibles. Sin receta de costo.
-dimensiones del mueble (ancho × fondo × alto). empaque de la caja (un poco mayor si no hay dato).
-Usa renders/PDF, el chat y pistas de ítems (ej. caja 155x65x45). Si el brief Odoo trae 60×40×120, úsalas.
+dimensiones del mueble (ancho × fondo × alto) del PDF/render o del chat. empaque de la caja un poco MAYOR que la pieza (no más baja). Si va desarmada, dilo en descripcion.
+empaque.unidades = und. por caja: si el analista dijo «caja con 200U», unidades=200. No lo dejes vacío.
+PROHIBIDO copiar medidas del Lead Odoo si el archivo o el chat ya dieron otras.
 
 Ficha actual (puedes completar huecos, no borres lo que ya esté bien):
 ${JSON.stringify(fichaHoy)}
 
 Responde un párrafo corto y AL FINAL un único JSON sin markdown:
-{"ficha":{"titulo":"...","descripcion":"...","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"}}}`;
+{"ficha":{"titulo":"...","descripcion":"...","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0}}}`;
 }
 
 window.completarFichaIA = async function () {
-    const hayArchivos = window.archivosGemaBase64 && window.archivosGemaBase64.length;
+    const hayArchivos = archivosActivosIA_().length > 0;
     const hayChat = (window.historialChatIA || []).length > 0;
     const hayItems = typeof itemsPresupuesto !== "undefined" && itemsPresupuesto.length > 0;
     if (!hayArchivos && !hayChat && !hayItems) {
@@ -758,7 +1021,9 @@ ${JSON.stringify({
         const texto = textoGemini(data);
         const cotizacion = extraerCotizacionIA(texto);
         if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
+            rellenarEmpUndDesdeChat_(cotizacion.ficha);
             aplicarFichaComercial(cotizacion.ficha);
+            avisarEmpaqueVsPieza_();
         }
         const charla = textoSinJson(texto, cotizacion);
         window.historialChatIA.push({ role: "model", text: charla });
@@ -775,7 +1040,7 @@ ${JSON.stringify({
 
 window.generarMatrizIA = async function(opts) {
     opts = opts || {};
-    const hayArchivos = window.archivosGemaBase64 && window.archivosGemaBase64.length;
+    const hayArchivos = archivosActivosIA_().length > 0;
     const hayChat = (window.historialChatIA || []).length > 0;
     const hayItems = typeof itemsPresupuesto !== "undefined" && itemsPresupuesto.length > 0;
     if (!hayArchivos && !hayChat && !hayItems) {
@@ -810,8 +1075,8 @@ Materiales (tubos, ángulos, láminas, alambre, perfiles): busca en el catálogo
 === HISTORIAL ===
 ${historialComoTexto()}`;
         const data = hayArchivos
-            ? await llamarGeminiConImagenes(promptTexto, 180000)
-            : await llamarGeminiChat(promptTexto, 180000);
+            ? await llamarGeminiConImagenes(promptTexto, 300000)
+            : await llamarGeminiChat(promptTexto, 240000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const cotizacion = extraerCotizacionIA(texto);
