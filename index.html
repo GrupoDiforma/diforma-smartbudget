@@ -286,6 +286,7 @@
               <button type="button" id="btnLogReset" class="btn btn-sm btn-outline-secondary" title="Vuelve a los anchos y altos por defecto"><i class="bi bi-arrow-counterclockwise me-1"></i>Restablecer diseño</button>
               <button type="button" id="btnLogHistorial" class="btn btn-sm btn-outline-primary ms-auto" title="Cotizaciones guardadas: abrir y editar"><i class="bi bi-clock-history me-1"></i>Guardadas</button>
               <button type="button" id="btnLogGuardar" class="btn btn-sm btn-outline-primary" title="Guardar esta cotización en el historial"><i class="bi bi-save me-1"></i>Guardar</button>
+              <button type="button" id="btnLogImgs" class="btn btn-sm btn-outline-secondary" title="Vuelve a bajar de Drive las fotos de esta cotización. Úsalo si la hoja o el PDF salieron sin imagen."><i class="bi bi-image me-1"></i>Recargar imágenes</button>
               <button type="button" id="btnLogPDF" class="btn btn-sm btn-diforma-blue"><i class="bi bi-download me-1"></i>PDF</button>
               </div>
             </div>
@@ -467,6 +468,29 @@
                     <p class="text-muted small mb-2">El valor es el costo. El margen se suma al pasarlo a la cotización y no se imprime. Duties y Taxes no llevan margen. En nacional, envío, montaje, bodegaje y otro tienen cada uno su %.</p>
                     <div id="logEnvLineas"></div>
                   </div>
+                </section>
+                <section class="log-card" id="logPagoCard">
+                  <h6>IVA y anticipo</h6>
+                  <p class="text-muted small mb-2">Sale debajo del gran total, solo si lo enciendes. El IVA no entra a la comisión ni al historial. El anticipo y el saldo se calculan sobre el total con IVA, si está activo; si no, sobre el gran total. El % de anticipo sale de Ajustes y aquí lo puedes cambiar solo para esta cotización.</p>
+                  <div class="log-doc-grid">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" role="switch" id="logPagoIva">
+                      <label class="form-check-label" for="logPagoIva">Mostrar IVA</label>
+                    </div>
+                    <div>
+                      <label class="form-label small mb-1" for="logPagoIvaPct">IVA %</label>
+                      <input type="number" id="logPagoIvaPct" class="form-control form-control-sm text-end" min="0" max="100" step="0.1" value="19">
+                    </div>
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" role="switch" id="logPagoAnticipo">
+                      <label class="form-check-label" for="logPagoAnticipo">Mostrar anticipo</label>
+                    </div>
+                    <div>
+                      <label class="form-label small mb-1" for="logPagoAnticipoPct">Anticipo %</label>
+                      <input type="number" id="logPagoAnticipoPct" class="form-control form-control-sm text-end" min="0" max="100" step="0.1" value="50">
+                    </div>
+                  </div>
+                  <div id="logPagoInfo" class="small text-muted mt-2"></div>
                 </section>
               </div>
               <div class="log-stage" title="Clic en la imagen para acercarla, recortarla o girarla. Clic en un total para editarlo.">
@@ -1188,11 +1212,11 @@
   
   <script src="admin.js?v=1.0.29"></script>
     <script src="seguridad.js?v=1.0.25"></script>
-    <script src="app.js?v=1.0.46"></script>
+    <script src="app.js?v=1.0.47"></script>
   <script src="engine.js?v=1.0.37"></script>
   <script src="connectors.js?v=1.0.34"></script>
   <script src="ia-core.js?v=1.0.39"></script>
   <script src="export-excel.js?v=1.0.32"></script>
-  <script src="logistica.js?v=1.0.77"></script>
+  <script src="logistica.js?v=1.0.86"></script>
 </body>
 </html>

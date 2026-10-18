@@ -82,9 +82,10 @@ function mostrarAlertaOdoo(mensaje, tipo, cargando = false) {
 }
 
 var _colaCotGas = Promise.resolve();
+var _colaImgGas = Promise.resolve();
 
 function _esAccionCotizacion_(action) {
-    return /^(listar_cotizaciones|obtener_cotizacion|guardar_cotizacion|cotizacion_)/.test(String(action || ""));
+    return /^(listar_cotizaciones|obtener_cotizacion|guardar_cotizacion)$/.test(String(action || ""));
 }
 
 async function asegurarGasUrl_() {
@@ -158,9 +159,14 @@ async function _fetchGas_(payload, opts) {
 
 async function realizarPeticionBD(payload, opts) {
     opts = opts || {};
-    if (opts.cola === false || !_esAccionCotizacion_(payload && payload.action)) {
-        return _fetchGas_(payload, opts);
+    const act = payload && payload.action;
+    if (opts.cola === false) return _fetchGas_(payload, opts);
+    if (String(act || "") === "cotizacion_imagenes") {
+        const pImg = _colaImgGas.then(function () { return _fetchGas_(payload, opts); }, function () { return _fetchGas_(payload, opts); });
+        _colaImgGas = pImg.then(function () {}, function () {});
+        return pImg;
     }
+    if (!_esAccionCotizacion_(act)) return _fetchGas_(payload, opts);
     const p = _colaCotGas.then(function () { return _fetchGas_(payload, opts); }, function () { return _fetchGas_(payload, opts); });
     _colaCotGas = p.then(function () {}, function () {});
     return p;

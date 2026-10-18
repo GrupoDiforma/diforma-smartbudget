@@ -1125,20 +1125,37 @@ function logEnvSuma_(baseProd) {
     return alguna ? s : 0;
 }
 
+function logSufijoMon_(txt, mon) {
+    let t = String(txt || "").trim();
+    const marca = " · " + mon;
+    if (t.toUpperCase().indexOf(marca.toUpperCase()) >= 0) return t;
+    t = t.replace(new RegExp("\\s*\\(" + String(mon || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\)\\s*$", "i"), "");
+    return (t.replace(/\s+/g, " ").trim() + marca).trim();
+}
+
 function logEnvTitulo_(cual, T, mon, esEn) {
     const e = logEnv_();
-    const custom = cual === "prod" ? e.titSubProd : (cual === "log" ? e.titSubLog : e.titGran);
-    const conMoneda_ = function (txt) {
-        const t = String(txt || "").trim();
-        const suf = "(" + mon + ")";
-        return t.toUpperCase().indexOf(suf) >= 0 ? t : (t + " " + suf);
-    };
+    let custom = cual === "prod" ? e.titSubProd : (cual === "log" ? e.titSubLog : e.titGran);
+    const viejos = [
+        "PRECIO TOTAL (ANTES DE IVA) (" + mon + ")",
+        "TOTAL PRICE (BEFORE VAT) (" + mon + ")",
+        "PRECIO SUBTOTAL (" + mon + ")",
+        "SUBTOTAL PRICE (" + mon + ")",
+        "PRECIO TOTAL LOGÍSTICA (" + mon + ")",
+        "PRECIO TOTAL LOGISTICA (" + mon + ")",
+        "TOTAL LOGISTICS PRICE (" + mon + ")"
+    ];
+    if (viejos.some(function (v) { return String(custom || "").trim().toUpperCase() === v.toUpperCase(); })) custom = "";
+    const conMoneda_ = function (txt) { return logSufijoMon_(txt, mon); };
     if (cual !== "gran" && String(custom || "").trim()) return String(custom).trim();
     if (cual === "prod") {
-        if (!logEsCotizacionExterior_()) return (esEn ? "SUBTOTAL PRICE" : "PRECIO SUBTOTAL") + " (" + mon + ")";
-        return (esEn ? "EXW SUBTOTAL PRICE" : "PRECIO SUBTOTAL EXWORKS") + " (" + mon + ")";
+        if (!logEsCotizacionExterior_()) return logSufijoMon_(esEn ? "SUBTOTAL PRICE" : "PRECIO SUBTOTAL", mon);
+        return logSufijoMon_(esEn ? "EXW SUBTOTAL PRICE" : "PRECIO SUBTOTAL EXWORKS", mon);
     }
-    if (cual === "log") return (esEn ? "TOTAL LOGISTICS PRICE" : "PRECIO TOTAL LOGÍSTICA") + " (" + mon + ")";
+    if (cual === "log") return logSufijoMon_(esEn ? "TOTAL LOGISTICS PRICE" : "PRECIO TOTAL LOGÍSTICA", mon);
+    if (cual === "gran" && typeof logPagoAsegurar_ === "function" && logPagoAsegurar_().iva && !String(custom || "").trim()) {
+        return logSufijoMon_(esEn ? "TOTAL PRICE BEFORE VAT" : "PRECIO TOTAL ANTES DE IVA", mon);
+    }
     if (!logEsCotizacionExterior_()) {
         return conMoneda_(String(custom || "").trim() || (esEn ? "GRAND TOTAL BEFORE VAT" : "GRAN TOTAL SIN IVA"));
     }
@@ -1834,14 +1851,15 @@ function logisticaTablaHTML_(idioma) {
     let bloqueLog = "";
     const descOn = logDescuentoActivo_();
     if (hayLog) {
-        bloqueLog += filaMontos_("tot tot-sub", "prod", edTit("titSubProd", logEnvTitulo_("prod", T, mon, esEn)), pres.prod);
+        bloqueLog += filaMontos_("tot tot-sub tot-prod", "prod", edTit("titSubProd", logEnvTitulo_("prod", T, mon, esEn)), pres.prod);
     } else if (descOn && logQuote.filas.length) {
-        bloqueLog += filaMontos_("tot tot-sub", "prod", edTit("titSubProd", (esEn ? "SUBTOTAL PRICE" : "PRECIO SUBTOTAL") + " (" + mon + ")"), pres.prod);
+        bloqueLog += filaMontos_("tot tot-sub tot-prod", "prod", edTit("titSubProd", logSufijoMon_(esEn ? "SUBTOTAL PRICE" : "PRECIO SUBTOTAL", mon)), pres.prod);
     }
     if (descOn && logQuote.filas.length) {
         bloqueLog += filaMontos_("tot tot-desc", "desc", edTit("titDesc", logDescuentoEtiqueta_(esEn)) + logDescuentoNotaHtml_(), pres.desc || {});
     }
     if (hayLog) {
+        bloqueLog += "<tr class=\"sec-gap\"><td colspan=\"" + n + "\"></td></tr>";
         bloqueLog += "<tr class=\"sec\"><td colspan=\"" + n + "\">" + logEsc_(T.secEnvios) + "</td></tr>";
         if (logEnv_().modoCosto === "resumen") {
             bloqueLog += filaMontos_("it it-env", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn)), pres.env);
@@ -1861,19 +1879,39 @@ function logisticaTablaHTML_(idioma) {
                 bloqueLog += filaMontos_("it it-env", "env", logEsc_(ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn)), montos);
             });
             if (envLineas.length + envios.length > 1) {
-                bloqueLog += filaMontos_("tot tot-sub", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn)), pres.env);
+                bloqueLog += filaMontos_("tot tot-sub tot-log", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn)), pres.env);
             }
         }
     }
     filasHtml += bloqueLog;
     let totalHtml = "";
     if (mostrarGran) totalHtml += filaMontos_("tot gran", "gran", edTit("titGran", logEnvTitulo_("gran", T, mon, esEn)), pres.gran);
+    if (mostrarGran && typeof logPagoAsegurar_ === "function") {
+        const pago = logPagoAsegurar_();
+        if (pago.iva || pago.anticipo) {
+            const conIva = {}, ant = {}, sal = {};
+            tClaves.forEach(function (k) {
+                const m = logPagoMontos_((pres.gran && pres.gran[k]) || 0);
+                conIva[k] = m.conIva;
+                ant[k] = m.anticipo;
+                sal[k] = m.saldo;
+            });
+            if (pago.iva) totalHtml += filaMontos_("tot tot-pago", "pago", edTit("titConIva", logPagoEtiqueta_("conIva", esEn, mon)), conIva);
+            if (pago.anticipo) {
+                totalHtml += filaMontos_("tot tot-pago", "pago", edTit("titAnt", logPagoEtiqueta_("anticipo", esEn, mon)), ant);
+                totalHtml += filaMontos_("tot tot-pago", "pago", edTit("titSaldo", logPagoEtiqueta_("saldo", esEn, mon)), sal);
+            }
+        }
+    }
     const colgroup = "<colgroup>" + cols.map(function (c) { return "<col style=\"width:" + c.w + "%\">"; }).join("") + "</colgroup>";
     const rzAttr = function (idx) {
         if (idx >= cols.length - 1) return "";
         return " data-rz=\"" + cols[idx].li + "\" data-rz2=\"" + cols[idx + 1].li + "\" data-pc=\"" + cols[idx].pc + "\" data-pc2=\"" + cols[idx + 1].pc + "\" data-sc=\"1\"";
     };
-    const nombreCol = function (c) { return c.k === "pu" ? T.cols.pu + " (" + mon + ")" : T.cols[c.k]; };
+    const nombreCol = function (c) {
+        if (c.k === "pu") return (esEn ? "Unit" : "Precio unit") + " · " + mon;
+        return T.cols[c.k];
+    };
     const thead = "<thead><tr>" + cols.map(function (c, i) {
         return "<th data-c=\"" + c.k + "\"" + rzAttr(i) + ">" + logEsc_(nombreCol(c)) + "</th>";
     }).join("") + "</tr></thead>";
@@ -2095,15 +2133,90 @@ function logBotonBusy_(id, on, label) {
     }
 }
 
+function logisticaFilasImgPendientes_() {
+    return (logQuote.filas || []).filter(function (f) {
+        return (f.imgRef || f.srcRef) && !/^data:image\//.test(f.img || "");
+    });
+}
+
+function logisticaAvisarImgsPendientes_() {
+    const n = logisticaFilasImgPendientes_().length;
+    if (!n) { logCargaBar_(""); return; }
+    logCargaBar_("Faltan " + n + " foto" + (n === 1 ? "" : "s") + " para el PDF. " +
+        "<button type=\"button\" class=\"btn btn-link btn-sm p-0 align-baseline\" id=\"btnLogImgsHint\">Recargar imágenes</button>");
+    const hint = document.getElementById("btnLogImgsHint");
+    if (hint) hint.addEventListener("click", function () { logisticaRecargarImgs_(); });
+}
+
+let _logImgsP = null;
+
 async function logisticaTraerImgsFaltantes_() {
     const abierta = logQuote.abierta;
-    const filas = (logQuote.filas || []).filter(function (f) { return f.imgRef && !/^data:image\//.test(f.img || ""); });
+    const filas = logisticaFilasImgPendientes_();
     if (!filas.length) { logCargaBar_(""); return; }
     filas.forEach(function (f) {
         if (logQuote.abierta !== abierta) return;
-        logisticaPonerImgFila_(f.uid, logUrlImgDrive_(f.imgRef));
+        if (f.imgRef) logisticaPonerImgFila_(f.uid, logUrlImgDrive_(f.imgRef));
     });
-    logCargaBar_("");
+    return logisticaRecargarImgs_({ silencio: true, filas: filas, auto: true });
+}
+
+/** Baja de Drive los renders que no quedaron en la hoja (cotización guardada). */
+async function logisticaRecargarImgs_(opts) {
+    opts = opts || {};
+    if (_logImgsP && !opts.todas) return _logImgsP;
+    const filas = opts.filas || (opts.todas
+        ? (logQuote.filas || []).filter(function (f) { return f.imgRef || f.srcRef; })
+        : logisticaFilasImgPendientes_());
+    if (!filas.length) {
+        if (!opts.silencio && typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("No hay fotos pendientes. Si el PDF salió en blanco, pulsa PDF otra vez.", "info");
+        }
+        logCargaBar_("");
+        return 0;
+    }
+    const abierta = logQuote.abierta;
+    const trabajo = (async function () {
+        const t0 = Date.now();
+        let ok = 0;
+        let fail = 0;
+        for (let i = 0; i < filas.length; i++) {
+            if (logQuote.abierta !== abierta) break;
+            const fila = filas[i];
+            const ref = fila.imgRef || fila.srcRef;
+            fila._imgBlob = false;
+            logCargaBar_("Cargando fotos " + (i + 1) + " de " + filas.length + " · " + Math.floor((Date.now() - t0) / 1000) + " s");
+            if (typeof textoEsperaNube === "function" && opts.espera) {
+                textoEsperaNube("Trayendo render " + (i + 1) + " de " + filas.length + "…");
+            }
+            try {
+                const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: [ref], modo: "blob" }, { timeoutMs: 60000 });
+                const u = r && r.exito && r.data ? (r.data[ref] || "") : "";
+                if (u && /^data:image\//.test(u)) {
+                    logIdbPutImg_(ref, u);
+                    fila.img = u;
+                    fila._imgBlob = true;
+                    logisticaPonerImgFila_(fila.uid, u);
+                    ok++;
+                } else fail++;
+            } catch (e) { fail++; }
+        }
+        if (logQuote.abierta === abierta) {
+            logCargaBar_("");
+            if (ok) logisticaRefrescarTabla_();
+            if (fail) logisticaAvisarImgsPendientes_();
+            if (!opts.silencio && typeof mostrarNotificacion === "function") {
+                if (ok && !fail) mostrarNotificacion("Imágenes listas. Ya puedes bajar el PDF.", "success");
+                else if (ok) mostrarNotificacion("Llegaron " + ok + " de " + filas.length + " fotos. Pulsa Recargar imágenes otra vez.", "warning");
+                else mostrarNotificacion("No se pudieron traer las fotos de Drive. Reintenta en un momento.", "danger");
+            } else if (opts.auto && fail && typeof mostrarNotificacion === "function") {
+                mostrarNotificacion("Algunas fotos no bajaron. Usa Recargar imágenes.", "warning");
+            }
+        }
+        return ok;
+    })();
+    _logImgsP = trabajo;
+    try { return await trabajo; } finally { if (_logImgsP === trabajo) _logImgsP = null; }
 }
 
 /** true si la imagen se giró o recortó; si no, el original no se guarda aparte (basta la imagen visible). */
@@ -2602,6 +2715,112 @@ function logisticaOnDescuento_(ev) {
     }
 }
 
+function logPagoPctAnticipoDef_() {
+    const vars = (typeof logTycDoc_ === "function") ? logTycDoc_().vars : LOG_TYC_VARS_DEF_;
+    const n = parseFloat(String((vars && vars.anticipo) || "50").replace(",", ".").replace("%", ""));
+    return isFinite(n) ? n : 50;
+}
+
+function logPagoDef_() {
+    return { iva: false, ivaPct: 19, anticipo: false, anticipoPct: logPagoPctAnticipoDef_(), titConIva: "", titAnt: "", titSaldo: "" };
+}
+
+function logPagoAsegurar_() {
+    if (!logQuote.pago) logQuote.pago = logPagoDef_();
+    const p = logQuote.pago;
+    const ivaPct = Number(p.ivaPct);
+    const ant = Number(p.anticipoPct);
+    p.iva = !!p.iva;
+    p.anticipo = !!p.anticipo;
+    p.ivaPct = isFinite(ivaPct) ? Math.min(100, Math.max(0, ivaPct)) : 19;
+    p.anticipoPct = isFinite(ant) ? Math.min(100, Math.max(0, ant)) : logPagoPctAnticipoDef_();
+    p.titConIva = String(p.titConIva || "");
+    p.titAnt = String(p.titAnt || "");
+    p.titSaldo = String(p.titSaldo || "");
+    return p;
+}
+
+function logPagoMontos_(gran) {
+    const p = logPagoAsegurar_();
+    const base = Number(gran) || 0;
+    const iva = p.iva ? logRedondear_(base * (Number(p.ivaPct) || 0) / 100) : 0;
+    const conIva = logRedondear_(base + iva);
+    const baseAnt = p.iva ? conIva : base;
+    const anticipo = p.anticipo ? logRedondear_(baseAnt * (Number(p.anticipoPct) || 0) / 100) : 0;
+    const saldo = p.anticipo ? logRedondear_(baseAnt - anticipo) : 0;
+    return { base: base, iva: iva, conIva: conIva, anticipo: anticipo, saldo: saldo };
+}
+
+function logPagoEtiqueta_(cual, esEn, mon) {
+    const p = logPagoAsegurar_();
+    let custom = cual === "conIva" ? p.titConIva : (cual === "anticipo" ? p.titAnt : p.titSaldo);
+    if (/^\s*PRECIO TOTAL \(CON IVA|\s*TOTAL PRICE \(INCLUDING|\s*ANTICIPO DEL |\s*ADVANCE PAYMENT |\s*SALDO PENDIENTE \(|\s*BALANCE DUE \(/i.test(String(custom || ""))) custom = "";
+    if (String(custom || "").trim()) return String(custom).trim();
+    if (cual === "conIva") {
+        const pct = logFmtNum_(p.ivaPct, esEn ? "en" : "es", p.ivaPct % 1 ? 1 : 0);
+        return logSufijoMon_(esEn ? "TOTAL PRICE WITH " + pct + "% VAT" : "PRECIO TOTAL CON IVA " + pct + "%", mon);
+    }
+    if (cual === "anticipo") {
+        const pct = logFmtNum_(p.anticipoPct, esEn ? "en" : "es", p.anticipoPct % 1 ? 1 : 0);
+        return logSufijoMon_(esEn ? "ADVANCE PAYMENT " + pct + "%" : "ANTICIPO " + pct + "%", mon);
+    }
+    return logSufijoMon_(esEn ? "BALANCE DUE" : "SALDO PENDIENTE", mon);
+}
+
+let logPagoPintando_ = false;
+function logisticaPintarPago_() {
+    const p = logPagoAsegurar_();
+    logPagoPintando_ = true;
+    const setChk = function (id, on) {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el) el.checked = !!on;
+    };
+    const setNum = function (id, n) {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el) el.value = n;
+    };
+    try {
+        setChk("logPagoIva", p.iva);
+        setChk("logPagoAnticipo", p.anticipo);
+        setNum("logPagoIvaPct", p.ivaPct);
+        setNum("logPagoAnticipoPct", p.anticipoPct);
+    } finally { logPagoPintando_ = false; }
+    const info = document.getElementById("logPagoInfo");
+    if (!info || info.contains(document.activeElement)) return;
+    if (!p.iva && !p.anticipo) {
+        info.textContent = "Apagado. El PDF termina en el gran total.";
+        return;
+    }
+    const idioma = logisticaLeerOpciones_().idioma;
+    const escs = logEscList_();
+    const k = escs.length ? escs[0].id : "";
+    const gran = (logTotalesPartes_(idioma).gran || {})[k] || 0;
+    const m = logPagoMontos_(gran);
+    const mon = logQuote.moneda || "COP";
+    const bits = [];
+    if (p.iva) bits.push((idioma === "en" ? "With VAT: " : "Con IVA: ") + logFmtMoneda_(m.conIva, "es", logDecimales_()) + " " + mon);
+    if (p.anticipo) bits.push((idioma === "en" ? "Advance: " : "Anticipo: ") + logFmtMoneda_(m.anticipo, "es", logDecimales_()) + " · " + (idioma === "en" ? "Balance: " : "Saldo: ") + logFmtMoneda_(m.saldo, "es", logDecimales_()) + " " + mon);
+    info.textContent = bits.join(" · ");
+}
+
+function logisticaOnPago_(ev) {
+    if (logPagoPintando_) return;
+    const t = ev.target;
+    if (!t) return;
+    const p = logPagoAsegurar_();
+    if (t.id === "logPagoIva") p.iva = !!t.checked;
+    else if (t.id === "logPagoAnticipo") p.anticipo = !!t.checked;
+    else if (t.id === "logPagoIvaPct") {
+        const n = parseFloat(String(t.value).replace(",", "."));
+        p.ivaPct = isNaN(n) ? 19 : n;
+    } else if (t.id === "logPagoAnticipoPct") {
+        const n = parseFloat(String(t.value).replace(",", "."));
+        p.anticipoPct = isNaN(n) ? logPagoPctAnticipoDef_() : n;
+    } else return;
+    if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
+    logisticaActualizarVista();
+}
+
 function logisticaFeeLibreCambio_() {
     if (!logQuote || !logQuote.inicializado || logQuote.abierta) return;
     const d = logQuote.descuento;
@@ -2770,6 +2989,7 @@ function logisticaPintarFilas_() {
     }).join("") || "<div class=\"text-muted small p-2\">Sin filas todavía.</div>";
     logisticaPintarComision_();
     logisticaPintarDescuento_();
+    logisticaPintarPago_();
 }
 
 function logisticaAccionFila_(ev) {
@@ -3255,6 +3475,15 @@ function logNombreArchivoPdf_(idioma) {
     return cod ? (pre + " " + cod) : pre;
 }
 
+/** Código de nube para el PDF (solo si la cotización ya está guardada). */
+function logRefNubePdf_() {
+    const a = logQuote && logQuote.abierta;
+    if (!a || !a.id) return "";
+    const id = String(a.id).trim();
+    const rev = Number(a.rev);
+    return id + (isFinite(rev) ? " · Rev " + rev : "");
+}
+
 function logisticaSincronizarTituloPdf_(doc) {
     const nombre = logNombreArchivoPdf_(logisticaLeerOpciones_().idioma);
     try { if (doc) doc.title = nombre; } catch (e) { /* el print usa el título de la ventana */ }
@@ -3351,6 +3580,10 @@ function logisticaSerializar_(idioma) {
             descuento: (function () {
                 const d = logDescuentoAsegurar_();
                 return { activo: !!d.activo, pct: logDescuentoPct_(), titulo: d.titulo || "", tituloManual: !!d.tituloManual, pctManual: true, nota: logDescuentoNota_() };
+            })(),
+            pago: (function () {
+                const p = logPagoAsegurar_();
+                return { iva: !!p.iva, ivaPct: p.ivaPct, anticipo: !!p.anticipo, anticipoPct: p.anticipoPct, titConIva: p.titConIva || "", titAnt: p.titAnt || "", titSaldo: p.titSaldo || "" };
             })(),
             nombre: logNombreHistorial_(),
             layout: { cols: clon(logLayout.cols), filaAlto: clon(logLayout.filaAlto) },
@@ -3449,6 +3682,7 @@ async function logisticaGuardar_(modo) {
         logQuote.sucio = false;
         logisticaPintarBadge_();
         logisticaPintarEstado_();
+        logisticaActualizarVista();
         bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogGuardar")).hide();
         logisticaInvalidarHist_();
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("Cotización guardada: " + d.id + " Rev " + d.rev + ".", "success");
@@ -3463,13 +3697,14 @@ async function logisticaGuardar_(modo) {
 
 var logHistCache = { t: 0, data: null };
 var LOG_HIST_LOCAL_ = "smartbudget_hist_cots";
+var _logHistP = null;
 
 function logisticaInvalidarHist_() { logHistCache = { t: 0, data: null }; }
 
 function logisticaLeerHistLocal_() {
     try {
         const o = JSON.parse(localStorage.getItem(LOG_HIST_LOCAL_) || "null");
-        if (o && Array.isArray(o.data)) return o.data;
+        if (o && Array.isArray(o.data)) return o;
     } catch (e) {}
     return null;
 }
@@ -3483,25 +3718,32 @@ async function logisticaCargarHistorial_(force, onStatus) {
         logHist = logHistCache.data;
         return logHist;
     }
-    let ultimo = null;
-    for (let i = 0; i < 3; i++) {
-        if (typeof onStatus === "function") {
-            onStatus(i === 0 ? "Consultando cotizaciones guardadas…" : "Reintento " + (i + 1) + " de 3…");
-        }
-        try {
-            const r = await realizarPeticionBD({ action: "listar_cotizaciones" }, { timeoutMs: 25000 });
-            if (!r || !r.exito) throw new Error((r && r.mensaje) || "Sin respuesta.");
-            logHist = r.data || [];
-            logHistCache = { t: Date.now(), data: logHist };
-            logisticaGuardarHistLocal_(logHist);
-            return logHist;
-        } catch (e) {
-            ultimo = e;
-            if (/Acceso no autorizado/i.test(String((e && e.message) || e))) break;
-            await new Promise(function (ok) { setTimeout(ok, 350 * (i + 1)); });
-        }
+    if (_logHistP) {
+        if (typeof onStatus === "function") onStatus("Consultando cotizaciones guardadas…");
+        return _logHistP;
     }
-    throw ultimo;
+    _logHistP = (async function () {
+        let ultimo = null;
+        for (let i = 0; i < 3; i++) {
+            if (typeof onStatus === "function") {
+                onStatus(i === 0 ? "Consultando cotizaciones guardadas…" : "Reintento " + (i + 1) + " de 3…");
+            }
+            try {
+                const r = await realizarPeticionBD({ action: "listar_cotizaciones" }, { timeoutMs: 25000 });
+                if (!r || !r.exito) throw new Error((r && r.mensaje) || "Sin respuesta.");
+                logHist = r.data || [];
+                logHistCache = { t: Date.now(), data: logHist };
+                logisticaGuardarHistLocal_(logHist);
+                return logHist;
+            } catch (e) {
+                ultimo = e;
+                if (/Acceso no autorizado/i.test(String((e && e.message) || e))) break;
+                await new Promise(function (ok) { setTimeout(ok, 350 * (i + 1)); });
+            }
+        }
+        throw ultimo;
+    })();
+    try { return await _logHistP; } finally { _logHistP = null; }
 }
 
 function logisticaPrefetchHistorial_() {
@@ -3518,7 +3760,7 @@ async function logisticaAbrirHistorial_() {
     const cuerpo = document.getElementById("logHistLista");
     if (!logHistCache.data) {
         const local = logisticaLeerHistLocal_();
-        if (local) logHistCache = { t: 0, data: local };
+        if (local) logHistCache = { t: local.t || Date.now(), data: local.data };
     }
     if (logHistCache.data) {
         logHist = logHistCache.data;
@@ -3586,7 +3828,8 @@ async function logisticaAbrirGuardada_(id, rev) {
     if (typeof mostrarEsperaNube === "function") mostrarEsperaNube("Abriendo la cotización…");
     let d;
     try {
-        const r = await realizarPeticionBD({ action: "obtener_cotizacion", id: id, rev: rev });
+        if (typeof textoEsperaNube === "function") textoEsperaNube("Leyendo la cotización en la nube…");
+        const r = await realizarPeticionBD({ action: "obtener_cotizacion", id: id, rev: rev }, { timeoutMs: 90000 });
         if (!r || !r.exito) throw new Error((r && r.mensaje) || "Sin respuesta.");
         d = r.data;
     } catch (e) {
@@ -3630,6 +3873,15 @@ async function logisticaAbrirGuardada_(id, rev) {
             pctManual: g.descuento.pctManual !== false,
             nota: String(g.descuento.nota || "")
         } : null,
+        pago: g.pago ? {
+            iva: !!g.pago.iva,
+            ivaPct: Number(g.pago.ivaPct) || 19,
+            anticipo: !!g.pago.anticipo,
+            anticipoPct: Number(g.pago.anticipoPct) || logPagoPctAnticipoDef_(),
+            titConIva: String(g.pago.titConIva || ""),
+            titAnt: String(g.pago.titAnt || ""),
+            titSaldo: String(g.pago.titSaldo || "")
+        } : null,
         decimales: Number(g.decimales) === 1 || Number(g.decimales) === 2 ? Number(g.decimales) : 0
     };
     logIaReiniciar_();
@@ -3652,15 +3904,22 @@ async function logisticaAbrirGuardada_(id, rev) {
     setv("logMargen", g.margenMm || 16);
     try {
         if (typeof textoEsperaNube === "function") textoEsperaNube("Preparando el documento…");
-        await logisticaHidatarImgsCache_(logQuote.filas);
+        await Promise.race([
+            logisticaHidatarImgsCache_(logQuote.filas),
+            new Promise(function (ok) { setTimeout(ok, 2500); })
+        ]);
+    } finally {
+        if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+    }
+    try {
         logisticaActualizarVista();
         logisticaPintarEstado_();
         logisticaPintarBadge_();
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("Abierta " + d.numero + " (" + d.id + " Rev " + d.rev + ").", "success");
-    } finally {
-        if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+        logisticaTraerImgsFaltantes_();
+    } catch (eVista) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Se abrió, pero la hoja no se pudo pintar: " + ((eVista && eVista.message) || eVista), "warning");
     }
-    logisticaTraerImgsFaltantes_();
 }
 
 function logisticaInitHistorial_() {
@@ -3747,9 +4006,10 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".hdr-dark{position:absolute;left:56%;top:.6in;height:.14in;width:5%;background:var(--gris);clip-path:polygon(0 0,100% 0,78% 100%,0 100%);margin-left:-.01in}" +
         ".hdr-logo{position:absolute;right:15%;top:.26in;height:.7in;width:auto}" +
         ".hdr-dots{position:absolute;right:.5in;top:.56in;width:.5in;height:.34in;background:radial-gradient(circle,#c4c4c4 1.3px,transparent 1.7px) 0 0/10px 10px}" +
+        ".hdr-ref{position:absolute;left:var(--mx);top:.14in;font-size:7pt;color:#9a9a9a;letter-spacing:.03em;z-index:2}" +
         /* membrete: pie */
         ".ftr{position:relative;z-index:2;width:100%;height:auto;min-height:var(--ftr-h);flex:0 0 auto;overflow:hidden;background:#fff;padding:0 var(--mx);display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:.08in}" +
-        ".ftr-line{position:relative;border-top:1px solid #bdbdbd;margin-bottom:.1in;height:0}" +
+        ".ftr-line{position:relative;border-top:1px solid #d9d9d9;margin-bottom:.1in;height:0}" +
         ".ftr-line i{position:absolute;right:0;top:-5px;width:9px;height:9px;background:#555}" +
         ".ftr-row{display:flex;align-items:center;gap:.28in}" +
         ".ftr-qr{height:.7in;width:auto}" +
@@ -3772,7 +4032,7 @@ function logisticaConstruirHTML(opts, imprimir) {
         /* tabla ítems */
         ".items{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.6pt}" +
         ".items thead{display:table-header-group}" +
-        ".items thead th{background:var(--gris-tabla);color:#fff;padding:5px 5px;font-size:7.6pt;text-transform:uppercase;text-align:center;font-weight:700;border-right:1px solid #7b8088;position:relative}" +
+        ".items thead th{background:var(--gris-tabla);color:#fff;height:.28in;line-height:.28in;padding:0 5px;font-size:7.6pt;text-transform:uppercase;text-align:center;font-weight:700;border-right:1px solid #7b8088;position:relative;vertical-align:middle;white-space:nowrap;overflow:hidden}" +
         ".items thead th:last-child{border-right:0}" +
         ".items td{padding:5px 6px;border-bottom:1px solid #d9d9d9;vertical-align:middle;position:relative}" +
         ".items tr{break-inside:avoid;page-break-inside:avoid}" +
@@ -3780,7 +4040,7 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".items td.r{text-align:right;white-space:nowrap}" +
         /* escenarios apilados: misma tabla; las opciones extra solo añaden qty/pu/sub */
         ".items tr.it-cont{break-before:avoid;page-break-before:avoid}" +
-        ".items tr.it-cont td{border-top:1px solid #ececec}" +
+        ".items tr.it-cont td{border-top:1px solid #d9d9d9}" +
         ".items td.x{color:#aaa;text-align:center}" +
         ".items td[rowspan]{vertical-align:middle}" +
         ".td-img{overflow:hidden}" +
@@ -3790,13 +4050,19 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".it-desc-lite{font-size:8.2pt;color:#444}" +
         ".it-med{color:#555;font-size:8pt;margin-top:2px}" +
         ".items tr.sec{break-after:avoid;page-break-after:avoid}" +
-        ".items tr.sec td{background:#f1f1f2;color:var(--rojo);font-weight:700;letter-spacing:.04em;font-size:8.2pt;border-bottom:1px solid #cfcfd2}" +
-        ".items tr.tot td{border-bottom:0;border-top:1px solid #bdbdbd;font-weight:700;padding-top:6px}" +
-        ".items tr.tot-sub td{background:#f4f4f5;color:#111;font-size:8.4pt}" +
+        ".items tr.sec-gap td{height:10px;padding:0;border:0;background:#fff}" +
+        ".items tr.sec td,.items tr.tot td,.items tr.tot-pago td{height:.28in;padding-top:0;padding-bottom:0;box-sizing:border-box}" +
+        ".items tr.sec td{background:#f1f1f2;color:var(--rojo);font-weight:700;letter-spacing:.04em;font-size:8.2pt;border-bottom:1px solid #d9d9d9}" +
+        ".items tr.tot td{border-bottom:1px solid #d9d9d9;border-top:0;font-weight:700;font-size:8.4pt}" +
+        ".items tr.tot-sub td{background:#f4f4f5;color:#111}" +
+        ".items tr.tot-prod td{background:#fff;color:#111}" +
+        ".items tr.tot-log td{background:#f4f4f5;color:#111}" +
         ".items tr.tot-desc td{background:#fff;color:#111;font-size:8.4pt}" +
         ".items tr.tot-desc .tot-nota{display:block;margin-top:1px;font-weight:400;font-size:7.4pt;line-height:1.25;color:#444;white-space:normal}" +
+        ".items tr.tot-pago td{background:#e8e8e8;color:#111;border-top:0;border-bottom:1px solid #fff;font-size:8.4pt}" +
+        ".items tr.tot-pago:last-child td{border-bottom:0}" +
         ".items tr.it-env td{background:transparent}" +
-        ".items tr.gran td{background:var(--rojo);color:#fff;border-top:0;font-size:9.4pt}" +
+        ".items tr.gran td{background:var(--rojo);color:#fff;border-top:0;border-bottom:0;font-size:8.4pt}" +
         ".log-inc{margin:0 0 .12in;font-size:8.6pt;color:#333}" +
         /* T&C */
         ".tyc-wrap{break-before:page;page-break-before:always}" +
@@ -3857,7 +4123,7 @@ function logisticaConstruirHTML(opts, imprimir) {
         "}" +
         "</style></head><body>" +
         "<div class=\"sheet\">" +
-        "<div class=\"hdr\"><span class=\"hdr-red\"></span><span class=\"hdr-dark\"></span><span class=\"hdr-dots\"></span><img class=\"hdr-logo\" src=\"" + logEsc_(M.logo) + "\" alt=\"Diforma Group\"></div>" +
+        "<div class=\"hdr\">" + (logRefNubePdf_() ? "<span class=\"hdr-ref\">" + logEsc_(logRefNubePdf_()) + "</span>" : "") + "<span class=\"hdr-red\"></span><span class=\"hdr-dark\"></span><span class=\"hdr-dots\"></span><img class=\"hdr-logo\" src=\"" + logEsc_(M.logo) + "\" alt=\"Diforma Group\"></div>" +
         "<table class=\"paper\">" +
         "<thead><tr><td><div class=\"sp-h\"></div></td></tr></thead>" +
         "<tfoot><tr><td><div class=\"sp-f\"></div></td></tr></tfoot>" +
@@ -4396,6 +4662,8 @@ function logisticaActivarEdicion_(doc) {
                 logDescuentoAsegurar_().nota = txt;
                 const notaEl = document.getElementById("logDescuentoNota");
                 if (notaEl && document.activeElement !== notaEl) notaEl.value = txt;
+            } else if (envK === "titConIva" || envK === "titAnt" || envK === "titSaldo") {
+                logPagoAsegurar_()[envK] = txt;
             } else if (envK && logQuote.env) {
                 logQuote.env[envK] = txt;
             } else {
@@ -4575,9 +4843,15 @@ function logisticaActualizarVista() {
     logisticaPintarFilas_();
 }
 
-function logisticaDescargarPDF() {
+async function logisticaDescargarPDF() {
     const f = document.getElementById("logFrame");
     if (!f) return;
+    const pend = logisticaFilasImgPendientes_();
+    if (pend.length) {
+        if (typeof mostrarEsperaNube === "function") mostrarEsperaNube("Trayendo las imágenes para el PDF…");
+        try { await logisticaRecargarImgs_({ silencio: true, espera: true, filas: pend }); }
+        finally { if (typeof ocultarEsperaNube === "function") ocultarEsperaNube(); }
+    }
     const tituloOriginal = document.title;
     /* La vista en pantalla son hojas ya cortadas y con zoom. El PDF vuelve al documento
        continuo de antes: Chrome lo parte en Carta y muestra la vista previa en esta ventana. */
@@ -4958,6 +5232,11 @@ function logisticaInit() {
         descCard.addEventListener("input", logisticaOnDescuento_);
         descCard.addEventListener("change", logisticaOnDescuento_);
     }
+    const pagoCard = document.getElementById("logPagoCard");
+    if (pagoCard) {
+        pagoCard.addEventListener("change", logisticaOnPago_);
+        pagoCard.addEventListener("input", logisticaOnPago_);
+    }
     const zoomOut = document.getElementById("logZoomOut");
     const zoomIn = document.getElementById("logZoomIn");
     const zoomFit = document.getElementById("logZoomFit");
@@ -4974,6 +5253,8 @@ function logisticaInit() {
     }, { passive: true });
     const btn = document.getElementById("btnLogPDF");
     if (btn) btn.addEventListener("click", logisticaDescargarPDF);
+    const btnImgs = document.getElementById("btnLogImgs");
+    if (btnImgs) btnImgs.addEventListener("click", function () { logisticaRecargarImgs_({ todas: true }); });
     const btnReset = document.getElementById("btnLogReset");
     if (btnReset) btnReset.addEventListener("click", logisticaRestablecerDiseno);
     const tabBtn = document.getElementById("tabBtnLogistica");
