@@ -203,7 +203,9 @@ Local preview: `http://127.0.0.1:8765/` (versión de UI según badge en `index.h
 | `country_id` | País (fallback imperial si US/PR y viene vacío `tipo_medida`) |
 | `funcionales`, `dim_diseno`, `obs_presupuesto` | Pistas de texto para la IA (no sustituyen la ficha) |
 
-**Versiones.** Un proyecto = un código Odoo. V1 al empezar; **Nueva versión** copia matriz/chat/ficha. Comentario opcional. Historial: una fila por código, JSON con todas las versiones.
+**Versiones.** Un proyecto = un código Odoo. V1 al empezar; **Nueva versión** copia matriz/chat/ficha. Comentario opcional. Historial: una fila por código, JSON con todas las versiones. En un individual, al cambiar de versión los títulos de las secciones 1, 2, 3 y 4 muestran «Versión V2» y las cuatro secciones, la matriz y el chat parpadean, igual que al cambiar de pieza en un grupal. En un grupal esos títulos siguen mostrando el nombre de la pieza.
+
+**Peso de la caja.** La ficha lo guarda solo si el analista, el PDF o el chat lo dijeron (kg en métrico, lb en imperial). Al generar la matriz y al pulsar Rellenar con IA se copia ese dato; si Gemini lo deja en 0 y el chat dice «12 kg por caja», se toma de ahí. No se estima por el render ni por los m² de lámina.
 
 **Renders del grupal.** A Drive solo va el archivo al que se le puso el pin Cotización de esa pieza. El botón **Cargar Renders** (y al abrir el presupuesto) trae dos cosas: la imagen de Odoo, que entra como Grupo, y el pin de cotización de cada pieza (si el JSON no trae `imgRef`, se busca en la cotización guardada de ese código). Planos, PDF y demás archivos del análisis no se suben a Drive ni vuelven. Subir un pin nuevo exige pegar el `backend.gs` actual (`presupuesto_imagenes`); si esa acción no existe, el guardado avisa.
 

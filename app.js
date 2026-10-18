@@ -688,6 +688,7 @@ function pintarBarraElementos() {
         const rs = document.getElementById("resumenStand");
         if (rs) { rs.classList.add("d-none"); rs.innerHTML = ""; }
         pintarEtiquetasElemento_("", false);
+        pintarEtiquetaVersion_();
         return;
     }
     const ver = versionActualObj_();
@@ -705,6 +706,7 @@ function pintarBarraElementos() {
     const cur = elems.find(function (e) { return e.id === activa; });
     if (inp) inp.value = cur ? (cur.nombre || "") : "";
     pintarEtiquetasElemento_(cur ? (cur.nombre || "Pieza") : "", true);
+    pintarEtiquetaVersion_();
 }
 
 function pintarEtiquetasElemento_(nombre, on) {
@@ -729,6 +731,33 @@ function pintarEtiquetasElemento_(nombre, on) {
     });
     const btn = document.getElementById("btnRenderCotizacion");
     if (btn) btn.classList.toggle("d-none", !on);
+}
+
+function pintarEtiquetaVersion_() {
+    const individual = typeof esPresupuestoGrupal !== "function" || !esPresupuestoGrupal();
+    const id = window.versionActivaId || "V1";
+    ["badgeVersion1", "badgeVersion2", "badgeVersion3", "badgeVersion4"].forEach(function (bid) {
+        const el = document.getElementById(bid);
+        if (!el) return;
+        if (individual && id) {
+            el.textContent = "Versión " + id;
+            el.classList.remove("d-none");
+        } else {
+            el.textContent = "";
+            el.classList.add("d-none");
+        }
+    });
+}
+
+function marcarSaltoVersion_(id) {
+    document.querySelectorAll(".sec-titulo, .matriz-scroll, #chatBox").forEach(function (el) {
+        el.classList.remove("elem-flash");
+        void el.offsetWidth;
+        el.classList.add("elem-flash");
+    });
+    if (typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("Cambiaste a " + (id || "esta versión") + ". Ficha, chat y matriz son de esta versión.", "info");
+    }
 }
 
 function compactarChatParaBrief_(chat) {
@@ -940,6 +969,7 @@ function siguienteIdVersion() {
 }
 
 function aplicarVersionEnUI(id, omitirSnapshot) {
+    const previa = window.versionActivaId || "";
     if (!omitirSnapshot) snapshotVersionActual();
     const ver = (window.versionesPresupuesto || []).find(function (v) { return v.id === id; });
     if (!ver) return;
@@ -970,6 +1000,7 @@ function aplicarVersionEnUI(id, omitirSnapshot) {
     if (typeof renderizarTablaItems === "function") renderizarTablaItems();
     pintarSelectorVersiones();
     pintarBarraElementos();
+    if (previa && previa !== id && !esPresupuestoGrupal()) marcarSaltoVersion_(id);
     if (typeof programarGuardarSesion === "function") programarGuardarSesion();
 }
 
@@ -1041,6 +1072,7 @@ function pintarSelectorVersiones() {
         extra = extra ? etiqueta + " · " + extra : etiqueta;
     }
     if (nota) nota.textContent = extra;
+    pintarEtiquetaVersion_();
 }
 
 function abrirModalNuevaVersion() {
@@ -1067,7 +1099,6 @@ function confirmarNuevaVersion() {
     const nueva = snapshotDesdeUI_(id, comentario);
     nueva.creado = new Date().toISOString();
     window.versionesPresupuesto.push(nueva);
-    window.versionActivaId = id;
     const modal = bootstrap.Modal.getInstance(document.getElementById("modalNuevaVersion"));
     if (modal) modal.hide();
     aplicarVersionEnUI(id, true);

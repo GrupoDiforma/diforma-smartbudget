@@ -1398,6 +1398,7 @@ html, body { overflow-x: hidden; }
     padding: 8px 12px;
 }
 #barraElementos.elem-flash,
+.sec-titulo.elem-flash,
 .matriz-scroll.elem-flash,
 #chatBox.elem-flash {
     animation: elemFlash 0.9s ease;

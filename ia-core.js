@@ -261,6 +261,38 @@ function rellenarEmpUndDesdeChat_(ficha) {
     return ficha;
 }
 
+/** Peso de una caja solo si alguien lo dijo. No se estima por el render ni por los m². */
+function rellenarEmpPesoDesdeChat_(ficha) {
+    if (!ficha || typeof ficha !== "object") return ficha;
+    const emp = ficha.empaque || ficha.pack || {};
+    const ya = emp.peso != null && emp.peso !== "" ? emp.peso : (emp.weight || emp.peso_caja || ficha.empPeso);
+    if (ya !== undefined && ya !== null && ya !== "" && Number(String(ya).replace(",", ".")) > 0) return ficha;
+    const textos = [];
+    if (ficha.descripcion) textos.push(ficha.descripcion);
+    try {
+        (window.historialChatIA || []).forEach(function (h) { textos.push(h.text || ""); });
+    } catch (e) {}
+    const blob = textos.join("\n");
+    const num = function (s) { return Number(String(s).replace(",", ".")); };
+    const mKg = blob.match(/(?:peso(?:\s+de)?(?:\s+la)?\s+caja|caja)\s*(?:de|pesa|:|con)?\s*(\d+(?:[.,]\d+)?)\s*kg\b/i)
+        || blob.match(/(\d+(?:[.,]\d+)?)\s*kg\s*(?:por|\/)\s*caja/i);
+    const mLb = blob.match(/(?:peso(?:\s+de)?(?:\s+la)?\s+caja|caja)\s*(?:de|pesa|:|con)?\s*(\d+(?:[.,]\d+)?)\s*(?:lb|libras)\b/i)
+        || blob.match(/(\d+(?:[.,]\d+)?)\s*(?:lb|libras)\s*(?:por|\/)\s*caja/i);
+    const kg = mKg ? num(mKg[1]) : 0;
+    const lb = mLb ? num(mLb[1]) : 0;
+    const imperial = typeof umFichaActual === "function" && umFichaActual() === "in";
+    let valor = 0;
+    if (imperial) {
+        if (lb > 0) valor = lb;
+        else if (kg > 0) valor = Math.round(kg * 2.2046226218 * 100) / 100;
+    } else if (kg > 0) valor = kg;
+    else if (lb > 0) valor = Math.round((lb / 2.2046226218) * 100) / 100;
+    if (!(valor > 0)) return ficha;
+    ficha.empaque = emp;
+    ficha.empaque.peso = valor;
+    return ficha;
+}
+
 function avisarEmpaqueVsPieza_() {
     if (typeof leerFichaComercialUI !== "function") return;
     const f = leerFichaComercialUI();
@@ -287,6 +319,7 @@ async function aplicarCotizacionEnUI(cotizacion) {
     }
     if (cotizacion.ficha && typeof aplicarFichaComercial === "function") {
         rellenarEmpUndDesdeChat_(cotizacion.ficha);
+        rellenarEmpPesoDesdeChat_(cotizacion.ficha);
         aplicarFichaComercial(cotizacion.ficha);
         avisarEmpaqueVsPieza_();
         ok = true;
@@ -717,7 +750,7 @@ Primero un párrafo corto EN ESPAÑOL (chat interno). AL FINAL un único JSON (s
 {"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0}},"items":[{"fuente":"[Estimado IA]","nombre":"PS Cal.60 frente — planta 60,3x7,9; h 3,0; paredes 2x3,0; pestaña 2 cm/lado = 64,3x15,9 cm = 0,102 m2","categoria":"Materias Primas","cantidad":0.102,"um":"m2","costoUnitario":0,"es_global":false}]}
 nombre de cada ítem: título + cuenta con cifras (pieza, tolerancia, merma, tiras de 6 m). ficha.titulo y ficha.descripcion en ${langF}. descripcion de ficha: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo). La receta de costo va en items.nombre, no en la ficha.
 Medidas de ficha SOLO en ${umF}, tomadas del PDF/render o de lo que confirmó el analista. PROHIBIDO copiar dim_diseno u otras medidas del Lead Odoo.
-empaque: caja un poco MAYOR que la pieza (holgura 2–8 cm por lado) si viaja armada. empaque.alto >= dimensiones.alto. PROHIBIDO caja más baja que el mueble (ej. pieza 185 y caja 100) salvo KD declarado. empaque.unidades = und. por caja, OBLIGATORIO si hay caja (si el analista dijo 200U, unidades=200; no lo dejes 0 ni lo omitas). empaque.peso = peso de una caja en kg si el sistema es cm, o en lb si es in; solo si el analista lo dijo, si no 0.
+empaque: caja un poco MAYOR que la pieza (holgura 2–8 cm por lado) si viaja armada. empaque.alto >= dimensiones.alto. PROHIBIDO caja más baja que el mueble (ej. pieza 185 y caja 100) salvo KD declarado. empaque.unidades = und. por caja, OBLIGATORIO si hay caja (si el analista dijo 200U, unidades=200; no lo dejes 0 ni lo omitas). empaque.peso = peso de UNA caja, en kg si las medidas son cm o en lb si son in. Llénalo solo si el analista, el PDF o el chat lo dijeron. Si dieron el peso de una pieza y las unidades por caja, multiplica. PROHIBIDO estimarlo por el render o por los m² de lámina. Si no está dicho, 0.
 costoUnitario en COP sin IVA. Para es_global true, costoUnitario es el costo del LOTE (o por cada cantidad del lote), NO por producto. No rellenes costos[] en ítems globales: la app hace costoUnitario/Q. PROHIBIDO poner el valor de una caja o un flete en cada unidad del rango (ej. 5.000 cenefas).`;
     }
     return `${base}
@@ -947,6 +980,7 @@ window.enviarMensajeChat = async function() {
             await aplicarCotizacionEnUI(cotizacion);
         } else if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
             rellenarEmpUndDesdeChat_(cotizacion.ficha);
+            rellenarEmpPesoDesdeChat_(cotizacion.ficha);
             aplicarFichaComercial(cotizacion.ficha);
         }
         const charla = textoSinJson(texto, cotizacion);
@@ -980,6 +1014,7 @@ Párrafo del chat: español. Idioma de titulo/descripcion de la ficha: ${langF}.
 titulo corto (como en cotización). descripcion 3–4 líneas: qué es, uso en PDV, materiales visibles. Sin receta de costo.
 dimensiones del mueble (ancho × fondo × alto) del PDF/render o del chat. empaque de la caja un poco MAYOR que la pieza (no más baja). Si va desarmada, dilo en descripcion.
 empaque.unidades = und. por caja: si el analista dijo «caja con 200U», unidades=200. No lo dejes vacío.
+empaque.peso = peso de UNA caja, en kg si las medidas son cm o en lb si son in. Solo si el analista, el PDF o el chat lo dijeron. Si no está dicho, 0. No lo estimes.
 PROHIBIDO copiar medidas del Lead Odoo si el archivo o el chat ya dieron otras.
 
 Ficha actual (puedes completar huecos, no borres lo que ya esté bien):
@@ -1022,6 +1057,7 @@ ${JSON.stringify({
         const cotizacion = extraerCotizacionIA(texto);
         if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
             rellenarEmpUndDesdeChat_(cotizacion.ficha);
+            rellenarEmpPesoDesdeChat_(cotizacion.ficha);
             aplicarFichaComercial(cotizacion.ficha);
             avisarEmpaqueVsPieza_();
         }
