@@ -155,11 +155,6 @@ window.procesarArchivosNativos = function(files) {
             window.archivosGemaBase64.push(rec);
             window._visorIdx = window.archivosGemaBase64.length - 1;
             window.actualizarListaUI();
-            if (elemId && /^image\//i.test(rec.mimeType) && typeof window.asignarRenderCotizacionElemento === "function") {
-                const ver = (window.versionesPresupuesto || []).find(function (v) { return v.id === (window.versionActivaId || "V1"); });
-                const el = ver && ver.elementos ? ver.elementos.find(function (e) { return e.id === elemId; }) : null;
-                if (el && !el.imgCotizacion) window.asignarRenderCotizacionElemento(window._visorIdx);
-            }
         };
         reader.readAsDataURL(file);
     });

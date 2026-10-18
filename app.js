@@ -416,10 +416,118 @@ async function hidratarRendersCotizacionNube_() {
         const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: ids, modo: "blob" }, { timeoutMs: 60000 });
         const map = (r && r.data) || {};
         dest.forEach(function (el) {
-            if (map[el.imgRef] && /^data:image\//.test(map[el.imgRef])) el.imgCotizacion = map[el.imgRef];
+            if (map[el.imgRef] && /^data:image\//.test(map[el.imgRef])) {
+                el.imgCotizacion = map[el.imgRef];
+                el.imgCotizacionHuella = huellaImgCotizacion_(el.imgCotizacion);
+            }
         });
         if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
     } catch (e) { /* el pin se reintenta al abrir la cotización */ }
+}
+
+function tituloRenderCubre_(nombre, titulo) {
+    const n = String(nombre || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const t = String(titulo || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (!n || !t) return false;
+    return t === n || t.indexOf(n) === 0 || n.indexOf(t) === 0;
+}
+
+/** El guardado en la nube se quedó sin el archivo (el servidor viejo no sube PRE-img). La cotización sí tiene el render en Drive. */
+async function recuperarRendersDesdeCotizaciones_() {
+    const pend = [];
+    (window.versionesPresupuesto || []).forEach(function (v) {
+        (v.elementos || []).forEach(function (el) {
+            if (el.imgCotizacion && /^data:image\//.test(el.imgCotizacion)) return;
+            if (el.imgRef) return;
+            if (!(el.imgCotizacionNombre || el.imgCotizacionHuella || el.imgCotizacionFileId)) return;
+            pend.push(el);
+        });
+    });
+    if (!pend.length || typeof realizarPeticionBD !== "function") return 0;
+    const codigo = String(document.getElementById("inputCodigo")?.value || "").trim();
+    if (!codigo) return 0;
+    let lista = [];
+    try {
+        const r = await realizarPeticionBD({ action: "listar_cotizaciones" });
+        lista = (r && r.data) || [];
+    } catch (e) { return 0; }
+    const cots = lista.filter(function (c) {
+        const p = String(c.proyecto || "");
+        const ps = String(c.proyectos || "");
+        return p.indexOf(codigo) === 0 || ps.indexOf(codigo) >= 0;
+    }).sort(function (a, b) {
+        const ia = String(a.id || "");
+        const ib = String(b.id || "");
+        if (ia !== ib) return ia < ib ? 1 : -1;
+        return (Number(b.rev) || 0) - (Number(a.rev) || 0);
+    });
+    const vistos = {};
+    for (let i = 0; i < cots.length && i < 4; i++) {
+        const c = cots[i];
+        const clave = String(c.id) + ":" + String(c.rev || "");
+        if (vistos[clave]) continue;
+        vistos[clave] = true;
+        const faltan = pend.filter(function (el) { return !el.imgRef; });
+        if (!faltan.length) break;
+        let filas = [];
+        try {
+            const r = await realizarPeticionBD({ action: "obtener_cotizacion", id: c.id, rev: c.rev });
+            filas = (r && r.data && r.data.datos && r.data.datos.filas) || [];
+        } catch (e2) { continue; }
+        const libres = filas.filter(function (f) { return f && f.imgRef; });
+        faltan.sort(function (a, b) { return String(b.nombre || "").length - String(a.nombre || "").length; });
+        faltan.forEach(function (el) {
+            const ix = libres.findIndex(function (f) {
+                if (f.elem && String(f.elem) === String(el.id)) return true;
+                const titulo = (f.snap && f.snap.ficha && f.snap.ficha.titulo) || "";
+                return tituloRenderCubre_(el.nombre, titulo);
+            });
+            if (ix < 0) return;
+            el.imgRef = libres[ix].imgRef;
+            libres.splice(ix, 1);
+        });
+    }
+    await hidratarRendersCotizacionNube_();
+    return pend.filter(function (el) { return el.imgCotizacion && /^data:image\//.test(el.imgCotizacion); }).length;
+}
+
+function enfocarRenderPieza_() {
+    const id = window.elementoActivoId;
+    if (!id) return;
+    const files = window.archivosGemaBase64 || [];
+    const ix = files.findIndex(function (f) { return f && f._pinCotizacion === id; });
+    if (ix < 0) return;
+    window._visorIdx = ix;
+    window._pdfDoc = null;
+    window._pdfIdx = -1;
+    if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
+}
+
+function ponerRendersCotizacionEnVisor_() {
+    const files = window.archivosGemaBase64 || [];
+    const ver = versionActualObj_();
+    if (!ver || !ver.elementos) return;
+    ver.elementos.forEach(function (el) {
+        if (!el.imgCotizacion || !/^data:image\//.test(el.imgCotizacion)) return;
+        const ya = files.some(function (f) { return f && f._pinCotizacion === el.id; });
+        if (ya) return;
+        const m = String(el.imgCotizacion).match(/^data:([^;]+);base64,(.+)$/);
+        if (!m) return;
+        files.push({
+            id: "pin-" + el.id,
+            name: el.imgCotizacionNombre || ((el.nombre || "Pieza") + ".jpg"),
+            mimeType: m[1],
+            data: m[2],
+            elemId: el.id,
+            alcance: "pieza",
+            _pinCotizacion: el.id
+        });
+    });
+    window.archivosGemaBase64 = files;
+    const activa = window.elementoActivoId || ver.elementoActivoId;
+    const pin = files.findIndex(function (f) { return f && f._pinCotizacion && f._pinCotizacion === activa; });
+    if (pin >= 0) window._visorIdx = pin;
+    if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
 }
 
 function mensajeGuardarNube_(m) {
@@ -644,6 +752,7 @@ function aplicarElementoEnUI(id) {
     const el = ver.elementos.find(function (e) { return e.id === id; });
     if (!el) return;
     cargarElementoEnUI_(el, ver);
+    enfocarRenderPieza_();
     if (typeof renderizarTablaItems === "function") renderizarTablaItems();
     pintarBarraElementos();
     if (prev && prev !== el.id) marcarSaltoElemento_(el.nombre || "pieza");
@@ -976,7 +1085,14 @@ async function guardarProyectoBD() {
                     imagenes: pendientes
                 }, { timeoutMs: 180000 });
                 if (img && img.exito) refs = img.refs || (img.data && img.data.refs) || refs;
-            } catch (eImg) { /* el presupuesto ya quedó; el render se reintenta en el próximo guardado */ }
+                else if (typeof mostrarNotificacion === "function") {
+                    mostrarNotificacion("La matriz quedó guardada. Los renders no: el servidor aún no tiene la acción que los sube a Drive.", "warning");
+                }
+            } catch (eImg) {
+                if (typeof mostrarNotificacion === "function") {
+                    mostrarNotificacion("La matriz quedó guardada. Los renders no se subieron: " + (eImg.message || "sin respuesta."), "warning");
+                }
+            }
         }
         aplicarRefsImagenesVivas_(refs);
         if (typeof programarGuardarSesion === "function") programarGuardarSesion();
@@ -1055,7 +1171,8 @@ async function cargarProyectoBD(idProyecto) {
             const p = data.data; const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
             setVal('inputCodigo', p.cabecera?.noProyecto); setVal('noProyecto', p.cabecera?.nombreProyecto); setVal('cliente', p.cabecera?.cliente);
             window.odooPistas = p.odooPistas || {};
-            /* los archivos del Paso 2 no se guardan en la nube: los del proyecto anterior no deben quedar */
+            /* En Drive solo vive el render con pin de cotización. Planos y fotos del análisis no se recuperan. */
+            (p.versiones || []).forEach(function (v) { delete v.archivosGrupo; });
             if (typeof window.vaciarArchivosIA === "function") window.vaciarArchivosIA();
             if (typeof aplicarLocaleProyecto === "function") {
                 aplicarLocaleProyecto((p.cabecera && p.cabecera.locale) || {}, { silencio: true });
@@ -1063,10 +1180,13 @@ async function cargarProyectoBD(idProyecto) {
             hidratarVersionesDesdePayload(p);
             bootstrap.Modal.getInstance(document.getElementById('modalHistorial'))?.hide();
             await hidratarRendersCotizacionNube_();
-            if (typeof window.cargarImagenOdooEnVisor === "function") window.cargarImagenOdooEnVisor({ force: true });
+            const nRenders = await recuperarRendersDesdeCotizaciones_();
+            if (typeof window.cargarImagenOdooEnVisor === "function") await window.cargarImagenOdooEnVisor({ force: true });
+            ponerRendersCotizacionEnVisor_();
             const nVer = (window.versionesPresupuesto || []).length;
             const nChat = (window.historialChatIA || []).length;
-            mostrarNotificacion((nVer > 1 ? (nVer + " versiones. ") : "") + (nChat ? "Proyecto y chat cargados." : "Proyecto cargado."), "success");
+            const avisoRenders = nRenders ? (" Se recuperaron " + nRenders + " render" + (nRenders === 1 ? "" : "s") + " de la cotización guardada.") : "";
+            mostrarNotificacion((nVer > 1 ? (nVer + " versiones. ") : "") + (nChat ? "Proyecto y chat cargados." : "Proyecto cargado.") + avisoRenders, "success");
         }
     } catch(e) { mostrarNotificacion(e.message, "danger"); }
     finally { ocultarEsperaNube(); }
