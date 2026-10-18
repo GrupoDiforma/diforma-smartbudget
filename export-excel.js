@@ -19,7 +19,8 @@ var MAPA_XLSX_DEFAULT = {
     fabFin: 32,
     comInicio: 37,
     comFin: 39,
-    fleteFila: 35
+    fleteFila: 35,
+    trm: "E53"
 };
 var XLSX_FILAS_FAB = { inicio: 10, fin: 32 };
 var XLSX_FILAS_COM = { inicio: 37, fin: 39 };
@@ -123,7 +124,7 @@ function intXlsx(n, min, max, fb) {
 function sanitizarMapaXlsx(mapa) {
     const d = MAPA_XLSX_DEFAULT;
     const m = Object.assign({}, d, mapa || {});
-    ["codigo", "cliente", "proyecto", "analista", "comercial", "disenador", "fecha"].forEach(function (k) {
+    ["codigo", "cliente", "proyecto", "analista", "comercial", "disenador", "fecha", "trm"].forEach(function (k) {
         m[k] = addrXlsxOk(m[k]) ? String(m[k]).toUpperCase() : d[k];
     });
     const q = Array.isArray(m.q) ? m.q : d.q;
@@ -214,6 +215,70 @@ async function cargarPlantillaExcel() {
     return workbookDesdeBuffer(buf);
 }
 
+function trmActualExcel() {
+    const n = parseFloat(document.getElementById("simTRM") && document.getElementById("simTRM").value);
+    if (n > 0) return n;
+    if (typeof trmActualGlobal === "number" && trmActualGlobal > 0) return trmActualGlobal;
+    return 0;
+}
+
+function celdaTrmEscribible_(ws, addr) {
+    if (!ws || !addrXlsxOk(addr)) return false;
+    const cell = ws.getCell(addr);
+    const v = cell.value;
+    if (v == null || v === "") return true;
+    if (typeof v === "number") return true;
+    const t = valorCeldaPlano(cell).trim();
+    return !t || /^\d+([.,]\d+)?$/.test(t);
+}
+
+function detectarCeldaTrm_(ws) {
+    const mapped = (XLSX_MAPA && XLSX_MAPA.trm) || MAPA_XLSX_DEFAULT.trm;
+    if (!ws) return mapped;
+    for (let r = 48; r <= 58; r++) {
+        for (let c = 11; c <= 13; c++) {
+            const v = ws.getCell(r, c).value;
+            const f = v && typeof v === "object" ? String(v.formula || "") : "";
+            const m = f.match(/\$E\$(\d+)/i);
+            if (m) return "E" + m[1];
+        }
+    }
+    const cand = [mapped, "E53", "E54"];
+    for (let i = 0; i < cand.length; i++) {
+        if (celdaTrmEscribible_(ws, cand[i]) && typeof ws.getCell(cand[i]).value === "number") return cand[i];
+    }
+    return mapped;
+}
+
+function aplicarTrmExcel(ws, trm) {
+    trm = trm > 0 ? trm : trmActualExcel();
+    if (!ws || !(trm > 0)) return;
+    const dest = detectarCeldaTrm_(ws);
+    const extras = [dest, "E53", "E54"];
+    const vistos = {};
+    extras.forEach(function (addr) {
+        const key = String(addr || "").toUpperCase();
+        if (vistos[key] || !celdaTrmEscribible_(ws, addr)) return;
+        vistos[key] = true;
+        escribirCelda(ws, addr, trm);
+    });
+}
+
+function aplicarTrmHojasLogistica(wb, trm) {
+    trm = trm > 0 ? trm : trmActualExcel();
+    if (!wb || !(trm > 0)) return;
+    wb.worksheets.forEach(function (ws) {
+        if (/^(EXP|NAL|AUX|ADMIN)\b/i.test(ws.name)) return;
+        const hit = buscarTextoHoja(ws, /^TRM$/i, 20, 8);
+        if (!hit) return;
+        const dest = ws.getCell(hit.r, hit.c + 1);
+        const master = dest.master || dest;
+        const prev = master.value;
+        if (prev != null && typeof prev !== "number" && valorCeldaPlano(master).trim()) return;
+        master.value = trm;
+    });
+}
+
 function aplicarEncabezadoExcel(ws, ctx) {
     const m = XLSX_MAPA;
     ctx = ctx || {};
@@ -230,6 +295,7 @@ function aplicarEncabezadoExcel(ws, ctx) {
         const d = new Date(f + "T12:00:00");
         if (!isNaN(d.getTime())) escribirCelda(ws, m.fecha, d);
     }
+    aplicarTrmExcel(ws);
     return codigo;
 }
 
@@ -238,6 +304,75 @@ function aplicarRangosExcel(ws, lots) {
     escribirCelda(ws, q[0], Number(lots[0].q) || 1);
     escribirCelda(ws, q[1], Number(lots[1].q) || 1);
     escribirCelda(ws, q[2], Number(lots[2].q) || 1);
+}
+
+/** No. Proyecto sin el código. El código ya va en su propia celda. */
+function nombreProyectoSinCodigo_(texto, codigo) {
+    let t = String(texto || "").replace(/\s+/g, " ").trim();
+    const c = String(codigo || "").trim();
+    if (!t) return "";
+    if (c && t.toLowerCase().indexOf(c.toLowerCase()) === 0) {
+        t = t.slice(c.length).replace(/^[\s\-–—:]+/, "").trim();
+    }
+    return t;
+}
+
+/** C3 de una pieza: SHOW ROOM-Nombre elemento. */
+function nombreProyectoElemento_(texto, codigo, elemento) {
+    const base = nombreProyectoSinCodigo_(texto, codigo);
+    const el = String(elemento || "").replace(/\s+/g, " ").trim();
+    if (base && el) return base + "-" + el;
+    return base || el;
+}
+
+/**
+ * Deja `bloque` como pestañas seguidas en el lugar de la primera.
+ * El resto (NAL, cotizaciones, etc.) queda después de ese bloque.
+ */
+function ordenarBloqueHojas_(wb, bloque) {
+    bloque = (bloque || []).filter(Boolean);
+    if (!bloque.length) return;
+    const ancla = bloque[0].orderNo || 1;
+    const ids = {};
+    bloque.forEach(function (w) { ids[w.id] = true; });
+    const antes = [];
+    const despues = [];
+    wb.worksheets.forEach(function (w) {
+        if (ids[w.id]) return;
+        if ((w.orderNo || 0) < ancla) antes.push(w);
+        else despues.push(w);
+    });
+    antes.sort(function (a, b) { return (a.orderNo || 0) - (b.orderNo || 0); });
+    despues.sort(function (a, b) { return (a.orderNo || 0) - (b.orderNo || 0); });
+    antes.concat(bloque).concat(despues).forEach(function (w, i) { w.orderNo = i + 1; });
+}
+
+function nombrePestanaElemento(nombre, idx) {
+    let base = String(nombre || ("Pieza " + (idx + 1))).replace(/[\\/?*\[\]]/g, "-").trim();
+    if (!base) base = "Pieza " + (idx + 1);
+    if (base.length > 31) base = base.slice(0, 31);
+    return base;
+}
+
+function elementosDeVersionExcel_(ver) {
+    if (ver && Array.isArray(ver.elementos) && ver.elementos.length) {
+        return ver.elementos.map(function (el, i) {
+            return {
+                nombre: el.nombre || ("Pieza " + (i + 1)),
+                matrizItems: el.matrizItems || [],
+                escalas: el.escalas && el.escalas.length ? el.escalas : (ver.escalas || [{ id: "l1", q: 1 }]),
+                fichaComercial: el.fichaComercial || ver.fichaComercial || {},
+                comentario: ver.comentario || ""
+            };
+        });
+    }
+    return [{
+        nombre: "Pieza 1",
+        matrizItems: (ver && ver.matrizItems) || [],
+        escalas: (ver && ver.escalas) || [{ id: "l1", q: 1 }],
+        fichaComercial: (ver && ver.fichaComercial) || {},
+        comentario: (ver && ver.comentario) || ""
+    }];
 }
 
 function nombrePestanaVersion(mkt, codigo, vid) {
@@ -382,7 +517,7 @@ function rellenarHojaVersion(ws, ver, codigo, avisos, opts) {
     aplicarEncabezadoExcel(ws, {
         codigo: codigo,
         cliente: valCampo("cliente"),
-        proyecto: valCampo("noProyecto"),
+        proyecto: opts.proyecto != null ? opts.proyecto : valCampo("noProyecto"),
         datosAdicionales: ver.datosAdicionales || {}
     });
     aplicarRangosExcel(ws, lots);
@@ -689,7 +824,7 @@ async function refinarMapaConGemini(analisis, textoHoja) {
         "Devuelve SOLO un JSON con estas claves (sin markdown):",
         "hojaExp, hojaNal, codigo, cliente, proyecto, analista, comercial, disenador, fecha,",
         "q (array de 3 celdas de cantidades), colDesc, colCant, colU (3 columnas de unitarios),",
-        "fabInicio, fabFin, comInicio, comFin, fleteFila, notas.",
+        "fabInicio, fabFin, comInicio, comFin, fleteFila, trm (celda numérica del TRM, normalmente E53), notas.",
         "Las celdas van en notación A1. No inventes pestañas. ADMIN, QUOT, COT, Metales y extras no se rellenan.",
         "Hojas: " + analisis.hojas.join(" | "),
         "Mapa heurístico: " + JSON.stringify(analisis.mapa),
@@ -731,6 +866,7 @@ function textoAnalisisPlantilla(an) {
         "Extra (se conservan, no se rellenan): " + (an.extra.length ? an.extra.join(", ") : "ninguna"),
         "Código " + m.codigo + " · Cliente " + m.cliente + " · Proyecto " + m.proyecto,
         "Rangos Q: " + m.q.join(", "),
+        "TRM: " + m.trm,
         "Fabricación filas " + m.fabInicio + "–" + m.fabFin,
         "Flete fila " + m.fleteFila,
         "Comercialización filas " + m.comInicio + "–" + m.comFin
@@ -822,8 +958,10 @@ window.exportarPresupuestoExcel = async function () {
     const versiones = typeof window.listarVersionesPresupuesto === "function"
         ? window.listarVersionesPresupuesto()
         : [];
-    const hayItems = versiones.some(function (v) { return (v.matrizItems || []).length; })
-        || (typeof itemsPresupuesto !== "undefined" && itemsPresupuesto.length);
+    const hayItems = versiones.some(function (v) {
+        if ((v.matrizItems || []).length) return true;
+        return (v.elementos || []).some(function (e) { return (e.matrizItems || []).length; });
+    }) || (typeof itemsPresupuesto !== "undefined" && itemsPresupuesto.length);
     if (!hayItems) {
         return mostrarNotificacion("No hay matriz para exportar.", "warning");
     }
@@ -846,6 +984,60 @@ window.exportarPresupuestoExcel = async function () {
         if (!masterExp && !masterNal) throw new Error("No está la pestaña EXP/NAL en la plantilla.");
 
         const codigo = valCampo("inputCodigo") || valCampo("noProyecto") || "SIN-CODIGO";
+        const grupal = typeof esPresupuestoGrupal === "function" && esPresupuestoGrupal();
+        if (grupal) {
+            const vid = (typeof window.versionActivaId === "string" && window.versionActivaId) || (lista[lista.length - 1] && lista[lista.length - 1].id) || "V1";
+            const ver = lista.find(function (v) { return v.id === vid; }) || lista[lista.length - 1];
+            const piezas = elementosDeVersionExcel_(ver).filter(function (e) { return (e.matrizItems || []).length; });
+            if (!piezas.length) throw new Error("No hay matriz en ninguna pieza.");
+            const exp = versionEsExportacion(ver);
+            const key = exp ? "EXP" : "NAL";
+            const master = key === "EXP" ? masterExp : masterNal;
+            if (!master) throw new Error("La plantilla no tiene pestaña " + key + ".");
+            const vistos = {};
+            const hojasPieza = [];
+            const hojasAux = [];
+            const proyectoBase = valCampo("noProyecto");
+            piezas.forEach(function (el, i) {
+                let nombre = nombrePestanaElemento(el.nombre, i);
+                if (vistos[nombre.toLowerCase()]) nombre = nombrePestanaElemento(nombre + " " + (i + 1), i);
+                vistos[nombre.toLowerCase()] = true;
+                let ws;
+                if (i === 0) {
+                    master.name = nombre;
+                    ws = master;
+                } else {
+                    ws = clonarHojaExcel(wb, master, nombre);
+                }
+                const verPieza = Object.assign({}, ver, {
+                    matrizItems: el.matrizItems,
+                    escalas: el.escalas,
+                    fichaComercial: el.fichaComercial,
+                    comentario: [ver.comentario, el.nombre].filter(Boolean).join(" · ")
+                });
+                const proyectoHoja = nombreProyectoElemento_(proyectoBase, codigo, el.nombre);
+                const nCand = (el.matrizItems || []).filter(itemExportCandado_).length;
+                rellenarHojaVersion(ws, verPieza, codigo, avisos, { proyecto: proyectoHoja });
+                hojasPieza.push(ws);
+                if (nCand) {
+                    const aux = clonarHojaExcel(wb, ws, nombrePestanaElemento("AUX " + el.nombre, i));
+                    rellenarHojaVersion(aux, verPieza, codigo, avisos, { incluirCandado: true, esAux: true, proyecto: proyectoHoja });
+                    hojasAux.push(aux);
+                }
+            });
+            ordenarBloqueHojas_(wb, hojasPieza.concat(hojasAux));
+            aplicarTrmHojasLogistica(wb);
+            const bufG = await wb.xlsx.writeBuffer();
+            const blobG = new Blob([bufG], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            const aG = document.createElement("a");
+            aG.href = URL.createObjectURL(blobG);
+            aG.download = "presupuesto No." + codigo + "-" + vid + ".xlsx";
+            document.body.appendChild(aG);
+            aG.click();
+            setTimeout(function () { URL.revokeObjectURL(aG.href); aG.remove(); }, 1500);
+            mostrarNotificacion(avisos.length ? ("Excel descargado. " + avisos.join(" ")) : "Excel grupal descargado. Una pestaña por pieza.", "success");
+            return;
+        }
         const usados = { EXP: 0, NAL: 0 };
         const ultimoOrden = { EXP: masterExp ? masterExp.orderNo : 0, NAL: masterNal ? masterNal.orderNo : 0 };
         const asignadas = [];
@@ -882,6 +1074,7 @@ window.exportarPresupuestoExcel = async function () {
                 avisos.push(a.ver.id + ": pestaña " + aux.name + " (formato NAL/EXP, con " + nCand + " candada(s)).");
             }
         });
+        aplicarTrmHojasLogistica(wb);
 
         const buf = await wb.xlsx.writeBuffer();
         const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });

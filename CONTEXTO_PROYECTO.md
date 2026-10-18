@@ -155,7 +155,7 @@ Prompt de Ajustes (`promptMaestro`): oficio y reglas de fabricación. **Las fase
 ### Prompts de negocio
 
 - **Presupuestos y Costos (pestaña Ingeniería):** ver `PROMPT_COSTEO_MAESTRO` en `ia-core.js` y el campo admin.
-- **Logístico:** el campo admin “Prompt logístico” existe. Etapa 2 Paso 1 (Incoterm, destino, cubicaje, envío a mano) ya está. Maestro de tarifas, prorrateo e IA de flete **no** iniciados.
+- **Logístico:** chat propio en la pestaña Logística (entre Envío y Costos logísticos), separado del de Costos. Usa el Prompt logístico de Ajustes. Entrevista en el chat; **Generar datos logísticos** escribe las filas abiertas y las marca como estimado. Sugiere modalidad y no la cambia sola. El catálogo de Drive **no** está conectado.
 
 ---
 
@@ -205,7 +205,7 @@ Local preview: `http://127.0.0.1:8765/` (versión de UI según badge en `index.h
 
 **Versiones.** Un proyecto = un código Odoo. V1 al empezar; **Nueva versión** copia matriz/chat/ficha. Comentario opcional. Historial: una fila por código, JSON con todas las versiones.
 
-**Excel.** Plantilla oficial se publica en Admin → Conexiones (Drive). Relleno EXP/NAL; pestañas `EXP {codigo}-V1` / `NAL…` y clones V2, V3… al lado de V1 (no al final). Observaciones: texto OMIL/Nestlé intacto; nota de versión debajo, otro color, solo en la celda maestra del merge. La plantilla siempre tiene 3 columnas de Q (E/G/I): NAL/EXP rellenan las vacías copiando el último Q; **AUX no** (`sinPad`: Q=0 en columnas de relleno). Flete de la fila 35 solo por nombre (`flete|transporte`); no toda la categoría Empaque. En esa fila E es el **total del lote** (la fórmula `K35=E*D/K7` diluye).
+**Excel.** Plantilla oficial se publica en Admin → Conexiones (Drive). Relleno EXP/NAL; pestañas `EXP {codigo}-V1` / `NAL…` y clones V2, V3… al lado de V1 (no al final). En un grupal, las pestañas de las piezas quedan seguidas (la otra de mercado, NAL o EXP, va después del bloque). C3 es el No. Proyecto sin el código, más el nombre de la pieza: `SHOW ROOM-Nombre elemento`. Observaciones: texto OMIL/Nestlé intacto; nota de versión debajo, otro color, solo en la celda maestra del merge. La plantilla siempre tiene 3 columnas de Q (E/G/I): NAL/EXP rellenan las vacías copiando el último Q; **AUX no** (`sinPad`: Q=0 en columnas de relleno). Flete de la fila 35 solo por nombre (`flete|transporte`); no toda la categoría Empaque. En esa fila E es el **total del lote** (la fórmula `K35=E*D/K7` diluye).
 
 **Candado y AUX.** Clic en el candado de cada fila: la línea no suma al AIU ni al NAL/EXP; el valor se conserva. Clic en el candado del **encabezado**: candar o liberar toda la matriz (no hay menú extra junto a + Agregar Rango). Si hay líneas candadas, se genera `AUX {codigo}-V1` **clonando el mismo formato** de NAL/EXP (cabecera, fab 10–32, flete 35, com 37–39, fórmulas AIU). AUX incluye las candadas (estudio). NAL/EXP oficiales no las incluyen.
 
@@ -231,7 +231,7 @@ Módulo `logistica.js`. Hoja **Carta**, iframe `srcdoc`, PDF = impresión nativa
 
 **Ajustes (admins).** Pestaña **Términos** (`CONFIG_GLOBAL.tyc`: vars + textos ES/EN). Pestaña **Membrete**: logo, QR, oficinas, web, firma manuscrita opcional. Eso cubre cambios de contenido. Un rediseño **radical** de cabecera/pie es cambio del HTML de la plantilla (con Edwin). **No** cargar la cabecera/pie enteros como una sola imagen: el texto saldría borroso al imprimir y cada oficina exigiría un arte nuevo. Decisión (oct 2026): logo y QR sí son imagen; oficinas y web siguen en HTML. Un PDF ya descargado no cambia; reimprimir una guardada usa el membrete **actual**.
 
-**Nombre de archivo.** Interno CONS / COT / QUOT. En pantalla y PDF: Consolidado / Consolidated, Cotizacion / Quotation. El número es el código del **primer ítem** de la lista (el usuario lo define arrastrando esa fila arriba). Al imprimir se recalcula el `document.title` (no se deja el de una revisión vieja).
+**Nombre de archivo.** Interno CONS / COT / QUOT. En pantalla y PDF: Consolidado / Consolidated, Cotizacion / Quotation. El número es el código del **primer ítem** de la lista (el usuario lo define arrastrando esa fila arriba). Al soltar la fila se suelta el código que hubiera quedado guardado en el encabezado, y el título de la hoja y el nombre del PDF pasan al proyecto que quedó primero. Al imprimir se recalcula el `document.title`.
 
 **Gran total del PDF.** Cotización **Nacional / Colombia:** `GRAN TOTAL SIN IVA (COP)` / `GRAND TOTAL BEFORE VAT (COP)`. Cotización **Exterior** (mercado EXPORT, ES o EN): `GRAN TOTAL (USD|COP)` / `GRAND TOTAL (USD|COP)` — no lleva “SIN IVA”. Función `logEtiquetaGranTotal_` en `logistica.js`.
 
@@ -243,7 +243,7 @@ Módulo `logistica.js`. Hoja **Carta**, iframe `srcdoc`, PDF = impresión nativa
 
 #### Etapa 2 — Envío real
 
-**Paso 1 (publicado en V1.0.29).** Incoterm, destino, cubicaje, filas de costo, el formato de abajo y la ficha de comisión.
+**Paso 1 (publicado en V1.0.29).** Incoterm, destino, cubicaje, filas de costo, el formato de abajo y la ficha de comisión. **Kg vol** (interno, no va al PDF): aérea = ancho × largo × alto de la caja en cm / 6.000; courier = / 5.000; se multiplica por las cajas. Marítimo y terrestre no lo muestran. **Peso por caja** se escribe en la ficha de Costos (kg o lb según el sistema) y en Envío se suma peso × cajas; tampoco sale en el PDF. **Descuento o recargo:** el % es el Fee libre de Costos. Con el candado cerrado sale una línea después del subtotal y antes de la logística; negativo descuenta, positivo recarga; no entra en la comisión ni en el flete. El comentario es opcional y, si se escribe, sale bajo el título de esa línea. Vacío, la línea no cambia. Una cotización ya guardada sin comentario queda igual. **Historial:** columna Nombre es el campo No. Proyecto del presupuesto, sin el código (el código ya está en Proyecto). El comentario queda para notas. Al abrir Guardadas se lee el nombre actual de cada presupuesto en la nube, así que las cotizaciones ya guardadas cambian sin volver a guardarlas. Si ese presupuesto no está en la nube, queda el nombre con el que se guardó la cotización. **País y código de Envío:** el menú trae el catálogo ISO en español (Trinidad y Tobago = TT). Si el Apps Script ya tiene `odoo_paises`, Odoo reemplaza esa lista con `res.country`.
 
 **Formato en uso.** Dos bloques y un gran total.
 
@@ -256,7 +256,8 @@ Módulo `logistica.js`. Hoja **Carta**, iframe `srcdoc`, PDF = impresión nativa
 - Incoterms solo marítimos (FAS, FOB, CFR, CIF) no se ofrecen en aérea, courier ni terrestre.
 - **Aéreo:** el flete terrestre local entra dentro de **Costos en origen** (no hay fila aparte). El flete principal, si el Incoterm lo marca, es el **flete aéreo internacional**.
 - **Marítimo:** flete interno = terrestre Bogotá–puerto; flete principal = flete marítimo.
-- **Duties** y **Taxes** son dos filas. Cada una tiene **%** y **observaciones internas** (no van al PDF). En el PDF solo entra el valor de la fila.
+- **Duties** y **Taxes** son dos filas. Cada una tiene **%** y **observaciones internas** (no van al PDF). En el PDF solo entra el valor de la fila. No llevan el margen de logística.
+- **Margen de logística.** El valor de la fila es el costo. Para la cotización se le suma un %. En exportación es uno solo (defecto 20%) y cubre origen, fletes, seguro, destino, courier y la fila libre. En nacional cada uno tiene el suyo: envío, montaje, bodegaje y otro (defecto 30%). El % no se imprime. Una cotización ya guardada, sin este dato, queda en 0% para no cambiar el total.
 - Nacional (cerrado): Envío nacional, Montaje e instalación, Bodegaje, Otro. Gran total **SIN IVA**, título editable. Sin modalidad ni Incoterm.
 
 Matriz vendedor (Sí = la fila existe):
@@ -288,7 +289,15 @@ La liquidación (`valor = subtotal de proyectos × % / (100 + % + fee)`) usa el 
 
 Al guardar, `datos.comision` (`pct`, `pctBase`, `fee`) y `snap.pctCom` van en el JSON. El total de la lista es el gran total ya ajustado. Reabrir la revisión restaura % y precios. Una cotización vieja, sin ese bloque, asume que la comisión ahora seleccionada en Costos es la que está dentro del precio: no salta hasta que se cambie el %.
 
-**Aún sin diseñar:** maestro de tarifas, IA de flete, márgenes logísticos en Ajustes, contenedor y peso. Partir el JSON del presupuesto (una celda, tope 50.000) queda para cuando Edwin pida el plan. No codear eso en el siguiente paso.
+**Asistente IA de logística.** Chat en la pestaña, aparte del de Costos. Lee el Prompt logístico de Ajustes. El catálogo de Drive sigue pendiente.
+
+- **Catálogo.** Las cotizaciones de los proveedores logísticos viven en una carpeta de Drive de la empresa. Un admin las sincroniza a una hoja, igual que `Catalogo_Maestro`. El chat consulta esa hoja. No abre los PDF en cada cotización.
+- **Si no hay tarifa.** El asistente propone un estimado y lo marca como estimado. No lo presenta como precio de proveedor. No es una búsqueda web en vivo.
+- **Flujo.** Si falta un dato (destino, cajas, peso, puerto en marítimo), hay entrevista en español. Luego **Generar datos logísticos** escribe el valor en las filas que ya abre la modalidad × Incoterm × destino. Esos valores siguen editables.
+- **Modalidad.** La IA sugiere la más conveniente para el envío. No la cambia sola. El comercial o el analista de costos elige modalidad, destino e Incoterm.
+- No mueve comisión ni el precio de los proyectos.
+
+**Aún sin diseñar:** márgenes logísticos en Ajustes, contenedor. Partir el JSON del presupuesto (una celda, tope 50.000) queda para cuando Edwin pida el plan.
 
 ### Recordatorios operativos
 
@@ -325,7 +334,7 @@ Si Ajustes no logra leer la hoja, el aviso queda visible y **Guardar** queda apa
 1. Edwin pega `backend.gs` en Apps Script si aún no lo hizo (`guardar_anchos_matriz`).
 2. **Paso 8 Etapa 1:** validar 3 PDF reales (membrete, textos, gran total según mercado, orden, nombre de archivo).
 3. Si Ajustes en Sheets se ve raro: **no pulsar Guardar**; el agente no debe `guardar_config`.
-4. Etapa 2 en V1.0.29: tipo Nacional o Exportación en Logística, independiente del mercado de Costos. Comisión de venta en la cotización y precio unitario bloqueado cuando la fila lleva flete prorrateado. Dos columnas (controles | hojas Carta), zoom, país y código con lista, filas que se arrastran, duplican y quitan, Restaurar vuelve a la plantilla. El gran total siempre muestra la moneda; al editarlo las letras pasan a negro y al salir vuelven a blanco. DDP imprime Costos en destino aunque el valor esté en cero. Una página que solo sigue con envíos no repite el encabezado de proyectos. Idioma y sistema se heredan del proyecto y se pueden cambiar solo en la cotización. No partir presupuestos ni empezar maestro de tarifas, IA de flete o márgenes logísticos hasta que Edwin lo pida.
+4. Etapa 2: el chat de logística ya está en la pestaña (entrevista, Generar datos, modalidad sugerida). El catálogo de Drive no está conectado. Márgenes logísticos y partir el JSON del presupuesto siguen pendientes.
 
 **Nuevo chat:** *«Lee `CONTEXTO_PROYECTO.md` (checkpoint 16 oct 2026) y continúa desde ahí»* + la tarea concreta. No reabrir Excel, AUX, candados, OTP ni Ajustes salvo regresión.
 
