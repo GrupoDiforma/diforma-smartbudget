@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.56">
+  <link rel="stylesheet" href="styles.css?v=1.0.58">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -73,39 +73,53 @@
             <span id="avisoElementoActivo" class="elem-ahora d-none"></span>
           </div>
           <div class="row g-3">
-            <div class="col-md-3">
-              <label class="form-label text-uppercase">Cód. Oportunidad</label>
-              <div class="input-group input-group-sm">
-                <input type="text" id="inputCodigo" class="form-control" placeholder="Ej: 17652-A">
-                <button type="button" class="btn btn-primary" onclick="buscarProyectoOdooServerless()">Buscar</button>
+            <div class="col-lg-7">
+              <div class="sb-grupo">
+                <div class="sb-grupo-tit">Proyecto</div>
+                <div class="row g-2">
+                  <div class="col-md-6">
+                    <label class="form-label text-uppercase">Cód. Oportunidad</label>
+                    <div class="input-group input-group-sm">
+                      <input type="text" id="inputCodigo" class="form-control" placeholder="Ej: 17652-A">
+                      <button type="button" class="btn btn-primary" onclick="buscarProyectoOdooServerless()">Buscar</button>
+                    </div>
+                  </div>
+                  <div class="col-md-6"><div id="odooAlert" class="d-none"></div></div>
+                  <div class="col-md-6"><label class="form-label text-uppercase">No. Proyecto</label><input type="text" id="noProyecto" class="form-control form-control-sm"></div>
+                  <div class="col-md-6"><label class="form-label text-uppercase">Cliente</label><input type="text" id="cliente" class="form-control form-control-sm"></div>
+                  <div class="col-md-6">
+                    <label class="form-label text-uppercase"><i class="bi bi-globe2 me-1"></i>Mercado</label>
+                    <select id="selMercado" class="form-select form-select-sm" title="Según el país del cliente. Más adelante define moneda e idioma." onchange="aplicarMercado(this.value)">
+                      <option value="NACIONAL">Nacional</option>
+                      <option value="EXPORTACION">Exportación</option>
+                    </select>
+                    <span id="badgeTipo" class="d-none">NACIONAL</span>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label text-uppercase">Tipo</label>
+                    <select id="selTipoEstructura" class="form-select form-select-sm" title="Individual: una pieza. Grupal: varias piezas o una campaña POP." onchange="aplicarTipoEstructura(this.value)">
+                      <option value="INDIVIDUAL">Individual</option>
+                      <option value="GRUPAL">Grupal</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="col-md-9"><div id="odooAlert" class="d-none"></div></div>
-            <div class="col-md-3"><label class="form-label text-uppercase">No. Proyecto</label><input type="text" id="noProyecto" class="form-control form-control-sm"></div>
-            <div class="col-md-4"><label class="form-label text-uppercase">Cliente</label><input type="text" id="cliente" class="form-control form-control-sm"></div>
-            <div class="col-md-2">
-              <label class="form-label text-uppercase"><i class="bi bi-globe2 me-1"></i>Mercado</label>
-              <select id="selMercado" class="form-select form-select-sm" title="Según el país del cliente. Más adelante define moneda e idioma." onchange="aplicarMercado(this.value)">
-                <option value="NACIONAL">Nacional</option>
-                <option value="EXPORTACION">Exportación</option>
-              </select>
-              <span id="badgeTipo" class="d-none">NACIONAL</span>
+            <div class="col-lg-5">
+              <div class="sb-grupo">
+                <div class="sb-grupo-tit">Equipo</div>
+                <div class="row g-2">
+                  <div class="col-md-6"><label class="form-label text-uppercase">Fecha</label><input type="date" id="fecha" class="form-control form-control-sm"></div>
+                  <div class="col-md-6"><label class="form-label text-uppercase">Comercial</label><input type="text" id="comercial" class="form-control form-control-sm"></div>
+                  <div class="col-md-6"><label class="form-label text-uppercase">Diseñador</label><input type="text" id="disenador" class="form-control form-control-sm"></div>
+                  <div class="col-md-6"><label class="form-label text-uppercase">Analista</label><input type="text" id="analista" class="form-control form-control-sm"></div>
+                </div>
+              </div>
             </div>
-            <div class="col-md-2">
-              <label class="form-label text-uppercase">Tipo</label>
-              <select id="selTipoEstructura" class="form-select form-select-sm" title="Individual: una pieza. Grupal: varias piezas o una campaña POP." onchange="aplicarTipoEstructura(this.value)">
-                <option value="INDIVIDUAL">Individual</option>
-                <option value="GRUPAL">Grupal</option>
-              </select>
-            </div>
-            <div class="col-md-3"><label class="form-label text-uppercase">Fecha</label><input type="date" id="fecha" class="form-control form-control-sm"></div>
-            <div class="col-md-4"><label class="form-label text-uppercase">Comercial</label><input type="text" id="comercial" class="form-control form-control-sm"></div>
-            <div class="col-md-4"><label class="form-label text-uppercase">Diseñador</label><input type="text" id="disenador" class="form-control form-control-sm"></div>
-            <div class="col-md-4"><label class="form-label text-uppercase">Analista</label><input type="text" id="analista" class="form-control form-control-sm"></div>
           </div>
           <div class="ficha-comercial mt-3" id="fichaComercial">
             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-              <span class="small fw-semibold text-uppercase mb-0" style="letter-spacing:.04em;color:#64748b;">Ficha comercial</span>
+              <span class="small fw-semibold text-uppercase mb-0" style="letter-spacing:.04em;color:#737373;">Ficha comercial</span>
               <div class="d-flex align-items-center gap-2 flex-wrap">
                 <button type="button" id="btnCompletarFicha" class="btn btn-outline-primary btn-sm" onclick="completarFichaIA()"><i class="bi bi-stars me-1"></i>Rellenar con IA</button>
                 <span class="small text-muted" id="fichaPaisTxt">País —</span>
@@ -120,24 +134,20 @@
               </div>
             </div>
             <div class="row g-2">
-              <div class="col-md-12">
+              <div class="col-lg-6">
                 <label class="form-label text-uppercase">Título comercial</label>
                 <input type="text" id="fichaTitulo" class="form-control form-control-sm" placeholder="Ej: Floor display Wow Can" maxlength="120">
-              </div>
-              <div class="col-md-12">
-                <label class="form-label text-uppercase">Descripción (3–4 líneas)</label>
+                <label class="form-label text-uppercase mt-2">Descripción (3–4 líneas)</label>
                 <textarea id="fichaDesc" class="form-control form-control-sm" rows="3" maxlength="700" placeholder="Texto comercial para cotización y logística. Lo propone la IA al generar la matriz; puedes editarlo."></textarea>
               </div>
-              <div class="col-md-6">
+              <div class="col-lg-6">
                 <div class="form-label text-uppercase">Medidas generales <span class="ficha-um">cm</span></div>
                 <div class="ficha-meds">
                   <label class="ficha-med" for="fichaDimAncho"><span>Ancho</span><input type="number" step="0.1" min="0" id="fichaDimAncho" class="form-control form-control-sm"></label>
                   <label class="ficha-med" for="fichaDimFondo"><span>Fondo</span><input type="number" step="0.1" min="0" id="fichaDimFondo" class="form-control form-control-sm"></label>
                   <label class="ficha-med" for="fichaDimAlto"><span>Alto</span><input type="number" step="0.1" min="0" id="fichaDimAlto" class="form-control form-control-sm"></label>
                 </div>
-              </div>
-              <div class="col-md-6">
-                <div class="form-label text-uppercase">Empaque <span class="ficha-um">cm</span></div>
+                <div class="form-label text-uppercase mt-2">Empaque <span class="ficha-um">cm</span></div>
                 <div class="ficha-meds">
                   <label class="ficha-med" for="fichaEmpAncho"><span>Ancho</span><input type="number" step="0.1" min="0" id="fichaEmpAncho" class="form-control form-control-sm"></label>
                   <label class="ficha-med" for="fichaEmpFondo"><span>Fondo</span><input type="number" step="0.1" min="0" id="fichaEmpFondo" class="form-control form-control-sm"></label>
@@ -261,6 +271,7 @@
                 <p id="logQuoteBadge" class="small fw-semibold mb-0"></p>
               </div>
               <div class="log-top-actions">
+              <div class="log-top-tools">
               <div class="dropdown">
                 <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside"><i class="bi bi-layout-three-columns me-1"></i>Columnas</button>
                 <div class="dropdown-menu p-2" id="logColsMenu" style="min-width:250px;">
@@ -284,10 +295,13 @@
               </div>
               <button type="button" id="btnLogOdoo" class="btn btn-sm btn-outline-secondary" title="Vuelve a leer en Odoo el proyecto de esta cotización, no el presupuesto que esté abierto en Costos. Si Odoo responde, descarta lo editado en la hoja."><i class="bi bi-cloud-arrow-down me-1"></i>Actualizar desde Odoo</button>
               <button type="button" id="btnLogReset" class="btn btn-sm btn-outline-secondary" title="Vuelve a los anchos y altos por defecto"><i class="bi bi-arrow-counterclockwise me-1"></i>Restablecer diseño</button>
-              <button type="button" id="btnLogHistorial" class="btn btn-sm btn-outline-primary ms-auto" title="Cotizaciones guardadas: abrir y editar"><i class="bi bi-clock-history me-1"></i>Guardadas</button>
-              <button type="button" id="btnLogGuardar" class="btn btn-sm btn-outline-primary" title="Guardar esta cotización en el historial"><i class="bi bi-save me-1"></i>Guardar</button>
               <button type="button" id="btnLogImgs" class="btn btn-sm btn-outline-secondary" title="Vuelve a bajar de Drive las fotos de esta cotización. Úsalo si la hoja o el PDF salieron sin imagen."><i class="bi bi-image me-1"></i>Recargar imágenes</button>
+              </div>
+              <div class="log-top-file">
+              <button type="button" id="btnLogHistorial" class="btn btn-sm btn-outline-primary" title="Cotizaciones guardadas: abrir y editar"><i class="bi bi-clock-history me-1"></i>Guardadas</button>
+              <button type="button" id="btnLogGuardar" class="btn btn-sm btn-primary" title="Guardar esta cotización en el historial"><i class="bi bi-save me-1"></i>Guardar</button>
               <button type="button" id="btnLogPDF" class="btn btn-sm btn-diforma-blue"><i class="bi bi-download me-1"></i>PDF</button>
+              </div>
               </div>
             </div>
             <p id="logCargaBar" class="small mb-1 d-none"></p>
@@ -296,50 +310,60 @@
               <div class="log-side">
                 <section class="log-card">
                   <h6>Documento</h6>
-                  <div class="log-doc-grid">
+                  <div class="log-doc-split">
                     <div>
-                      <label class="form-label small mb-1" for="logMercado">Tipo</label>
-                      <select id="logMercado" class="form-select form-select-sm" title="Define si la cotización es nacional o de exportación. No depende del mercado abierto en Costos.">
-                        <option value="NACIONAL">Nacional</option>
-                        <option value="EXPORTACION">Exportación</option>
-                      </select>
+                      <div class="sb-grupo-tit">Lectura</div>
+                      <div class="log-doc-grid">
+                        <div>
+                          <label class="form-label small mb-1" for="logMercado">Tipo</label>
+                          <select id="logMercado" class="form-select form-select-sm" title="Define si la cotización es nacional o de exportación. No depende del mercado abierto en Costos.">
+                            <option value="NACIONAL">Nacional</option>
+                            <option value="EXPORTACION">Exportación</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label small mb-1" for="logIdioma">Idioma</label>
+                          <select id="logIdioma" class="form-select form-select-sm" title="Sale del proyecto. Puedes cambiarlo solo para esta cotización.">
+                            <option value="es">Español</option>
+                            <option value="en">English</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label small mb-1" for="logSistema">Medidas</label>
+                          <select id="logSistema" class="form-select form-select-sm" title="Sale del proyecto. Cambia cómo se imprimen las medidas, sin tocar la ficha de costos.">
+                            <option value="metrico">Centímetros (cm)</option>
+                            <option value="imperial">Pulgadas (in)</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
                     <div>
-                      <label class="form-label small mb-1" for="logIdioma">Idioma</label>
-                      <select id="logIdioma" class="form-select form-select-sm" title="Sale del proyecto. Puedes cambiarlo solo para esta cotización.">
-                        <option value="es">Español</option>
-                        <option value="en">English</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label class="form-label small mb-1" for="logSistema">Medidas</label>
-                      <select id="logSistema" class="form-select form-select-sm" title="Sale del proyecto. Cambia cómo se imprimen las medidas, sin tocar la ficha de costos.">
-                        <option value="metrico">Centímetros (cm)</option>
-                        <option value="imperial">Pulgadas (in)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label class="form-label small mb-1" for="logMoneda">Moneda <span id="logMonedaNota" class="text-muted"></span></label>
-                      <select id="logMoneda" class="form-select form-select-sm">
-                        <option value="COP">COP (pesos)</option>
-                        <option value="USD">USD (dólares)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label class="form-label small mb-1" for="logTRM">TRM</label>
-                      <input type="number" id="logTRM" class="form-control form-control-sm text-end" min="1" step="0.01" title="Sale del simulador de Costos. Aquí lo puedes cambiar solo para esta cotización (conversión a USD).">
-                    </div>
-                    <div>
-                      <label class="form-label small mb-1" for="logDecimales">Centavos</label>
-                      <select id="logDecimales" class="form-select form-select-sm" title="Redondeo de los precios de esta cotización. Sin centavos es el valor por defecto.">
-                        <option value="0">Sin centavos</option>
-                        <option value="1">1 decimal</option>
-                        <option value="2">2 decimales</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label class="form-label small mb-1" for="logMargen">Margen (mm)</label>
-                      <input type="number" id="logMargen" class="form-control form-control-sm text-end" value="16" min="5" max="40" step="1">
+                      <div class="sb-grupo-tit">Dinero y hoja</div>
+                      <div class="log-doc-grid">
+                        <div>
+                          <label class="form-label small mb-1" for="logMoneda">Moneda <span id="logMonedaNota" class="text-muted"></span></label>
+                          <select id="logMoneda" class="form-select form-select-sm">
+                            <option value="COP">COP (pesos)</option>
+                            <option value="USD">USD (dólares)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label small mb-1" for="logTRM">TRM</label>
+                          <input type="number" id="logTRM" class="form-control form-control-sm text-end" min="1" step="0.01" title="Sale del simulador de Costos. Aquí lo puedes cambiar solo para esta cotización (conversión a USD).">
+                        </div>
+                        <div>
+                          <label class="form-label small mb-1" for="logDecimales">Centavos</label>
+                          <select id="logDecimales" class="form-select form-select-sm" title="Redondeo de los precios de esta cotización. Sin centavos es el valor por defecto.">
+                            <option value="0">Sin centavos</option>
+                            <option value="1">1 decimal</option>
+                            <option value="2">2 decimales</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="form-label small mb-1" for="logMargen">Margen (mm)</label>
+                          <input type="number" id="logMargen" class="form-control form-control-sm text-end" value="16" min="5" max="40" step="1">
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -400,6 +424,7 @@
                       <label class="form-label small mb-1" for="logIncoterm">Incoterm</label>
                       <select id="logIncoterm" class="form-select form-select-sm"></select>
                     </div>
+                    <div class="log-dest">
                     <div>
                       <label class="form-label small mb-1" for="logDestCiudad">Ciudad</label>
                       <input type="text" id="logDestCiudad" class="form-control form-control-sm" maxlength="80" placeholder="San Juan" autocomplete="off">
@@ -413,6 +438,7 @@
                       <label class="form-label small mb-1" for="logDestCodigo">Código</label>
                       <input type="text" id="logDestCodigo" class="form-control form-control-sm" maxlength="3" placeholder="PR" autocomplete="off">
                       <div id="logCodigoMenu" class="log-menu" hidden></div>
+                    </div>
                     </div>
                     <div>
                       <label class="form-label small mb-1" for="logDestPuerto">Puerto <span class="text-muted">interno</span></label>
@@ -1213,7 +1239,7 @@
   <script src="admin.js?v=1.0.29"></script>
     <script src="seguridad.js?v=1.0.25"></script>
     <script src="app.js?v=1.0.50"></script>
-  <script src="engine.js?v=1.0.37"></script>
+  <script src="engine.js?v=1.0.38"></script>
   <script src="connectors.js?v=1.0.36"></script>
   <script src="ia-core.js?v=1.0.40"></script>
   <script src="export-excel.js?v=1.0.32"></script>

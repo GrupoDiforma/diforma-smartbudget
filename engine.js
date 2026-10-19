@@ -455,11 +455,11 @@ function renderizarTablaItems() {
     const merHead = mercadoEsExportacion() ? "EXP" : "NAL";
     const nCand = itemsPresupuesto.filter(itemEstaCandado).length;
     const todosCand = itemsPresupuesto.length > 0 && nCand === itemsPresupuesto.length;
-    lotesSimulacion.forEach(lt => th += `<th colspan="2" class="text-center" style="background:#0f172a; color:#e5e5e5;">Q: ${lt.q} · ${merHead} <i class="bi bi-x-circle text-danger ms-1 cursor-pointer" onclick="eliminarLote('${lt.id}')"></i></th>`);
+    lotesSimulacion.forEach(lt => th += `<th colspan="2" class="text-center" style="background:#1a1a1a; color:#e5e5e5;">Q: ${lt.q} · ${merHead} <i class="bi bi-x-circle text-danger ms-1 cursor-pointer" onclick="eliminarLote('${lt.id}')"></i></th>`);
     th += `<th rowspan="2" class="text-center mtx-lock-th" title="${todosCand ? "Clic: liberar toda la matriz" : "Clic: candar toda la matriz (no suman; se conservan los valores)"}" style="width:36px;" onclick="alternarCandadosMasivo()"><i class="bi ${todosCand ? "bi-lock-fill" : "bi-unlock"} mtx-lock-head${todosCand ? " mtx-lock-on" : ""}"></i></th><th rowspan="2" class="text-center" style="width:35px;"><i class="bi bi-trash"></i></th></tr><tr>`;
     lotesSimulacion.forEach((lt, i) => {
         const ids = idsUnitTotalLote_(lt, i);
-        th += `<th class="text-center mtx-th" data-col="${ids.uid}" style="background:#334155; color:white; font-size:0.7rem; ${thStyle(ids.uid, ut.unit)}">$ UNIT.<span class="col-resizer"></span></th><th class="text-center mtx-th" data-col="${ids.tid}" style="background:#475569; color:white; font-size:0.7rem; ${thStyle(ids.tid, ut.tot)}">$ TOTAL<span class="col-resizer"></span></th>`;
+        th += `<th class="text-center mtx-th" data-col="${ids.uid}" style="background:#333333; color:white; font-size:0.7rem; ${thStyle(ids.uid, ut.unit)}">$ UNIT.<span class="col-resizer"></span></th><th class="text-center mtx-th" data-col="${ids.tid}" style="background:#4a4a4a; color:white; font-size:0.7rem; ${thStyle(ids.tid, ut.tot)}">$ TOTAL<span class="col-resizer"></span></th>`;
     });
     thead.innerHTML = th + `</tr>`;
     colgroupMatriz_(w);
