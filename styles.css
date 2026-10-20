@@ -463,6 +463,18 @@ body {
     flex: 0 0 auto;
     min-width: 76px;
 }
+.log-partida {
+    flex: 1 0 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding-left: 30px;
+    font-size: 0.75rem;
+    color: #5c5c5c;
+}
+.log-partida span { flex: 0 0 auto; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.log-partida select { flex: 1 1 auto; min-width: 0; }
 .log-fila-acc {
     display: flex;
     gap: 4px;
@@ -1028,6 +1040,15 @@ html, body { overflow-x: hidden; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+#panel-logistica .catalogo-tabla { table-layout: auto; }
+#panel-logistica .catalogo-tabla th:last-child,
+#panel-logistica .catalogo-tabla td:last-child {
+    width: 12rem;
+    overflow: visible;
+    white-space: normal;
+}
+#panel-logistica .arancel-acc { display: flex; flex-wrap: wrap; gap: 4px; }
+#panel-logistica .arancel-acc .btn { padding: 2px 6px; }
 .catalogo-pager-nav {
     display: flex;
     justify-content: center;
@@ -1457,6 +1478,11 @@ html, body { overflow-x: hidden; }
     background: var(--diforma-blue);
     color: #fff;
     border-color: var(--diforma-blue);
+}
+.ver-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 #barraElementos:not(.d-none) {
     display: flex !important;

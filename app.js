@@ -733,17 +733,27 @@ function pintarEtiquetasElemento_(nombre, on) {
     if (btn) btn.classList.toggle("d-none", !on);
 }
 
+function htmlChipsVersion_() {
+    const activa = window.versionActivaId || "V1";
+    return (window.versionesPresupuesto || []).map(function (v) {
+        const on = v.id === activa ? " is-on" : "";
+        const title = String(v.comentario || "Ver " + v.id).replace(/"/g, "&quot;");
+        return '<button type="button" class="ver-chip' + on + '" title="' + title + '" onclick="aplicarVersionEnUI(\'' + v.id + '\')">' + v.id + "</button>";
+    }).join("");
+}
+
 function pintarEtiquetaVersion_() {
     const individual = typeof esPresupuestoGrupal !== "function" || !esPresupuestoGrupal();
-    const id = window.versionActivaId || "V1";
-    ["badgeVersion1", "badgeVersion2", "badgeVersion3", "badgeVersion4"].forEach(function (bid) {
+    const varias = (window.versionesPresupuesto || []).length > 1;
+    const html = htmlChipsVersion_();
+    ["badgeVersion2", "badgeVersion3", "badgeVersion4"].forEach(function (bid) {
         const el = document.getElementById(bid);
         if (!el) return;
-        if (individual && id) {
-            el.textContent = "Versión " + id;
+        if (individual && varias) {
+            el.innerHTML = html;
             el.classList.remove("d-none");
         } else {
-            el.textContent = "";
+            el.innerHTML = "";
             el.classList.add("d-none");
         }
     });
@@ -1059,11 +1069,7 @@ function pintarSelectorVersiones() {
     const nota = document.getElementById("comentarioVersionActiva");
     if (!box) return;
     const activa = window.versionActivaId;
-    box.innerHTML = window.versionesPresupuesto.map(function (v) {
-        const on = v.id === activa ? " is-on" : "";
-        const title = (v.comentario || "Sin comentario").replace(/"/g, "&quot;");
-        return '<button type="button" class="ver-chip' + on + '" title="' + title + '" onclick="aplicarVersionEnUI(\'' + v.id + '\')">' + v.id + "</button>";
-    }).join("");
+    box.innerHTML = htmlChipsVersion_();
     const ver = window.versionesPresupuesto.find(function (v) { return v.id === activa; });
     let extra = ver && ver.comentario ? ver.comentario : "";
     if (esPresupuestoGrupal()) {
@@ -1174,6 +1180,89 @@ async function guardarProyectoBD() {
 }
 
 var HIST_COSTOS_LOCAL_ = "smartbudget_hist_costos";
+var _histCostosFilas = [];
+var _histCostosFiltro = "";
+
+function escHtmlHist_(s) {
+    return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function normCodigoProyecto_(s) {
+    return String(s || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function normBusquedaHist_(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function proyectoGuardadoPorCodigo_(filas, codigo) {
+    const n = normCodigoProyecto_(codigo);
+    if (!n) return null;
+    return (filas || []).find(function (p) {
+        return normCodigoProyecto_(p.noProyecto) === n || normCodigoProyecto_(p.id) === n;
+    }) || null;
+}
+
+async function listaHistorialCostos_() {
+    try {
+        const data = await realizarPeticionBD({ action: "listar" });
+        if (data && data.exito && Array.isArray(data.data)) {
+            guardarListaLocal_(HIST_COSTOS_LOCAL_, data.data);
+            return { filas: data.data, origen: "nube" };
+        }
+    } catch (e) {}
+    const local = leerListaLocal_(HIST_COSTOS_LOCAL_);
+    if (local) return { filas: local, origen: "local" };
+    return { filas: [], origen: "desconocido" };
+}
+
+function ocultarAvisoCodigoGuardado() {
+    const el = document.getElementById("avisoCodigoGuardado");
+    if (!el) return;
+    el.classList.add("d-none");
+    el.innerHTML = "";
+}
+
+function cerrarAvisoCodigoGuardado() {
+    window._importOdooPendiente = null;
+    ocultarAvisoCodigoGuardado();
+    if (typeof mostrarAlertaOdoo === "function") {
+        mostrarAlertaOdoo("No se modificó el presupuesto en pantalla.", "info");
+    }
+}
+
+function mostrarAvisoProyectoGuardado(guardado, codigo, inseguro) {
+    const el = document.getElementById("avisoCodigoGuardado");
+    if (!el) return;
+    const cod = escHtmlHist_(codigo);
+    let texto;
+    let acciones;
+    if (guardado) {
+        const quien = escHtmlHist_(guardado.cliente || "sin cliente");
+        const cuando = escHtmlHist_(guardado.fechaGuardado || "");
+        texto = "<strong>" + cod + "</strong> ya tiene un presupuesto guardado (" + quien + (cuando ? " · " + cuando : "") + "). Ábrelo para seguir donde quedó. Empezar de cero borra la matriz de esta pantalla.";
+        acciones = '<button type="button" class="btn btn-sm btn-primary" onclick="abrirProyectoGuardadoDesdeBusqueda()">Abrir guardado</button>'
+            + '<button type="button" class="btn btn-sm btn-outline-danger" onclick="confirmarImportOdooDesdeCero()">Empezar de cero</button>';
+    } else {
+        texto = "No pude confirmar en la nube si <strong>" + cod + "</strong> ya está guardado. Revísalo en Historial antes de seguir. Empezar de cero borra la matriz de esta pantalla.";
+        acciones = '<button type="button" class="btn btn-sm btn-primary" onclick="abrirHistorial()">Abrir historial</button>'
+            + '<button type="button" class="btn btn-sm btn-outline-danger" onclick="confirmarImportOdooDesdeCero()">Empezar de cero</button>';
+    }
+    if (inseguro && guardado) {
+        texto += " Este aviso sale de la copia guardada en este equipo.";
+    }
+    el.innerHTML = '<div class="alert alert-warning py-2 px-3 mb-0 d-flex flex-wrap align-items-center justify-content-between gap-2">'
+        + '<div><i class="bi bi-exclamation-triangle me-1"></i> ' + texto + "</div>"
+        + '<div class="d-flex flex-wrap gap-2">' + acciones
+        + '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="cerrarAvisoCodigoGuardado()">Cerrar</button></div></div>';
+    el.classList.remove("d-none");
+    const box = document.getElementById("odooAlert");
+    if (box) box.classList.add("d-none");
+}
 
 function leerListaLocal_(clave) {
     try {
@@ -1187,16 +1276,40 @@ function guardarListaLocal_(clave, data) {
     try { localStorage.setItem(clave, JSON.stringify({ t: Date.now(), data: data || [] })); } catch (e) {}
 }
 
+function filasHistorialVisibles_() {
+    const q = normBusquedaHist_(_histCostosFiltro).trim();
+    if (!q) return _histCostosFilas;
+    return _histCostosFilas.filter(function (p) {
+        const texto = [p.noProyecto, p.cliente, p.requerimiento, p.tipo, p.fechaGuardado].join(" ");
+        return normBusquedaHist_(texto).indexOf(q) !== -1;
+    });
+}
+
+function filtrarHistorialCostos(valor) {
+    _histCostosFiltro = valor || "";
+    dibujarFilasHistorial_();
+}
+
 function pintarHistorialCostos_(filas) {
+    _histCostosFilas = filas || [];
+    dibujarFilasHistorial_();
+}
+
+function dibujarFilasHistorial_() {
     const tbody = document.getElementById("tbodyHistorial");
     if (!tbody) return;
-    if (!filas || !filas.length) {
+    const filas = filasHistorialVisibles_();
+    if (!_histCostosFilas.length) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No hay proyectos.</td></tr>';
+        return;
+    }
+    if (!filas.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Ningún proyecto coincide con «' + escHtmlHist_(_histCostosFiltro) + '».</td></tr>';
         return;
     }
     tbody.innerHTML = filas.map(function (p) {
         const id = String(p.id || "").replace(/'/g, "");
-        return '<tr><td class="text-danger fw-bold">' + (p.noProyecto || "") + '</td><td>' + (p.cliente || "S/N") + '</td><td>' + (p.requerimiento || "S/N") + '</td><td><span class="badge ' + (p.tipo === "EXPORTACION" ? "bg-dark" : "bg-primary") + '">' + (p.tipo || "") + '</span></td><td class="text-muted" style="font-size:0.75rem;">' + (p.fechaGuardado || "") + '</td><td class="text-center"><button class="btn btn-sm btn-primary py-0 px-2 me-1" onclick="cargarProyectoBD(\'' + id + '\')"><i class="bi bi-cloud-download"></i></button><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="eliminarProyectoBD(\'' + id + '\')"><i class="bi bi-trash"></i></button></td></tr>';
+        return '<tr><td class="text-danger fw-bold">' + escHtmlHist_(p.noProyecto || "") + '</td><td>' + escHtmlHist_(p.cliente || "S/N") + '</td><td>' + escHtmlHist_(p.requerimiento || "S/N") + '</td><td><span class="badge ' + (p.tipo === "EXPORTACION" ? "bg-dark" : "bg-primary") + '">' + escHtmlHist_(p.tipo || "") + '</span></td><td class="text-muted" style="font-size:0.75rem;">' + escHtmlHist_(p.fechaGuardado || "") + '</td><td class="text-center"><button class="btn btn-sm btn-primary py-0 px-2 me-1" onclick="cargarProyectoBD(\'' + id + '\')"><i class="bi bi-cloud-download"></i></button><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="eliminarProyectoBD(\'' + id + '\')"><i class="bi bi-trash"></i></button></td></tr>';
     }).join("");
 }
 
@@ -1204,7 +1317,13 @@ async function abrirHistorial() {
     const tbody = document.getElementById('tbodyHistorial');
     if (!tbody) return;
     const previa = leerListaLocal_(HIST_COSTOS_LOCAL_);
+    const filtro = document.getElementById("filtroHistorial");
+    if (filtro && document.activeElement !== filtro) {
+        filtro.value = "";
+        _histCostosFiltro = "";
+    }
     new bootstrap.Modal(document.getElementById('modalHistorial')).show();
+    if (filtro) setTimeout(function () { filtro.focus(); }, 200);
     if (previa && previa.length) {
         pintarHistorialCostos_(previa);
     } else {

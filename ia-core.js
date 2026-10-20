@@ -1015,13 +1015,14 @@ titulo corto (como en cotización). descripcion 3–4 líneas: qué es, uso en P
 dimensiones del mueble (ancho × fondo × alto) del PDF/render o del chat. empaque de la caja un poco MAYOR que la pieza (no más baja). Si va desarmada, dilo en descripcion.
 empaque.unidades = und. por caja: si el analista dijo «caja con 200U», unidades=200. No lo dejes vacío.
 empaque.peso = peso de UNA caja, en kg si las medidas son cm o en lb si son in. Solo si el analista, el PDF o el chat lo dijeron. Si no está dicho, 0. No lo estimes.
+partida: elige UNA de esta lista, en formato 9403.20.00.00, según el material visible. Si hay más de un material, deja partida vacía. Lista: ${((typeof logListaPartidas === "function" ? logListaPartidas() : []).map(function (p) { return p.codigo + " " + p.nombre; }).join("; ") || "9403.20.00.00 metálico; 9403.60.00.00 madera; 9403.70.00.00 plástico; 3926.90.90.90 display plástico; 4911.10.00.00 impresos; 9403.89.00.00 cartón")}.
 PROHIBIDO copiar medidas del Lead Odoo si el archivo o el chat ya dieron otras.
 
 Ficha actual (puedes completar huecos, no borres lo que ya esté bien):
 ${JSON.stringify(fichaHoy)}
 
 Responde un párrafo corto y AL FINAL un único JSON sin markdown:
-{"ficha":{"titulo":"...","descripcion":"...","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0}}}`;
+{"ficha":{"titulo":"...","descripcion":"...","partida":"9403.20.00.00","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0}}}`;
 }
 
 window.completarFichaIA = async function () {
@@ -1059,6 +1060,14 @@ ${JSON.stringify({
             rellenarEmpUndDesdeChat_(cotizacion.ficha);
             rellenarEmpPesoDesdeChat_(cotizacion.ficha);
             aplicarFichaComercial(cotizacion.ficha);
+            if (typeof logSugerirPartida === "function" && typeof leerFichaComercialUI === "function") {
+                const ya = leerFichaComercialUI();
+                if (!ya.partida) {
+                    const sug = logSugerirPartida((ya.titulo || "") + "\n" + (ya.descripcion || ""));
+                    if (sug && sug.codigo) aplicarFichaComercial({ partida: sug.codigo });
+                }
+            }
+            if (typeof logAlCambiarPartidaFicha === "function") logAlCambiarPartidaFicha();
             avisarEmpaqueVsPieza_();
         }
         const charla = textoSinJson(texto, cotizacion);

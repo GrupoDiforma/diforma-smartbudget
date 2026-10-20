@@ -155,7 +155,7 @@ Prompt de Ajustes (`promptMaestro`): oficio y reglas de fabricación. **Las fase
 ### Prompts de negocio
 
 - **Presupuestos y Costos (pestaña Ingeniería):** ver `PROMPT_COSTEO_MAESTRO` en `ia-core.js` y el campo admin.
-- **Logístico:** chat propio en la pestaña Logística (entre Envío y Costos logísticos), separado del de Costos. Usa el Prompt logístico de Ajustes. Entrevista en el chat; **Generar datos logísticos** escribe las filas abiertas y las marca como estimado. Sugiere modalidad y no la cambia sola. El catálogo de Drive **no** está conectado.
+- **Logístico:** chat propio en Logística, separado del de Costos. Entrevista y **Generar datos logísticos**. El valor de cada fila sale del catálogo de costos logísticos (Drive). Si ese concepto no está en el catálogo para el modo y el destino, queda `[Estimado IA]`. Aranceles ya no van por ese chat: salen de la hoja `Aranceles`. Ver checkpoint 19 oct.
 
 ---
 
@@ -260,7 +260,7 @@ Módulo `logistica.js`. Hoja **Carta**, iframe `srcdoc`, PDF = impresión nativa
 - Incoterms solo marítimos (FAS, FOB, CFR, CIF) no se ofrecen en aérea, courier ni terrestre.
 - **Aéreo:** el flete terrestre local entra dentro de **Costos en origen** (no hay fila aparte). El flete principal, si el Incoterm lo marca, es el **flete aéreo internacional**.
 - **Marítimo:** flete interno = terrestre Bogotá–puerto; flete principal = flete marítimo.
-- **Duties** y **Taxes** son dos filas. Cada una tiene **%** y **observaciones internas** (no van al PDF). En el PDF solo entra el valor de la fila. No llevan el margen de logística.
+- **Duties** y **Taxes** se editan como dos filas (%, valor y observación). La observación se guarda con la cotización y no se imprime. En la hoja y en el PDF salen sumados en una sola fila **Duties y Taxes**. No llevan el margen de logística. El % sale de Ajustes → Logística → Aranceles (país de Odoo × partida de la ficha). Si varias partidas tienen distinto duty, se prorratea por valor; el tax, si el % es el mismo, va una sola vez.
 - **Margen de logística.** El valor de la fila es el costo. Para la cotización se le suma un %. En exportación es uno solo (defecto 20%) y cubre origen, fletes, seguro, destino, courier y la fila libre. En nacional cada uno tiene el suyo: envío, montaje, bodegaje y otro (defecto 30%). El % no se imprime. Una cotización ya guardada, sin este dato, queda en 0% para no cambiar el total.
 - Nacional (cerrado): Envío nacional, Montaje e instalación, Bodegaje, Otro. Gran total **SIN IVA**, título editable. Sin modalidad ni Incoterm.
 
@@ -293,15 +293,28 @@ La liquidación (`valor = subtotal de proyectos × % / (100 + % + fee)`) usa el 
 
 Al guardar, `datos.comision` (`pct`, `pctBase`, `fee`) y `snap.pctCom` van en el JSON. El total de la lista es el gran total ya ajustado. Reabrir la revisión restaura % y precios. Una cotización vieja, sin ese bloque, asume que la comisión ahora seleccionada en Costos es la que está dentro del precio: no salta hasta que se cambie el %.
 
-**Asistente IA de logística.** Chat en la pestaña, aparte del de Costos. Lee el Prompt logístico de Ajustes. El catálogo de Drive sigue pendiente.
+**Asistente IA de logística.** Chat en la pestaña, aparte del de Costos. Lee el Prompt logístico de Ajustes. Entrevista en español; **Generar datos logísticos** escribe solo las filas que ya abre modalidad × Incoterm. Sugiere modalidad y no la cambia sola. No mueve comisión ni el precio de los proyectos. El valor lo pone el catálogo de costos logísticos. Si ese concepto no tiene tarifa para el modo y el destino, estimado marcado `[Estimado IA]`. No es búsqueda web. Duties y Taxes no los estima este chat: los calcula la lista de aranceles.
 
-- **Catálogo.** Las cotizaciones de los proveedores logísticos viven en una carpeta de Drive de la empresa. Un admin las sincroniza a una hoja, igual que `Catalogo_Maestro`. El chat consulta esa hoja. No abre los PDF en cada cotización.
-- **Si no hay tarifa.** El asistente propone un estimado y lo marca como estimado. No lo presenta como precio de proveedor. No es una búsqueda web en vivo.
-- **Flujo.** Si falta un dato (destino, cajas, peso, puerto en marítimo), hay entrevista en español. Luego **Generar datos logísticos** escribe el valor en las filas que ya abre la modalidad × Incoterm × destino. Esos valores siguen editables.
-- **Modalidad.** La IA sugiere la más conveniente para el envío. No la cambia sola. El comercial o el analista de costos elige modalidad, destino e Incoterm.
-- No mueve comisión ni el precio de los proyectos.
+**Catálogo de aranceles (en local, falta publicar).** Misma mecánica que `Catalogo_Maestro`: el archivo sigue en Drive, la sync escribe la hoja `Aranceles`, Logística lee la hoja. Fuente: `GD-Logistica\Aranceles\Impuestos y aranceles_listado.xlsx` (una fila por país + partida `9403.20.00.00`, duties %, base, taxes %, base, observación). El país de la cotización es el de Odoo (`res.country`); el Excel no duplica esa lista. Ajustes → Logística: primero Partidas (solo código y descripción; Agregar y Quitar) y debajo Aranceles (agregar a mano, observación, sin Guardar ni Duplicar por fila). Las dos se graban con el Guardar de Ajustes. Sincronizar Drive reemplaza la tabla de aranceles y suma partidas nuevas. El IVU de Puerto Rico lo paga el importador: la cotización no lo suma mientras la observación lo diga. No copiar usuarios ni claves de las primeras filas del libro original. Ids de Drive no van al frontend ni aquí. El script no crea carpetas. Falta pegar `backend.gs` y publicar una versión nueva de la implementación que ya usa la app; si no, Guardar aranceles y la sync del listado plano responden «Acción no válida».
 
-**Aún sin diseñar:** márgenes logísticos en Ajustes, contenedor. Partir el JSON del presupuesto (una celda, tope 50.000) queda para cuando Edwin pida el plan.
+**Catálogo maestro de costos logísticos (siguiente chat).** Aparte de materiales (`Catalogo_Maestro`) y aparte de aranceles. Misma mecánica: las cotizaciones de los proveedores siguen en Drive (`GD-Logistica\Cotizaciones expo-impo\Exportaciones`; piloto IFS), una sync escribe una hoja, Ajustes → Logística la lee. El botón no va dentro de Catálogo maestro de materiales. No scrapear TCC ni Servientrega. No volver a abrir las 12 cotizaciones de IFS: la tabla de abajo ya dice en qué fila cae cada cargo.
+
+Una cotización IFS no es una fila. Cada cargo cae en un concepto y **Generar** suma los vigentes en la fila única del Incoterm. Moneda por cargo; el TRM de la cotización convierte al final. El margen de la ficha se suma después. Duties y Taxes no llevan margen.
+
+| Bloque IFS | Concepto | Precio |
+| --- | --- | --- |
+| Flete 20'/40' o USD/kg + combustible | Flete principal | Por contenedor o por kg. A veces dos rangos o dos rutas. |
+| Bogotá–Cartagena, COP por contenedor | Flete interno | Solo marítimo o terrestre. En aéreo el camión urbano entra en origen. |
+| Document fee, maniobras, AMS, aeropuerto, agenciamiento 0,35 % FOB (mín. COP 470.000) + SAE/planilla | Origen | USD y COP. |
+| Seguro 0,40 % del valor asegurado, mín. USD 60 o 75 | Seguro | Casi fijo en IFS. |
+| Delivery, customs entry, ISF, bond, doc fee destino | Destino | Solo en DDP. |
+| Duty & Taxes del forwarder | No usar | El % sale del Excel, por país y partida. |
+
+Un archivo DDP también alimenta un CIF: se usan los bloques que el Incoterm abre. «Al costo», «se confirmará» y «en caso de requerirse» no entran como cifra. Cargos repetidos (dos document fee) se marcan para revisar y no se suman dos veces. La fila de catálogo es trayecto + equipo (20', 40' o kg), no el archivo. La vigencia es la fecha impresa en la oferta. Estas 12 de IFS son aéreo y FCL; no hay LCL, courier, terrestre ni nacional. No scrapear TCC ni Servientrega.
+
+**Partida arancelaria (en el working tree, sin commit).** Vive en la ficha comercial del elemento (`fichaComercial.partida`) y en la fila de la cotización. Desplegable editable. **Rellenar con IA** está junto al título comercial, no en la barra de país, idioma y sistema. No se imprime. Lista en **Ajustes → Logística → Partidas** (`CONFIG_GLOBAL.partidas`), formato `9403.20.00.00`. Semilla: las 31 del listado (metálico, madera, plástico, display plástico, impresos, cartón, cajas corrugadas y plegadizas, calcomanías, hojalata, neveras, caja de luz, y los códigos nacionales del Excel, p. ej. `9403.20.99.00`). La ficha sugiere una sola; si nombra dos materiales, queda vacía. Cartonplast → plástico. El cruce con Duties y Taxes es país de destino × esa partida.
+
+**Aún sin diseñar, fuera de este catálogo:** márgenes logísticos dentro de Ajustes (el % ya vive en la ficha de la cotización). Partir el JSON del presupuesto queda para cuando Edwin pida el plan.
 
 ### Recordatorios operativos
 
@@ -314,31 +327,24 @@ Al guardar, `datos.comision` (`pct`, `pctBase`, `fee`) y `snap.pctCom` van en el
 
 ---
 
-## CHECKPOINT — 16 oct 2026
+## CHECKPOINT — 19 oct 2026
 
-Producción (`main` y `desarrollo`): **V1.0.29**. Preview local: `http://127.0.0.1:8765/` con Ctrl+F5. `backend.gs` del repo sigue pidiéndose a mano en Apps Script (cotizaciones, imágenes Odoo, anchos). La ficha de comisión no lo necesita.
+Para gastar pocos tokens: lee solo este checkpoint y **Catálogo maestro de costos logísticos** (dentro de Fase 2 → Etapa 2). No abras chats anteriores ni vuelvas a leer las 12 cotizaciones de IFS. La tabla «Bloque IFS» de esa sección basta.
 
-**Caché publicada:** `styles.css 1.0.47` · `admin.js 1.0.29` · `app.js 1.0.32` · `engine.js 1.0.34` · `ia-core.js 1.0.29` · `export-excel.js 1.0.30` · `logistica.js 1.0.58` · `seguridad.js 1.0.25`. `propuestas-ui/` no entra en commits.
+Producción (`main` y `origin/desarrollo`): **V1.0.33**, commit `70606d6`. Preview: `http://127.0.0.1:8765/`. No publicar ni hacer commit salvo que Edwin lo pida. No recargar sus pestañas de cotización abiertas. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni en este archivo. El script no crea carpetas en Mi unidad. No alterar Motor AIU, Márgenes, Catálogos fijos, Comisiones ni Prompts IA.
 
-Si Ajustes no logra leer la hoja, el aviso queda visible y **Guardar** queda apagado (`_configHojaFallo`). Historial de Costos y lista de cotizaciones se muestran al instante con la última lista de ese teléfono y se actualizan detrás. Las fotos salen por enlace de Drive; el archivo completo solo se pide al editar la imagen.
+`desarrollo` local va 2 commits por delante, sin push. Sin commit, en el working tree: aranceles, partidas y la ficha. Caché local: `styles.css 1.0.60` · `admin.js 1.0.38` · `connectors.js 1.0.37` · `ia-core.js 1.0.41` · `engine.js 1.0.38` · `logistica.js 1.0.94`. Insignia V1.0.33. Aranceles y partidas ya están en Ajustes → Logística; no rehacerlos. Publicar `backend.gs` (versión nueva de la implementación que ya usa la app) sigue pendiente y no bloquea este catálogo.
 
-**Hecho y validado con Edwin (sesión 15 oct):**
+**Siguiente paso único: catálogo maestro de costos logísticos.** Analizar cómo se configura cada ítem para que aplique según el Incoterm, el modo de envío y el destino. La fuente es Drive. Si ese costo no está en el catálogo, **Generar datos logísticos** lo deja como `[Estimado IA]`.
 
-- Globales en matriz: columna **`$ LOTE`**; `$ UNIT` = lote÷Q. El chat no debe copiar caja/flete a cada unidad del rango (REGLA C; `costos[]` de globales se ignora).
-- Troquelado por golpe **no** se infiere global; el dado/molde/setup sí.
-- Candado masivo por icono del encabezado.
-- AUX = clon de plantilla NAL/EXP, no tabla propia; clone antes de rellenar; AUX no rellena 3 rangos si solo hay uno; fuente Arial 8 del AIU no se pierde al clonar.
-- Anchos de columnas globales (`anchosMatriz`). Config remota manda; no mezclar `config.json` encima.
-- AIU: **Costo directo** mismo tamaño que + Imprevistos, mayúsculas, cifra en rojo (sin recuadro). Totales de tarjeta (Precio venta unitario / Total negocio) centrados y un poco más grandes.
-- PDF: “SIN IVA” solo en cotizaciones de Colombia.
-- **Etapa 2 Paso 1:** Incoterm + destino + cubicaje de ficha + fila Envío a mano. Totales partidos cuando hay envío. Persistido en `guardar_cotizacion` (sin GAS nuevo).
+Ya decidido, no volver a discutirlo:
 
-**Pendiente (no mezclar en el mismo hilo si se puede evitar):**
+- Hoja aparte de `Catalogo_Maestro` y de `Aranceles`. Sync en Ajustes → Logística. Carpeta `GD-Logistica\Cotizaciones expo-impo\Exportaciones`.
+- La matriz Incoterm × modalidad ya dice qué filas existen (origen, flete interno, flete principal, seguro, destino, courier; en nacional: envío, montaje, bodegaje, otro). El catálogo llena el valor de esas filas. No crea filas nuevas por cada cargo del proveedor.
+- Duties y Taxes no entran aquí. Salen de la hoja `Aranceles`.
+- El destino es el país de Odoo (nombre + código). El equipo (20', 40' o kg) y la vigencia salen de la oferta. Varios cargos del mismo concepto se suman en la fila única. «Al costo», «se confirmará» y «en caso de requerirse» no entran como cifra.
+- El margen de la ficha se suma después. Duties y Taxes no llevan margen.
+- No scrapear cotizadores nacionales.
 
-1. Edwin pega `backend.gs` en Apps Script si aún no lo hizo (`guardar_anchos_matriz`).
-2. **Paso 8 Etapa 1:** validar 3 PDF reales (membrete, textos, gran total según mercado, orden, nombre de archivo).
-3. Si Ajustes en Sheets se ve raro: **no pulsar Guardar**; el agente no debe `guardar_config`.
-4. Etapa 2: el chat de logística ya está en la pestaña (entrevista, Generar datos, modalidad sugerida). El catálogo de Drive no está conectado. Márgenes logísticos y partir el JSON del presupuesto siguen pendientes.
-
-**Nuevo chat:** *«Lee `CONTEXTO_PROYECTO.md` (checkpoint 16 oct 2026) y continúa desde ahí»* + la tarea concreta. No reabrir Excel, AUX, candados, OTP ni Ajustes salvo regresión.
+**No reabrir** salvo regresión: Excel AUX, candados, OTP, matriz AIU, renders con pin, comisión, descuento, IVA, aranceles, partidas.
 

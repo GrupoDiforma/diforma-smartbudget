@@ -340,6 +340,80 @@ function quitarComisionUI(btn) {
     btn.closest("tr")?.remove();
 }
 
+function htmlFilaPartida_(p) {
+    const f = p || { codigo: "", nombre: "" };
+    return "<tr>" +
+        "<td><input data-k=\"codigo\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.codigo || "") + "\" placeholder=\"9403.20.00.00\"></td>" +
+        "<td><input data-k=\"nombre\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.nombre || "") + "\"></td>" +
+        "<td><button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-pq=\"quitar\" title=\"Quitar\">Quitar</button></td></tr>";
+}
+
+function leerPartidasUI() {
+    const tbody = document.getElementById("partidasBody");
+    if (!tbody || !tbody.querySelector("[data-k=\"codigo\"]")) {
+        return typeof window.logListaPartidas === "function" ? window.logListaPartidas() : [];
+    }
+    const fmt = typeof window.logPartidaFmt === "function" ? window.logPartidaFmt : function (s) { return String(s || "").trim(); };
+    const vistos = {};
+    const out = [];
+    tbody.querySelectorAll("tr").forEach(function (tr) {
+        const codigo = fmt((tr.querySelector("[data-k=\"codigo\"]") || {}).value || "");
+        const nombre = String((tr.querySelector("[data-k=\"nombre\"]") || {}).value || "").trim();
+        const dig = codigo.replace(/\D/g, "");
+        if (dig.length < 6 || !nombre || vistos[codigo]) return;
+        vistos[codigo] = true;
+        out.push({ codigo: codigo, nombre: nombre.slice(0, 80) });
+    });
+    return out;
+}
+
+function partidasParaGuardar_() {
+    return leerPartidasUI().map(function (p) { return { codigo: p.codigo, nombre: p.nombre }; });
+}
+
+function pintarTablaPartidas() {
+    const tbody = document.getElementById("partidasBody");
+    if (!tbody || typeof window.logListaPartidas !== "function") return;
+    if (tbody.querySelector("[data-k=\"codigo\"]") && document.activeElement && tbody.contains(document.activeElement)) return;
+    const rows = window.logListaPartidas();
+    tbody.innerHTML = rows.length ? rows.map(htmlFilaPartida_).join("") : "<tr><td colspan=\"3\">Sin partidas. Agrega una o sincroniza el Excel.</td></tr>";
+    if (!tbody._pq) {
+        tbody._pq = true;
+        tbody.addEventListener("click", function (ev) {
+            const btn = ev.target.closest("[data-pq=\"quitar\"]");
+            if (!btn) return;
+            const tr = btn.closest("tr");
+            if (tr) tr.remove();
+            if (!tbody.querySelector("tr")) tbody.innerHTML = "<tr><td colspan=\"3\">Sin partidas. Agrega una o sincroniza el Excel.</td></tr>";
+        });
+    }
+}
+
+function agregarPartidaUI() {
+    const tbody = document.getElementById("partidasBody");
+    if (!tbody) return;
+    const vacio = tbody.querySelector("td[colspan]");
+    if (vacio) tbody.innerHTML = "";
+    tbody.insertAdjacentHTML("beforeend", htmlFilaPartida_({ codigo: "", nombre: "" }));
+    const inp = tbody.querySelector("tr:last-child [data-k=\"codigo\"]");
+    if (inp) inp.focus();
+}
+
+function fusionarPartidasDesdeArancel_() {
+    const tbody = document.getElementById("partidasBody");
+    if (!tbody || typeof window.logPartidasDesdeArancel !== "function") return;
+    const tienen = {};
+    tbody.querySelectorAll("[data-k=\"codigo\"]").forEach(function (el) {
+        const fmt = typeof window.logPartidaFmt === "function" ? window.logPartidaFmt(el.value) : el.value;
+        if (fmt) tienen[fmt] = true;
+    });
+    const nuevas = window.logPartidasDesdeArancel().filter(function (p) { return p.codigo && !tienen[p.codigo]; });
+    if (!nuevas.length) return;
+    const vacio = tbody.querySelector("td[colspan]");
+    if (vacio) tbody.innerHTML = "";
+    tbody.insertAdjacentHTML("beforeend", nuevas.map(htmlFilaPartida_).join(""));
+}
+
 async function cargarConfiguracionGlobal() {
     _configHojaOk = false;
     _configHojaFallo = false;
@@ -428,6 +502,7 @@ function abrirModalAdmin() {
     if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
     new bootstrap.Modal(document.getElementById('modalAdmin')).show();
     if (typeof refrescarEstadoCatalogo === "function") refrescarEstadoCatalogo();
+    if (typeof refrescarEstadoAranceles === "function") refrescarEstadoAranceles();
     if (typeof cargarTablaCatalogo === "function") cargarTablaCatalogo();
     if (typeof window.refrescarEstadoPlantillaExcel === "function") window.refrescarEstadoPlantillaExcel();
 }
@@ -466,6 +541,7 @@ function pintarFormularioAjustes_() {
     if (typeof pintarTablaUnidadesMatriz === "function") pintarTablaUnidadesMatriz();
     if (typeof pintarTablaTarifasFijas === "function") pintarTablaTarifasFijas();
     if (typeof pintarTablaComisiones === "function") pintarTablaComisiones();
+    if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
     if (typeof pintarEditorTyc === "function") pintarEditorTyc();
     if (typeof pintarEditorMembrete === "function") pintarEditorMembrete();
     const selUm = document.getElementById("catNuevoUm");
@@ -573,6 +649,187 @@ async function sincronizarCatalogoMaestroUI() {
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("Error sincronizando catálogo: " + e.message, "danger");
     } finally {
         detenerPollCatalogo();
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+}
+
+async function refrescarEstadoAranceles() {
+    const box = document.getElementById("arancelesEstadoBox");
+    if (!box || typeof realizarPeticionBD !== "function") return;
+    try {
+        const data = await realizarPeticionBD({ action: "aranceles_estado" });
+        if (!data.exito) throw new Error(data.mensaje || "Sin respuesta");
+        const d = data.data || {};
+        box.className = "admin-banner is-ok mb-3";
+        box.innerText = "Aranceles: " + (d.total || 0) + " filas" + (d.mensaje ? " · " + d.mensaje : "");
+        const cron = document.getElementById("btnCronAranceles");
+        if (cron) {
+            cron.innerHTML = d.cron7d ? "Desactivar sync cada 7 días" : "Activar sync cada 7 días";
+            cron.onclick = d.cron7d ? desactivarCronArancelesUI : activarCronArancelesUI;
+        }
+        await pintarTablaAranceles();
+    } catch (e) {
+        box.className = "admin-banner is-warn mb-3";
+        box.innerText = /Acci[oó]n no v[aá]lida/i.test(e.message || "")
+            ? "El web app publicado todavía no tiene esta sync. Pega backend.gs y publica una versión nueva."
+            : ("No se pudo leer aranceles. " + (e.message || ""));
+    }
+}
+
+function selBaseArancel_(val) {
+    const opts = [["", "—"], ["EXW", "EXW"], ["CIF", "CIF"], ["CIF+DUTY", "CIF + gravamen"]];
+    return opts.map(function (o) {
+        return "<option value=\"" + o[0] + "\"" + (val === o[0] ? " selected" : "") + ">" + o[1] + "</option>";
+    }).join("");
+}
+
+function htmlFilaArancel_(f) {
+    const pct = function (n) { return n == null || n === "" ? "" : n; };
+    return "<tr data-desc=\"" + escHtml(f.descripcion || "") + "\">" +
+        "<td><input data-k=\"pais\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.pais || "") + "\"></td>" +
+        "<td><input data-k=\"partida\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.partida || "") + "\"></td>" +
+        "<td><input data-k=\"dutiesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(f.dutiesPct) + "\"></td>" +
+        "<td><select data-k=\"dutiesBase\" class=\"form-select form-select-sm\">" + selBaseArancel_(f.dutiesBase || "") + "</select></td>" +
+        "<td><input data-k=\"taxesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(f.taxesPct) + "\"></td>" +
+        "<td><select data-k=\"taxesBase\" class=\"form-select form-select-sm\">" + selBaseArancel_(f.taxesBase || "") + "</select></td>" +
+        "<td><input data-k=\"nota\" class=\"form-control form-control-sm\" maxlength=\"400\" placeholder=\"Observación\" value=\"" + escHtml(f.nota || "") + "\"></td>" +
+        "<td><button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-ar=\"quitar\" title=\"Quitar\">Quitar</button></td></tr>";
+}
+
+function leerFilaArancelUi_(tr) {
+    const g = function (k) {
+        const el = tr.querySelector("[data-k=\"" + k + "\"]");
+        return el ? el.value : "";
+    };
+    return {
+        pais: g("pais"), partida: g("partida"),
+        dutiesPct: g("dutiesPct"), dutiesBase: g("dutiesBase"),
+        taxesPct: g("taxesPct"), taxesBase: g("taxesBase"),
+        nota: g("nota"),
+        descripcion: tr.getAttribute("data-desc") || ""
+    };
+}
+
+function leerArancelesUI() {
+    const body = document.getElementById("arancelesBody");
+    if (!body || body.getAttribute("data-cargada") !== "1") return null;
+    const filas = [];
+    body.querySelectorAll("tr").forEach(function (tr) {
+        if (!tr.querySelector("[data-k=\"pais\"]")) return;
+        const f = leerFilaArancelUi_(tr);
+        if (!String(f.pais || "").trim() && !String(f.partida || "").trim()) return;
+        filas.push(f);
+    });
+    return filas;
+}
+
+function arancelesMemoriaDesdeUi_() {
+    const filas = leerArancelesUI();
+    if (!filas || typeof logAranceles === "undefined") return;
+    logAranceles.filas = filas;
+    logAranceles.pedido = true;
+}
+
+function pintarTablaAranceles() {
+    const body = document.getElementById("arancelesBody");
+    if (!body || typeof realizarPeticionBD !== "function") return;
+    if (body.getAttribute("data-cargada") === "1" && document.activeElement && body.contains(document.activeElement)) return;
+    if (!body._arClick) {
+        body._arClick = true;
+        body.addEventListener("click", function (ev) {
+            const btn = ev.target.closest("[data-ar=\"quitar\"]");
+            if (!btn) return;
+            const tr = btn.closest("tr");
+            if (tr) tr.remove();
+            if (!body.querySelector("[data-k=\"pais\"]")) {
+                body.innerHTML = "<tr><td colspan=\"8\">Sin filas. Agrega una o sincroniza desde Drive.</td></tr>";
+            }
+            arancelesMemoriaDesdeUi_();
+        });
+        body.addEventListener("change", arancelesMemoriaDesdeUi_);
+    }
+    return realizarPeticionBD({ action: "aranceles_consultar" }).then(function (data) {
+        const filas = (data && data.exito && data.data && data.data.filas) || [];
+        body.setAttribute("data-cargada", "1");
+        body.innerHTML = filas.length
+            ? filas.map(htmlFilaArancel_).join("")
+            : "<tr><td colspan=\"8\">Sin filas. Agrega una o sincroniza desde Drive.</td></tr>";
+        if (typeof logAranceles !== "undefined") {
+            logAranceles.filas = filas;
+            logAranceles.pedido = true;
+        }
+        if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
+    }).catch(function () {
+        body.innerHTML = "<tr><td colspan=\"8\">No se pudo leer la hoja Aranceles.</td></tr>";
+    });
+}
+
+function agregarFilaArancelUI() {
+    const body = document.getElementById("arancelesBody");
+    if (!body) return;
+    body.setAttribute("data-cargada", "1");
+    const vacio = body.querySelector("td[colspan]");
+    if (vacio) body.innerHTML = "";
+    body.insertAdjacentHTML("beforeend", htmlFilaArancel_({}));
+    const inp = body.querySelector("tr:last-child [data-k=\"pais\"]");
+    if (inp) inp.focus();
+}
+
+async function guardarArancelesConAjustes_() {
+    const filas = leerArancelesUI();
+    if (!filas) return true;
+    const email = localStorage.getItem("smartbudget_email");
+    const data = await realizarPeticionBD({ action: "aranceles_reemplazar", email: email, filas: filas }, { timeoutMs: 60000 });
+    if (!data || !data.exito) throw new Error((data && data.mensaje) || "No se guardaron los aranceles.");
+    if (typeof logAranceles !== "undefined") {
+        logAranceles.filas = filas;
+        logAranceles.pedido = true;
+    }
+    return true;
+}
+
+async function activarCronArancelesUI() {
+    const email = localStorage.getItem("smartbudget_email");
+    try {
+        const data = await realizarPeticionBD({ action: "aranceles_activar_cron", email: email });
+        if (!data.exito) throw new Error(data.mensaje);
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(data.mensaje, "success");
+        await refrescarEstadoAranceles();
+    } catch (e) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(e.message, "danger");
+    }
+}
+
+async function desactivarCronArancelesUI() {
+    const email = localStorage.getItem("smartbudget_email");
+    try {
+        const data = await realizarPeticionBD({ action: "aranceles_desactivar_cron", email: email });
+        if (!data.exito) throw new Error(data.mensaje);
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(data.mensaje, "success");
+        await refrescarEstadoAranceles();
+    } catch (e) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(e.message, "danger");
+    }
+}
+
+async function sincronizarArancelesUI() {
+    const email = localStorage.getItem("smartbudget_email");
+    const btn = document.getElementById("btnSyncAranceles");
+    const original = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sincronizando...'; }
+    try {
+        const data = await realizarPeticionBD({ action: "aranceles_sincronizar", email: email }, { timeoutMs: 120000 });
+        if (!data.exito) throw new Error(data.mensaje || "Sin respuesta");
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(data.mensaje, "success");
+        await refrescarEstadoAranceles();
+        if (typeof fusionarPartidasDesdeArancel_ === "function") fusionarPartidasDesdeArancel_();
+        if (typeof logCargarAranceles_ === "function") logCargarAranceles_();
+    } catch (e) {
+        const m = /Acci[oó]n no v[aá]lida/i.test(e.message || "")
+            ? "El web app publicado todavía no tiene esta sync. Pega backend.gs y publica una versión nueva."
+            : ("Error sincronizando aranceles: " + e.message);
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(m, "danger");
+    } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
 }
@@ -1241,6 +1498,7 @@ async function guardarConfiguracion() {
         geminiUsdPor1MIn: getVal('cfgGeminiUsdIn') || 1.25,
         geminiUsdPor1MOut: getVal('cfgGeminiUsdOut') || 10,
         comisiones: JSON.stringify((typeof leerComisionesUI === "function") ? leerComisionesUI() : []),
+        partidas: JSON.stringify(partidasParaGuardar_()),
         diasVigencia: { materiales: getVal('cfgDiasVigMat') || 180, procesos: getVal('cfgDiasVigProc') || 90 },
         operativos: { topeFab: getVal('cfgTopeOpFab'), topeCom: getVal('cfgTopeOpCom'), impFab: { max: getVal('cfgImpFabMax'), min: getVal('cfgImpFabMin') }, indFab: { max: getVal('cfgIndFabMax'), min: getVal('cfgIndFabMin') }, indCom: { max: getVal('cfgIndComMax'), min: getVal('cfgIndComMin') } },
         utilidadNal: { fab: { tope: getVal('n_fabTope'), max: getVal('n_fabMax'), min: getVal('n_fabMin') }, com: { tope: getVal('n_comTope'), max: getVal('n_comMax'), min: getVal('n_comMin') } },
@@ -1252,6 +1510,13 @@ async function guardarConfiguracion() {
     
     if(typeof mostrarNotificacion === "function") mostrarNotificacion("Sincronizando configuración...", "info");
     try {
+        try { await guardarArancelesConAjustes_(); }
+        catch (eAr) {
+            const m = /Acci[oó]n no v[aá]lida/i.test(eAr.message || "")
+                ? "Los aranceles no se guardaron: publica backend.gs (versión nueva de la misma implementación) y vuelve a pulsar Guardar."
+                : ("Aranceles: " + eAr.message);
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion(m, "danger");
+        }
         const res = await fetch(CONFIG_GLOBAL.gasUrl, { method: 'POST', body: JSON.stringify({ action: 'guardar_config', payload: data, email: email, authKey: token }) });
         const resData = await res.json();
         if (resData.exito) {

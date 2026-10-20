@@ -631,7 +631,8 @@ function fichaComercialVacia() {
         empAlto: "",
         empUnd: "",
         empPeso: "",
-        um: umFichaActual()
+        um: umFichaActual(),
+        partida: ""
     };
 }
 
@@ -653,7 +654,8 @@ function leerFichaComercialUI() {
         empAlto: n("fichaEmpAlto"),
         empUnd: n("fichaEmpUnd"),
         empPeso: n("fichaEmpPeso"),
-        um: umFichaActual()
+        um: umFichaActual(),
+        partida: n("fichaPartida")
     };
 }
 
@@ -686,6 +688,8 @@ function pintarFichaComercial(ficha) {
     set("fichaEmpAlto", ficha.empAlto);
     set("fichaEmpUnd", ficha.empUnd);
     set("fichaEmpPeso", ficha.empPeso);
+    if (typeof window.logPintarSelectPartida === "function") window.logPintarSelectPartida(ficha.partida);
+    else set("fichaPartida", ficha.partida);
     pintarLocaleProyecto();
 }
 
@@ -727,7 +731,8 @@ function aplicarFichaComercial(ficha, opts) {
         empAlto: pick(emp.alto, src.empAlto, cur.empAlto),
         empUnd: pick(emp.unidades, emp.und, emp.und_por_caja, emp.unidadesPorCaja, emp.qty, src.empUnd, src.undPorCaja, cur.empUnd),
         empPeso: pick(emp.peso, emp.weight, emp.peso_caja, src.empPeso, cur.empPeso),
-        um: umFichaActual()
+        um: umFichaActual(),
+        partida: (typeof window.logPartidaFmt === "function" ? window.logPartidaFmt(pick(src.partida, cur.partida)) : pick(src.partida, cur.partida))
     });
     if (!opts.silencio && typeof programarGuardarSesion === "function") programarGuardarSesion();
 }
@@ -751,36 +756,71 @@ function aplicarMercado(tipo) {
 
 function abrirModalOdooMateriales() { new bootstrap.Modal(document.getElementById('modalOdooMateriales')).show(); }
 
+function aplicarImportacionOdoo_(rec, cod) {
+    window._importOdooPendiente = null;
+    if (typeof ocultarAvisoCodigoGuardado === "function") ocultarAvisoCodigoGuardado();
+    const tipo = (rec.pricelist_id && rec.pricelist_id[1] && rec.pricelist_id[1].toLowerCase().includes("usd")) ? "EXPORTACION" : "NACIONAL";
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+
+    setVal('noProyecto', rec.name || cod);
+    setVal('cliente', rec.partner_id ? rec.partner_id[1] : '');
+    setVal('fecha', rec.create_date ? rec.create_date.substring(0, 10) : '');
+    setVal('comercial', rec.id_vendedor ? rec.id_vendedor[1] : (rec.user_id ? rec.user_id[1] : ''));
+    setVal('disenador', rec.id_disenador ? rec.id_disenador[1] : '');
+    setVal('analista', rec.id_presupuestador ? rec.id_presupuestador[1] : '');
+
+    if (typeof aplicarMercado === "function") aplicarMercado(tipo);
+    if (typeof window.limpiarMesaDeTrabajo === "function") window.limpiarMesaDeTrabajo();
+    window.odooPistas = pistasBriefOdoo(rec);
+    aplicarLocaleProyecto(mapearLocaleOdoo(rec), { silencio: true });
+    pintarFichaComercial(fichaComercialVacia());
+    window.cargarImagenOdooEnVisor(); /* la imagen del proyecto queda en el visor y se reutiliza en la cotización */
+    const loc = localeProyectoActual();
+    const um = loc.sistema === "imperial" ? "in" : "cm";
+    const idiomaTxt = loc.idioma === "en" ? "English" : "Español";
+    mostrarAlertaOdoo("¡Proyecto importado! " + idiomaTxt + " · " + (loc.etiquetaMedida || um) + (loc.pais ? " · " + loc.pais : ""), "success");
+}
+
+function confirmarImportOdooDesdeCero() {
+    const p = window._importOdooPendiente;
+    if (!p || !p.rec) return;
+    aplicarImportacionOdoo_(p.rec, p.cod);
+}
+
+function abrirProyectoGuardadoDesdeBusqueda() {
+    const p = window._importOdooPendiente;
+    const id = p && p.idGuardado;
+    if (!id || typeof cargarProyectoBD !== "function") return;
+    window._importOdooPendiente = null;
+    if (typeof ocultarAvisoCodigoGuardado === "function") ocultarAvisoCodigoGuardado();
+    cargarProyectoBD(id);
+}
+
 async function buscarProyectoOdooServerless() {
     const cod = document.getElementById('inputCodigo')?.value.trim();
     if(!cod) return mostrarAlertaOdoo("Ingresa código.", "warning");
     mostrarAlertaOdoo("Conectando con Servidor...", "info", true);
+    if (typeof ocultarAvisoCodigoGuardado === "function") ocultarAvisoCodigoGuardado();
     try {
-        const data = await realizarPeticionBD({ action: 'odoo_buscar', codigo: cod }, { timeoutMs: 75000 });
+        const dataP = realizarPeticionBD({ action: 'odoo_buscar', codigo: cod }, { timeoutMs: 75000 });
+        const listaP = typeof listaHistorialCostos_ === "function"
+            ? listaHistorialCostos_()
+            : Promise.resolve({ filas: [], origen: "desconocido" });
+        const data = await dataP;
         if(!data.exito) throw new Error(data.mensaje);
         const rec = data.data;
-        let tipo = (rec.pricelist_id && rec.pricelist_id[1] && rec.pricelist_id[1].toLowerCase().includes("usd")) ? "EXPORTACION" : "NACIONAL";
-        
-        // Asignación segura en el DOM
-        const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
-        
-        setVal('noProyecto', rec.name || cod);
-        setVal('cliente', rec.partner_id ? rec.partner_id[1] : '');
-        setVal('fecha', rec.create_date ? rec.create_date.substring(0, 10) : '');
-        setVal('comercial', rec.id_vendedor ? rec.id_vendedor[1] : (rec.user_id ? rec.user_id[1] : ''));
-        setVal('disenador', rec.id_disenador ? rec.id_disenador[1] : '');
-        setVal('analista', rec.id_presupuestador ? rec.id_presupuestador[1] : '');
-
-        if (typeof aplicarMercado === "function") aplicarMercado(tipo);
-        if (typeof window.limpiarMesaDeTrabajo === "function") window.limpiarMesaDeTrabajo();
-        window.odooPistas = pistasBriefOdoo(rec);
-        aplicarLocaleProyecto(mapearLocaleOdoo(rec), { silencio: true });
-        pintarFichaComercial(fichaComercialVacia());
-        window.cargarImagenOdooEnVisor(); /* la imagen del proyecto queda en el visor y se reutiliza en la cotización */
-        const loc = localeProyectoActual();
-        const um = loc.sistema === "imperial" ? "in" : "cm";
-        const idiomaTxt = loc.idioma === "en" ? "English" : "Español";
-        mostrarAlertaOdoo("¡Proyecto importado! " + idiomaTxt + " · " + (loc.etiquetaMedida || um) + (loc.pais ? " · " + loc.pais : ""), "success");
+        let lista = { filas: [], origen: "desconocido" };
+        try { lista = await listaP; } catch (e) { lista = { filas: [], origen: "desconocido" }; }
+        const guardado = typeof proyectoGuardadoPorCodigo_ === "function"
+            ? proyectoGuardadoPorCodigo_(lista.filas, cod)
+            : null;
+        const inseguro = lista.origen !== "nube";
+        if (guardado || inseguro) {
+            window._importOdooPendiente = { rec: rec, cod: cod, idGuardado: guardado ? String(guardado.id || guardado.noProyecto || "") : "" };
+            if (typeof mostrarAvisoProyectoGuardado === "function") mostrarAvisoProyectoGuardado(guardado, cod, inseguro && !!guardado);
+            return;
+        }
+        aplicarImportacionOdoo_(rec, cod);
     } catch(e) { mostrarAlertaOdoo("Error: " + e.message, "danger"); }
 }
 

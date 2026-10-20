@@ -66,6 +66,15 @@ function doPost(e) {
     else if (action === "catalogo_sincronizar_odoo") result = sincronizarCatalogoOdoo(params.email);
     else if (action === "plantilla_xlsx_guardar") result = guardarPlantillaXlsx(params);
     else if (action === "plantilla_xlsx_obtener") result = obtenerPlantillaXlsx(params);
+    else if (action === "aranceles_sincronizar") result = sincronizarAranceles(params.email);
+    else if (action === "aranceles_consultar") result = consultarAranceles();
+    else if (action === "aranceles_estado") result = estadoAranceles();
+    else if (action === "aranceles_reemplazar") result = reemplazarAranceles(params, params.email);
+    else if (action === "aranceles_guardar") result = guardarFilaArancel(params, params.email);
+    else if (action === "aranceles_eliminar") result = eliminarFilaArancel(params, params.email);
+    else if (action === "aranceles_duplicar") result = duplicarFilaArancel(params, params.email);
+    else if (action === "aranceles_activar_cron") result = asegurarTriggerAranceles(params.email);
+    else if (action === "aranceles_desactivar_cron") result = desactivarTriggerAranceles(params.email);
 
     return outputJSON(result);
   } catch (err) {
@@ -1269,12 +1278,18 @@ function textosXml_(el) {
   return acc.join("");
 }
 
-function extraerMatrizXlsx_(file) {
-  var blob = file.getBlob().copyBlob();
+function grillasXlsx_(file) {
+  var mime = "";
+  try { mime = file.getMimeType() || ""; } catch (eM) { mime = ""; }
+  var blob = mime.indexOf("google-apps.spreadsheet") >= 0
+    ? UrlFetchApp.fetch("https://www.googleapis.com/drive/v3/files/" + file.getId() + "/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", {
+        headers: { Authorization: "Bearer " + tokenDrive_() }, muteHttpExceptions: true
+      }).getBlob()
+    : file.getBlob().copyBlob();
   blob.setContentType("application/zip");
   var parts = Utilities.unzip(blob);
   var shared = [];
-  var sheetXmls = [];
+  var hojas = [];
   for (var i = 0; i < parts.length; i++) {
     var n = String(parts[i].getName() || "").replace(/\\/g, "/");
     if (/sharedStrings\.xml$/i.test(n)) {
@@ -1282,19 +1297,24 @@ function extraerMatrizXlsx_(file) {
       var sis = docS.getRootElement().getChildren();
       for (var si = 0; si < sis.length; si++) {
         if (String(sis[si].getName()).toLowerCase() === "si") shared.push(textosXml_(sis[si]));
-        else if (sis[si].getName() === "si") shared.push(textosXml_(sis[si]));
       }
       if (!shared.length) {
-        var ns = docS.getRootElement().getNamespace();
-        var siNs = docS.getRootElement().getChildren("si", ns);
+        var nsS = docS.getRootElement().getNamespace();
+        var siNs = docS.getRootElement().getChildren("si", nsS);
         for (var j = 0; j < siNs.length; j++) shared.push(textosXml_(siNs[j]));
       }
     }
-    if (/worksheets\/sheet\d+\.xml$/i.test(n)) sheetXmls.push(parts[i].getDataAsString());
+    if (/worksheets\/sheet\d+\.xml$/i.test(n)) hojas.push({ nombre: n, xml: parts[i].getDataAsString() });
   }
+  hojas.sort(function (a, b) {
+    var na = parseInt((a.nombre.match(/sheet(\d+)/i) || [])[1] || "0", 10);
+    var nb = parseInt((b.nombre.match(/sheet(\d+)/i) || [])[1] || "0", 10);
+    return na - nb;
+  });
+  var nombres = nombresHojasXlsx_(parts);
   var valoresTodos = [];
-  for (var s = 0; s < Math.min(sheetXmls.length, 6); s++) {
-    var doc = XmlService.parse(sheetXmls[s]);
+  for (var s = 0; s < hojas.length; s++) {
+    var doc = XmlService.parse(hojas[s].xml);
     var root = doc.getRootElement();
     var ns = root.getNamespace();
     var sheetData = root.getChild("sheetData", ns) || root.getChild("sheetData");
@@ -1321,11 +1341,59 @@ function extraerMatrizXlsx_(file) {
       }
       grid.push(line);
     }
-    if (grid.length) valoresTodos.push(grid);
+    if (grid.length) valoresTodos.push({ nombre: nombres[hojas[s].nombre] || "", grid: grid });
   }
+  return valoresTodos;
+}
+
+function nombresHojasXlsx_(parts) {
+  var porId = {};
+  var out = {};
+  for (var i = 0; i < parts.length; i++) {
+    var n = String(parts[i].getName() || "").replace(/\\/g, "/");
+    if (!/workbook\.xml\.rels$/i.test(n)) continue;
+    var doc = XmlService.parse(parts[i].getDataAsString());
+    var rels = doc.getRootElement().getChildren();
+    for (var r = 0; r < rels.length; r++) {
+      var idA = rels[r].getAttribute("Id");
+      var tgt = rels[r].getAttribute("Target");
+      if (!idA || !tgt) continue;
+      var ruta = String(tgt.getValue() || "").replace(/\\/g, "/");
+      var m = ruta.match(/sheet\d+\.xml/i);
+      if (m) porId[idA.getValue()] = "xl/worksheets/" + m[0];
+    }
+  }
+  for (var j = 0; j < parts.length; j++) {
+    var nj = String(parts[j].getName() || "").replace(/\\/g, "/");
+    if (!/xl\/workbook\.xml$/i.test(nj)) continue;
+    var docW = XmlService.parse(parts[j].getDataAsString());
+    var root = docW.getRootElement();
+    var ns = root.getNamespace();
+    var sheets = root.getChild("sheets", ns) || root.getChild("sheets");
+    if (!sheets) return out;
+    var lista = sheets.getChildren("sheet", ns);
+    if (!lista.length) lista = sheets.getChildren("sheet");
+    for (var s = 0; s < lista.length; s++) {
+      var attr = lista[s].getAttribute("name");
+      var rid = lista[s].getAttribute("id", XmlService.getNamespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"));
+      if (!rid) {
+        var attrs = lista[s].getAttributes();
+        for (var a = 0; a < attrs.length; a++) {
+          if (String(attrs[a].getName() || "").toLowerCase() === "id") rid = attrs[a];
+        }
+      }
+      var rutaHoja = rid ? porId[rid.getValue()] : "";
+      if (rutaHoja) out[rutaHoja] = attr ? attr.getValue() : "";
+    }
+  }
+  return out;
+}
+
+function extraerMatrizXlsx_(file) {
+  var valoresTodos = grillasXlsx_(file);
   var out = [];
-  for (var g = 0; g < valoresTodos.length; g++) {
-    var filas = extraerFilasDeValores_(valoresTodos[g]);
+  for (var g = 0; g < Math.min(valoresTodos.length, 6); g++) {
+    var filas = extraerFilasDeValores_(valoresTodos[g].grid);
     for (var k = 0; k < filas.length && out.length < 2000; k++) out.push(filas[k]);
   }
   return out;
@@ -2513,4 +2581,551 @@ function eliminarRegistroHistorico(id) {
     }
   }
   return { exito: false, mensaje: "No encontrado." };
+}
+
+// ==========================================
+// ARANCELES (Duties y Taxes) ← un Excel en Drive
+// Hoja Aranceles. El id del archivo queda solo en propiedades del script.
+// ==========================================
+function archivoPorNombreDrive_(nombre) {
+  var q = "name = '" + String(nombre).replace(/'/g, "\\'") + "' and trashed = false";
+  var url = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) +
+    "&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&fields=files(id,name)&pageSize=5";
+  var res = UrlFetchApp.fetch(url, {
+    headers: { Authorization: "Bearer " + tokenDrive_() },
+    muteHttpExceptions: true
+  });
+  var json = {};
+  try { json = JSON.parse(res.getContentText() || "{}"); } catch (eJ) { json = {}; }
+  var files = json.files || [];
+  if (files.length && files[0].id) return DriveApp.getFileById(files[0].id);
+  var it = DriveApp.getFilesByName(nombre);
+  return it.hasNext() ? it.next() : null;
+}
+
+function archivoAranceles_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("DRIVE_ARANCELES_FILE_ID") || "";
+  var guardado = null;
+  if (id) {
+    try { guardado = DriveApp.getFileById(id); } catch (eId) {
+      props.deleteProperty("DRIVE_ARANCELES_FILE_ID");
+    }
+  }
+  if (!(guardado && /listado/i.test(guardado.getName()))) {
+    var listado = archivoPorNombreDrive_("Impuestos y aranceles_listado.xlsx");
+    if (listado) {
+      props.setProperty("DRIVE_ARANCELES_FILE_ID", listado.getId());
+      return listado;
+    }
+  }
+  if (guardado) return guardado;
+  var nombre = "Impuestos y aranceles.xlsx";
+  var q = "name = '" + nombre + "' and trashed = false";
+  var url = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) +
+    "&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&fields=files(id,name)&pageSize=5";
+  var res = UrlFetchApp.fetch(url, {
+    headers: { Authorization: "Bearer " + tokenDrive_() },
+    muteHttpExceptions: true
+  });
+  var json = {};
+  try { json = JSON.parse(res.getContentText() || "{}"); } catch (eJ) { json = {}; }
+  var files = json.files || [];
+  if (files.length && files[0].id) {
+    props.setProperty("DRIVE_ARANCELES_FILE_ID", files[0].id);
+    return DriveApp.getFileById(files[0].id);
+  }
+  var it = DriveApp.getFilesByName(nombre);
+  if (it.hasNext()) {
+    var f = it.next();
+    props.setProperty("DRIVE_ARANCELES_FILE_ID", f.getId());
+    return f;
+  }
+  var det = (json.error && json.error.message) ? json.error.message : "";
+  throw new Error("No encontré Impuestos y aranceles.xlsx en Drive. El script no crea carpetas." + (det ? " " + det : ""));
+}
+
+function txtArancel_(s) {
+  return String(s || "").toLowerCase()
+    .replace(/á/g, "a").replace(/é/g, "e").replace(/í/g, "i").replace(/ó/g, "o").replace(/ú/g, "u").replace(/ñ/g, "n")
+    .replace(/%/g, "").replace(/\s+/g, " ").trim();
+}
+
+function colArancel_(header, claves, exacto) {
+  for (var c = 0; c < header.length; c++) {
+    var h = txtArancel_(header[c]);
+    if (!h || /usuario|user|clave|password|contrasena/.test(h)) continue;
+    for (var k = 0; k < claves.length; k++) {
+      if (exacto ? h === claves[k] : (h === claves[k] || h.indexOf(claves[k]) === 0)) return c;
+    }
+  }
+  return -1;
+}
+
+function pctArancel_(raw) {
+  if (raw == null || raw === "") return null;
+  var s = String(raw).trim();
+  if (!s || /^(n\/a|na|—|-)$/i.test(s)) return null;
+  if (!/[0-9]/.test(s)) return null;
+  var tiene = s.indexOf("%") >= 0;
+  var n = parseFloat(s.replace(/%/g, "").replace(/\s/g, "").replace(",", "."));
+  if (!isFinite(n)) return null;
+  if (!tiene && n > 0 && n <= 1) n = n * 100;
+  return Math.round(n * 1000) / 1000;
+}
+
+function baseArancel_(raw) {
+  var s = txtArancel_(raw);
+  if (!s) return "";
+  if (s.indexOf("cif") >= 0) return "CIF";
+  if (s.indexOf("exw") >= 0 || s.indexOf("ex work") >= 0) return "EXW";
+  return "";
+}
+
+function filaCredencialArancel_(line) {
+  var email = false;
+  var secreto = false;
+  for (var i = 0; i < line.length; i++) {
+    var t = txtArancel_(line[i]);
+    if (!t) continue;
+    if (t.indexOf("@") >= 0) email = true;
+    if (/^(usuario|user|clave|password|contrasena)$/.test(t)) return true;
+    if (/clave|password|contrasena/.test(t)) secreto = true;
+  }
+  return email && secreto;
+}
+
+function esEncabezadoTablaArancel_(line) {
+  var blob = txtArancel_((line || []).join(" "));
+  return blob.indexOf("partida") >= 0 && (blob.indexOf("duty") >= 0 || blob.indexOf("gravamen") >= 0);
+}
+
+function colTextoArancel_(line, re) {
+  for (var i = 0; i < (line || []).length; i++) {
+    if (re.test(txtArancel_(line[i]))) return i;
+  }
+  return -1;
+}
+
+function codigoPaisArancel_(pais) {
+  var t = txtArancel_(pais);
+  var map = {
+    "usa": "US", "eeuu": "US", "estados unidos": "US", "united states": "US",
+    "puerto rico": "PR", "mexico": "MX", "canada": "CA", "colombia": "CO",
+    "jamaica": "JM", "venezuela": "VE", "argentina": "AR", "bolivia": "BO",
+    "paraguay": "PY", "brasil": "BR", "brazil": "BR", "barbados": "BB",
+    "trinidad y tobago": "TT", "curazao": "CW", "guadalupe": "GP",
+    "martinica": "MQ", "guayana francesa": "GF",
+    "ecuador": "EC", "peru": "PE", "chile": "CL", "espana": "ES", "spain": "ES",
+    "panama": "PA", "costa rica": "CR", "guatemala": "GT", "el salvador": "SV",
+    "honduras": "HN", "nicaragua": "NI", "republica dominicana": "DO",
+    "reino unido": "GB", "uk": "GB", "united kingdom": "GB",
+    "alemania": "DE", "francia": "FR", "italia": "IT", "portugal": "PT"
+  };
+  return map[t] || "";
+}
+
+function paisDeTablaArancel_(grid, head) {
+  for (var r = head - 1; r >= Math.max(0, head - 4); r--) {
+    var line = grid[r] || [];
+    if (filaCredencialArancel_(line) || esEncabezadoTablaArancel_(line)) continue;
+    for (var c = 0; c < line.length; c++) {
+      var raw = String(line[c] || "").trim();
+      var t = txtArancel_(raw);
+      if (!t || t.length > 40) continue;
+      if (t.indexOf("http") >= 0 || t.indexOf("@") >= 0) continue;
+      if (/descripcion|partida|gravamen|duty|iva|ivu|vat|impuesto/.test(t)) continue;
+      if (/valor inferior|importador|courier|nota/.test(t)) continue;
+      return raw;
+    }
+  }
+  return "";
+}
+
+function tasaCeldaArancel_(raw) {
+  var s = String(raw == null ? "" : raw).trim();
+  var t = txtArancel_(s);
+  if (!t || /^(n\/a|na|n a|—|-)$/.test(t)) return { pct: null, base: "", compuesto: false, texto: "" };
+  if (t === "free" || t === "libre") return { pct: 0, base: "", compuesto: false, texto: "" };
+  var nums = s.match(/\d+(?:[.,]\d+)?\s*(?=%|por ciento)/gi) || [];
+  if (!nums.length && /^\d+(?:[.,]\d+)?$/.test(t)) nums = [t];
+  if (!nums.length) return { pct: null, base: "", compuesto: false, texto: "" };
+  var pct = 0;
+  for (var i = 0; i < nums.length; i++) pct += parseFloat(String(nums[i]).replace(/\s/g, "").replace("%", "").replace(",", "."));
+  if (!isFinite(pct)) return { pct: null, base: "", compuesto: false, texto: "" };
+  var base = "";
+  if (/cif/.test(t) && /gravamen|duty/.test(t)) base = "CIF+DUTY";
+  else if (/cif/.test(t)) base = "CIF";
+  else if (/exw|ex work/.test(t)) base = "EXW";
+  return { pct: Math.round(pct * 1000) / 1000, base: base, compuesto: nums.length > 1, texto: s.replace(/https?:\/\/\S+/gi, "").trim().slice(0, 80) };
+}
+
+function notaLimpiaArancel_(s) {
+  var t = String(s || "").replace(/https?:\/\/\S+/gi, "").replace(/\s+/g, " ").trim();
+  if (!t || t.indexOf("@") >= 0) return "";
+  return t.slice(0, 180);
+}
+
+function baseListaArancel_(raw) {
+  var t = txtArancel_(raw);
+  if (!t) return "";
+  if (t.indexOf("cif") >= 0 && (t.indexOf("gravamen") >= 0 || t.indexOf("duty") >= 0)) return "CIF+DUTY";
+  if (t.indexOf("cif") >= 0) return "CIF";
+  if (t.indexOf("exw") >= 0) return "EXW";
+  return "";
+}
+
+function filasListadoArancel_(grid) {
+  var h = (grid && grid[0]) || [];
+  var blob = txtArancel_(h.join(" "));
+  if (blob.indexOf("pais") < 0 || blob.indexOf("partida") < 0 || blob.indexOf("duty") < 0) return null;
+  var cPais = colTextoArancel_(h, /^pais\b/);
+  var cDesc = colTextoArancel_(h, /descripcion/);
+  var cPar = colTextoArancel_(h, /partida/);
+  var cDu = colTextoArancel_(h, /duties/);
+  var cBd = colTextoArancel_(h, /base duty/);
+  var cTx = colTextoArancel_(h, /taxes/);
+  var cBt = colTextoArancel_(h, /base tax/);
+  var cNota = colTextoArancel_(h, /^nota$/);
+  var cRev = colTextoArancel_(h, /revisar/);
+  var out = [];
+  for (var r = 1; r < grid.length; r++) {
+    var line = grid[r] || [];
+    if (filaCredencialArancel_(line)) continue;
+    var pais = cPais >= 0 ? String(line[cPais] || "").trim() : "";
+    var partida = cPar >= 0 ? String(line[cPar] || "").trim() : "";
+    if (!pais && partida.replace(/\D/g, "").length < 6) continue;
+    if (!pais && !partida) continue;
+    var du = cDu >= 0 ? pctArancel_(line[cDu]) : null;
+    var tx = cTx >= 0 ? pctArancel_(line[cTx]) : null;
+    var db = baseListaArancel_(cBd >= 0 ? line[cBd] : "");
+    var tb = baseListaArancel_(cBt >= 0 ? line[cBt] : "");
+    var revisar = /^s[ií]$/i.test(String(cRev >= 0 ? line[cRev] : "").trim()) ? "S" : "N";
+    if ((du > 0 && !db) || (tx > 0 && !tb)) revisar = "S";
+    out.push({
+      pais: pais, codigo: codigoPaisArancel_(pais), partida: partida,
+      descripcion: cDesc >= 0 ? String(line[cDesc] || "").trim().slice(0, 80) : "",
+      dutiesPct: du, dutiesBase: du != null ? db : "",
+      taxesPct: tx, taxesBase: tx != null ? tb : "",
+      nota: notaLimpiaArancel_(cNota >= 0 ? line[cNota] : ""),
+      revisar: revisar
+    });
+  }
+  return { filas: out, omitidas: 0 };
+}
+
+function filasArancelDeGrilla_(hoja) {
+  var grid = hoja.grid || [];
+  var plano = filasListadoArancel_(grid);
+  if (plano) return plano;
+  var out = [];
+  var omitidas = 0;
+  for (var head = 0; head < grid.length; head++) {
+    var h = grid[head] || [];
+    if (filaCredencialArancel_(h)) { omitidas++; continue; }
+    if (!esEncabezadoTablaArancel_(h)) continue;
+    var cPar = colTextoArancel_(h, /partida/);
+    var cDu = colTextoArancel_(h, /gravamen|\bduty\b/);
+    var cTx = cDu >= 0 ? cDu + 1 : -1;
+    if (cTx >= 0 && !/iva|ivu|vat|gst|tax|impuesto/.test(txtArancel_(h[cTx]))) cTx = colTextoArancel_(h, /iva|ivu|vat|gst|\btax\b|impuesto/);
+    var pais = paisDeTablaArancel_(grid, head);
+    var codigo = codigoPaisArancel_(pais);
+    var filasTabla = [];
+    var notas = [];
+    var vacios = 0;
+    var r = head + 1;
+    for (r = head + 1; r < grid.length; r++) {
+      var line = grid[r] || [];
+      if (esEncabezadoTablaArancel_(line)) break;
+      if (filaCredencialArancel_(line)) { omitidas++; continue; }
+      if (!String(line.join("") || "").trim()) {
+        vacios++;
+        if (vacios >= 3) break;
+        continue;
+      }
+      vacios = 0;
+      var partida = cPar >= 0 ? String(line[cPar] || "").trim() : "";
+      var digitos = partida.replace(/\D/g, "");
+      if (digitos.length < 6) {
+        var suelta = notaLimpiaArancel_(line.join(" "));
+        if (suelta && /valor inferior|importador|courier|no paga|duties|tax|ivu|iva/.test(txtArancel_(suelta))) notas.push(suelta);
+        continue;
+      }
+      var duty = cDu >= 0 ? tasaCeldaArancel_(line[cDu]) : { pct: null, base: "", compuesto: false, texto: "" };
+      var tax = cTx >= 0 ? tasaCeldaArancel_(line[cTx]) : { pct: null, base: "", compuesto: false, texto: "" };
+      if (duty.pct == null && tax.pct == null) continue;
+      var faltaBase = function (tasa) { return tasa.pct > 0 && !tasa.base; };
+      var revisar = (faltaBase(duty) || faltaBase(tax) || duty.compuesto || tax.compuesto) ? "S" : "N";
+      var extra = [];
+      if (duty.compuesto && duty.texto) extra.push("Duty " + duty.texto);
+      if (tax.compuesto && tax.texto) extra.push("Tax " + tax.texto);
+      filasTabla.push({
+        pais: pais, codigo: codigo, partida: partida,
+        dutiesPct: duty.pct, dutiesBase: duty.pct != null ? duty.base : "",
+        taxesPct: tax.pct, taxesBase: tax.pct != null ? tax.base : "",
+        nota: extra.join(". ").slice(0, 180), revisar: revisar
+      });
+    }
+    var pie = notas.join(". ").slice(0, 180);
+    var esPr = codigo === "PR" || txtArancel_(pais).indexOf("puerto rico") >= 0;
+    if (esPr && /importador/.test(txtArancel_(pie)) && pie.indexOf("IVU lo paga el importador") < 0) {
+      pie = ("IVU lo paga el importador. " + pie).slice(0, 180);
+    }
+    for (var f = 0; f < filasTabla.length; f++) {
+      if (pie && filasTabla[f].nota.indexOf(pie) < 0) {
+        filasTabla[f].nota = (filasTabla[f].nota ? filasTabla[f].nota + ". " : "") + pie;
+        filasTabla[f].nota = filasTabla[f].nota.slice(0, 180);
+      }
+      out.push(filasTabla[f]);
+    }
+    head = r - 1;
+  }
+  return { filas: out, omitidas: omitidas };
+}
+
+function obtenerHojaAranceles_() {
+  var ss = libroHistorico_();
+  var sheet = ss.getSheetByName("Aranceles");
+  if (!sheet) {
+    sheet = ss.insertSheet("Aranceles");
+    sheet.appendRow(["pais", "codigo", "partida", "duties_pct", "duties_base", "taxes_pct", "taxes_base", "nota", "revisar", "actualizado", "descripcion"]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function sincronizarAranceles(email, fromTrigger) {
+  if (!fromTrigger && ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+    return { exito: false, mensaje: "Solo administradores pueden sincronizar aranceles." };
+  }
+  var file = archivoAranceles_();
+  var grillas = grillasXlsx_(file);
+  var filas = [];
+  var omitidas = 0;
+  for (var i = 0; i < grillas.length; i++) {
+    var trozo = filasArancelDeGrilla_(grillas[i]);
+    omitidas += trozo.omitidas;
+    for (var k = 0; k < trozo.filas.length; k++) filas.push(trozo.filas[k]);
+  }
+  if (!filas.length) {
+    return { exito: false, mensaje: "El Excel no trajo filas de arancel. La hoja no se reemplazó." };
+  }
+  var vistos = {};
+  var uniq = [];
+  for (var u = 0; u < filas.length; u++) {
+    var clave = (filas[u].codigo || txtArancel_(filas[u].pais)) + "|" + String(filas[u].partida).replace(/\D/g, "");
+    if (vistos[clave] != null) {
+      var prev = uniq[vistos[clave]];
+      if (prev.dutiesPct !== filas[u].dutiesPct || prev.taxesPct !== filas[u].taxesPct) filas[u].revisar = "S";
+      uniq[vistos[clave]] = filas[u];
+    } else {
+      vistos[clave] = uniq.length;
+      uniq.push(filas[u]);
+    }
+  }
+  var sheet = obtenerHojaAranceles_();
+  if (String(sheet.getRange(1, 11).getValue() || "") === "") sheet.getRange(1, 11).setValue("descripcion");
+  if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 11).clearContent();
+  var ahora = ahoraBogota_();
+  var chunk = uniq.map(function (r) {
+    return [r.pais, r.codigo, r.partida, r.dutiesPct == null ? "" : r.dutiesPct, r.dutiesBase, r.taxesPct == null ? "" : r.taxesPct, r.taxesBase, r.nota, r.revisar, ahora, r.descripcion || ""];
+  });
+  sheet.getRange(2, 1, chunk.length, 11).setValues(chunk);
+  if (sheet.getLastRow() > chunk.length + 1) sheet.deleteRows(chunk.length + 2, sheet.getLastRow() - chunk.length - 1);
+  var revisar = 0;
+  for (var z = 0; z < uniq.length; z++) if (uniq[z].revisar === "S") revisar++;
+  var msg = uniq.length + " filas. " + (revisar ? revisar + " por revisar (sin base o repetidas). " : "") + (omitidas ? "Se omitieron " + omitidas + " filas de acceso." : "");
+  PropertiesService.getScriptProperties().setProperty("ARANCEL_SYNC_RESUMEN", msg.slice(0, 300));
+  CacheService.getScriptCache().remove("ARANCEL_V2");
+  return { exito: true, mensaje: "Aranceles: " + msg, data: { filas: uniq.length, revisar: revisar } };
+}
+
+function leerFilasArancel_() {
+  var sheet = libroHistorico_().getSheetByName("Aranceles");
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getDataRange().getValues();
+  var filas = [];
+  for (var i = 1; i < data.length; i++) {
+    if (!data[i][0] && !data[i][2]) continue;
+    filas.push({
+      row: i + 1,
+      pais: String(data[i][0] || ""),
+      codigo: String(data[i][1] || "").toUpperCase(),
+      partida: String(data[i][2] || ""),
+      dutiesPct: data[i][3] === "" || data[i][3] == null ? null : Number(data[i][3]),
+      dutiesBase: String(data[i][4] || ""),
+      taxesPct: data[i][5] === "" || data[i][5] == null ? null : Number(data[i][5]),
+      taxesBase: String(data[i][6] || ""),
+      nota: String(data[i][7] || ""),
+      descripcion: String(data[i][10] || "")
+    });
+  }
+  return filas;
+}
+
+function consultarAranceles() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get("ARANCEL_V2");
+  if (hit) {
+    try { return JSON.parse(hit); } catch (e) {}
+  }
+  var filas = leerFilasArancel_();
+  var out = { exito: true, data: { total: filas.length, filas: filas } };
+  try { cache.put("ARANCEL_V2", JSON.stringify(out), 300); } catch (e2) {}
+  return out;
+}
+
+function cronArancelesActivo_() {
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    for (var t = 0; t < triggers.length; t++) {
+      if (triggers[t].getHandlerFunction() === "jobArancelesSemanal") return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function estadoAranceles() {
+  var n = 0;
+  try {
+    var sheet = libroHistorico_().getSheetByName("Aranceles");
+    n = sheet ? Math.max(0, sheet.getLastRow() - 1) : 0;
+  } catch (e) { n = 0; }
+  return {
+    exito: true,
+    data: {
+      total: n,
+      cron7d: cronArancelesActivo_(),
+      mensaje: PropertiesService.getScriptProperties().getProperty("ARANCEL_SYNC_RESUMEN") || ""
+    }
+  };
+}
+
+function filaArancelDesdeUi_(f) {
+  f = f || {};
+  var baseOk = function (b) { return b === "EXW" || b === "CIF" || b === "CIF+DUTY" ? b : ""; };
+  var num = function (v) {
+    if (v === "" || v == null) return "";
+    var n = Number(v);
+    return isFinite(n) ? n : "";
+  };
+  var pais = String(f.pais || "").trim().slice(0, 40);
+  return [
+    pais,
+    codigoPaisArancel_(pais) || String(f.codigo || "").trim().toUpperCase().slice(0, 2),
+    String(f.partida || "").trim().slice(0, 24),
+    num(f.dutiesPct),
+    baseOk(f.dutiesBase),
+    num(f.taxesPct),
+    baseOk(f.taxesBase),
+    String(f.nota || "").trim().slice(0, 180),
+    "N",
+    ahoraBogota_()
+  ];
+}
+
+function reemplazarAranceles(params, email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+    return { exito: false, mensaje: "Solo administradores pueden guardar aranceles." };
+  }
+  var crudas = (params && params.filas) || [];
+  if (!crudas.length) return { exito: false, mensaje: "No hay filas de arancel para guardar." };
+  var filas = [];
+  for (var i = 0; i < crudas.length; i++) {
+    var f = crudas[i] || {};
+    var pais = String(f.pais || "").trim();
+    var partida = String(f.partida || "").trim();
+    if (!pais && !partida) continue;
+    var dPct = f.dutiesPct === "" || f.dutiesPct == null ? null : Number(String(f.dutiesPct).replace(",", "."));
+    var tPct = f.taxesPct === "" || f.taxesPct == null ? null : Number(String(f.taxesPct).replace(",", "."));
+    filas.push({
+      pais: pais,
+      codigo: codigoPaisArancel_(pais) || String(f.codigo || "").trim().toUpperCase().slice(0, 2),
+      partida: partida,
+      dutiesPct: dPct != null && isFinite(dPct) ? dPct : null,
+      dutiesBase: String(f.dutiesBase || ""),
+      taxesPct: tPct != null && isFinite(tPct) ? tPct : null,
+      taxesBase: String(f.taxesBase || ""),
+      nota: String(f.nota || "").slice(0, 400),
+      descripcion: String(f.descripcion || ""),
+      revisar: ""
+    });
+  }
+  if (!filas.length) return { exito: false, mensaje: "No hay filas de arancel para guardar." };
+  var sheet = obtenerHojaAranceles_();
+  if (String(sheet.getRange(1, 11).getValue() || "") === "") sheet.getRange(1, 11).setValue("descripcion");
+  if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 11).clearContent();
+  var ahora = ahoraBogota_();
+  var chunk = filas.map(function (r) {
+    return [r.pais, r.codigo, r.partida, r.dutiesPct == null ? "" : r.dutiesPct, r.dutiesBase, r.taxesPct == null ? "" : r.taxesPct, r.taxesBase, r.nota, r.revisar, ahora, r.descripcion || ""];
+  });
+  sheet.getRange(2, 1, chunk.length, 11).setValues(chunk);
+  if (sheet.getLastRow() > chunk.length + 1) sheet.deleteRows(chunk.length + 2, sheet.getLastRow() - chunk.length - 1);
+  CacheService.getScriptCache().remove("ARANCEL_V2");
+  return { exito: true, mensaje: "Aranceles guardados: " + filas.length + " filas.", data: { filas: filas.length } };
+}
+
+function guardarFilaArancel(params, email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  var f = params.fila || {};
+  var row = Number(f.row);
+  var sheet = obtenerHojaAranceles_();
+  if (!row || row < 2 || row > sheet.getLastRow()) return { exito: false, mensaje: "La fila ya no está en la hoja." };
+  sheet.getRange(row, 1, 1, 10).setValues([filaArancelDesdeUi_(f)]);
+  CacheService.getScriptCache().remove("ARANCEL_V2");
+  return { exito: true, mensaje: "Fila guardada." };
+}
+
+function eliminarFilaArancel(params, email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  var row = Number(params.row);
+  var sheet = obtenerHojaAranceles_();
+  if (!row || row < 2 || row > sheet.getLastRow()) return { exito: false, mensaje: "La fila ya no está en la hoja." };
+  sheet.deleteRow(row);
+  CacheService.getScriptCache().remove("ARANCEL_V2");
+  return { exito: true, mensaje: "Fila eliminada." };
+}
+
+function duplicarFilaArancel(params, email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  var f = params.fila || {};
+  var row = Number(f.row);
+  var sheet = obtenerHojaAranceles_();
+  if (!row || row < 2 || row > sheet.getLastRow()) return { exito: false, mensaje: "La fila ya no está en la hoja." };
+  sheet.insertRowAfter(row);
+  sheet.getRange(row + 1, 1, 1, 10).setValues([filaArancelDesdeUi_(f)]);
+  CacheService.getScriptCache().remove("ARANCEL_V2");
+  return { exito: true, mensaje: "Fila duplicada." };
+}
+
+function jobArancelesSemanal() {
+  sincronizarAranceles("auto-7d", true);
+}
+
+function asegurarTriggerAranceles(email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  try {
+    if (cronArancelesActivo_()) return { exito: true, mensaje: "La sync de aranceles cada 7 días ya estaba activa." };
+    ScriptApp.newTrigger("jobArancelesSemanal").timeBased().everyDays(7).atHour(6).create();
+    return { exito: true, mensaje: "Sync de aranceles cada 7 días activada, hacia las 06:00." };
+  } catch (err) {
+    return { exito: false, mensaje: mensajeFaltaScopeTriggers_(err) };
+  }
+}
+
+function desactivarTriggerAranceles(email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    var n = 0;
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === "jobArancelesSemanal") {
+        ScriptApp.deleteTrigger(triggers[i]);
+        n++;
+      }
+    }
+    return { exito: true, mensaje: n ? "Sync automática de aranceles desactivada." : "No había un activador que apagar." };
+  } catch (err) {
+    return { exito: false, mensaje: mensajeFaltaScopeTriggers_(err) };
+  }
 }

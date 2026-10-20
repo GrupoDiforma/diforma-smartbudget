@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.58">
+  <link rel="stylesheet" href="styles.css?v=1.0.61">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -50,19 +50,18 @@
 
         <!-- P1: CRM -->
         <div class="mb-5">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">1</span><i class="bi bi-folder2-open section-icon"></i> Datos Base del Proyecto<span id="badgeVersion1" class="elem-ahora d-none ms-2"></span></h6>
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">1</span><i class="bi bi-folder2-open section-icon"></i> Datos Base del Proyecto</h6>
+              <div id="chipsVersiones" class="d-flex gap-1 flex-wrap"></div>
+              <button type="button" class="btn btn-outline-secondary btn-sm" onclick="abrirModalNuevaVersion()"><i class="bi bi-plus-lg me-1"></i>Nueva versión</button>
+              <span id="comentarioVersionActiva" class="small text-muted"></span>
+            </div>
             <div class="d-flex gap-2">
               <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirHistorial()"><i class="bi bi-clock-history me-1"></i>Historial</button>
               <button type="button" id="btnExportarExcel" class="btn btn-outline-secondary btn-sm bg-white" onclick="exportarPresupuestoExcel()"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
               <button class="btn btn-primary btn-sm" onclick="guardarProyectoBD()"><i class="bi bi-cloud-upload me-1"></i>Guardar en Nube</button>
             </div>
-          </div>
-          <div class="d-flex align-items-center gap-2 flex-wrap mb-3" id="barraVersiones">
-            <span class="small text-muted mb-0">Versión</span>
-            <div id="chipsVersiones" class="d-flex gap-1 flex-wrap"></div>
-            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="abrirModalNuevaVersion()"><i class="bi bi-plus-lg me-1"></i>Nueva versión</button>
-            <span id="comentarioVersionActiva" class="small text-muted"></span>
           </div>
           <div class="d-none align-items-center gap-2 flex-wrap mb-3" id="barraElementos">
             <span class="small text-muted mb-0">Elemento</span>
@@ -80,11 +79,12 @@
                   <div class="col-md-6">
                     <label class="form-label text-uppercase">Cód. Oportunidad</label>
                     <div class="input-group input-group-sm">
-                      <input type="text" id="inputCodigo" class="form-control" placeholder="Ej: 17652-A">
+                      <input type="text" id="inputCodigo" class="form-control" placeholder="Ej: 17652-A" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarProyectoOdooServerless();}">
                       <button type="button" class="btn btn-primary" onclick="buscarProyectoOdooServerless()">Buscar</button>
                     </div>
                   </div>
                   <div class="col-md-6"><div id="odooAlert" class="d-none"></div></div>
+                  <div class="col-12 d-none" id="avisoCodigoGuardado"></div>
                   <div class="col-md-6"><label class="form-label text-uppercase">No. Proyecto</label><input type="text" id="noProyecto" class="form-control form-control-sm"></div>
                   <div class="col-md-6"><label class="form-label text-uppercase">Cliente</label><input type="text" id="cliente" class="form-control form-control-sm"></div>
                   <div class="col-md-6">
@@ -119,10 +119,15 @@
           </div>
           <div class="ficha-comercial mt-3" id="fichaComercial">
             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-              <span class="small fw-semibold text-uppercase mb-0" style="letter-spacing:.04em;color:#737373;">Ficha comercial</span>
+              <div class="d-flex align-items-center gap-2">
+                <span class="small fw-semibold text-uppercase mb-0" style="letter-spacing:.04em;color:#737373;">Ficha comercial</span>
+                <button type="button" id="btnCompletarFicha" class="btn btn-outline-primary btn-sm" title="Completa título, descripción, medidas y partida. No toca la matriz." onclick="completarFichaIA()"><i class="bi bi-stars me-1"></i>Rellenar con IA</button>
+              </div>
               <div class="d-flex align-items-center gap-2 flex-wrap">
-                <button type="button" id="btnCompletarFicha" class="btn btn-outline-primary btn-sm" onclick="completarFichaIA()"><i class="bi bi-stars me-1"></i>Rellenar con IA</button>
                 <span class="small text-muted" id="fichaPaisTxt">País —</span>
+                <select id="fichaPartida" class="form-select form-select-sm" style="width:auto;max-width:280px;" title="No se imprime. Se cruza con el país para Duties y Taxes." onchange="logAlCambiarPartidaFicha()">
+                  <option value="">Partida</option>
+                </select>
                 <select id="selIdiomaFicha" class="form-select form-select-sm" style="width:auto;" title="Sale de Odoo (lang_code)" onchange="cambiarLocaleProyecto({idioma:this.value})">
                   <option value="es">Español</option>
                   <option value="en">English</option>
@@ -135,7 +140,7 @@
             </div>
             <div class="row g-2">
               <div class="col-lg-6">
-                <label class="form-label text-uppercase">Título comercial</label>
+                <label class="form-label text-uppercase mb-1" for="fichaTitulo">Título comercial</label>
                 <input type="text" id="fichaTitulo" class="form-control form-control-sm" placeholder="Ej: Floor display Wow Can" maxlength="120">
                 <label class="form-label text-uppercase mt-2">Descripción (3–4 líneas)</label>
                 <textarea id="fichaDesc" class="form-control form-control-sm" rows="3" maxlength="700" placeholder="Texto comercial para cotización y logística. Lo propone la IA al generar la matriz; puedes editarlo."></textarea>
@@ -164,7 +169,10 @@
         <!-- P2: IA -->
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-            <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente<span id="badgePrearmadoElemento" class="elem-ahora d-none ms-2"></span><span id="badgeVersion2" class="elem-ahora d-none ms-2"></span></h6>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente<span id="badgePrearmadoElemento" class="elem-ahora d-none ms-2"></span></h6>
+              <span id="badgeVersion2" class="ver-switch d-none"></span>
+            </div>
             <button type="button" id="btnCargarRenders" class="btn btn-sm btn-outline-secondary" title="Trae la imagen de Odoo (Grupo) y el render con pin de cotización de cada pieza" onclick="cargarRendersVisor()"><i class="bi bi-cloud-arrow-down me-1"></i>Cargar Renders</button>
           </div>
           <div class="row g-3 ia-split">
@@ -232,7 +240,10 @@
         <!-- P3 & P4: Matriz y Simulador -->
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">3</span><i class="bi bi-table section-icon"></i> Matriz de Costos Directos (Escalas)<span id="badgeMatrizElemento" class="elem-ahora d-none ms-2"></span><span id="badgeVersion3" class="elem-ahora d-none ms-2"></span></h6>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">3</span><i class="bi bi-table section-icon"></i> Matriz de Costos Directos (Escalas)<span id="badgeMatrizElemento" class="elem-ahora d-none ms-2"></span></h6>
+              <span id="badgeVersion3" class="ver-switch d-none"></span>
+            </div>
             <div>
               <button class="btn btn-outline-success btn-sm bg-white fw-bold" onclick="agregarLote()">+ Agregar Rango</button>
               <button class="btn btn-outline-primary btn-sm bg-white fw-bold text-primary border-primary" onclick="abrirModalOdooMateriales()"><i class="bi bi-search me-1"></i> Odoo</button>
@@ -250,7 +261,10 @@
 
         <div class="mb-4 border-top pt-4">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">4</span><i class="bi bi-calculator section-icon"></i> Simulador AIU<span id="badgeSimuladorElemento" class="elem-ahora d-none ms-2"></span><span id="badgeVersion4" class="elem-ahora d-none ms-2"></span></h6>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">4</span><i class="bi bi-calculator section-icon"></i> Simulador AIU<span id="badgeSimuladorElemento" class="elem-ahora d-none ms-2"></span></h6>
+              <span id="badgeVersion4" class="ver-switch d-none"></span>
+            </div>
             <div class="input-group input-group-sm w-auto"><span class="input-group-text text-success bg-white fw-bold">TRM Hoy</span><input type="number" id="simTRM" class="form-control text-center fw-bold" style="width:100px;" value="4150"></div>
           </div>
           <div class="row g-3 bg-white p-3 rounded border mb-3">
@@ -306,6 +320,7 @@
             </div>
             <p id="logCargaBar" class="small mb-1 d-none"></p>
             <p id="logOdooEstado" class="small text-muted mb-2"></p>
+            <div id="logAvisoProyecto" class="d-none"></div>
             <div class="log-work">
               <div class="log-side">
                 <section class="log-card">
@@ -708,6 +723,9 @@
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body p-0">
+          <div class="p-3 border-bottom bg-white">
+            <input type="search" id="filtroHistorial" class="form-control form-control-sm" placeholder="Buscar por código, cliente o nombre…" oninput="filtrarHistorialCostos(this.value)" autocomplete="off">
+          </div>
           <div class="table-responsive sb-tabla-scroll" style="max-height: 400px;">
             <table class="table table-hover align-middle mb-0" style="font-size:0.85rem;">
               <thead class="table-light"><tr><th>No. Proyecto</th><th>Cliente</th><th>Nombre</th><th>Tipo</th><th>Fecha Act.</th><th class="text-center">Acción</th></tr></thead>
@@ -836,6 +854,7 @@
           <div id="avisoConfigRemota" class="admin-banner is-warn mb-3 d-none" role="status"></div>
           <ul class="nav admin-nav" role="tablist">
             <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#panel-catalogo" type="button">Catálogo maestro</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-logistica" type="button">Logística</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-tarifas" type="button">Catálogos fijos</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-gema" type="button">Prompts IA</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-operativos" type="button">Motor AIU</button></li>
@@ -926,6 +945,61 @@
                       </label>
                       <small class="text-muted" id="catalogoPagerPagina">Página 1 de 1</small>
                     </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-logistica">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Partidas arancelarias</h3>
+                    <p class="admin-card-desc">Formato 9403.20.00.00. La ficha comercial elige una de aquí. El país de la cotización la cruza con la lista de aranceles. Se guarda con el botón de Ajustes.</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="agregarPartidaUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+                </header>
+                <div class="admin-card-table">
+                  <div class="catalogo-tabla-wrap">
+                    <table class="table table-sm catalogo-tabla mb-0">
+                      <thead><tr><th>Partida</th><th>Descripción</th><th style="width:44px;"></th></tr></thead>
+                      <tbody id="partidasBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Aranceles</h3>
+                    <p class="admin-card-desc">Calcula Duties y Taxes en DDP según la base de cada fila. Puedes agregar filas a mano. Sincronizar Drive vuelve a leer el Excel y reemplaza esta tabla. Los cambios se guardan con el botón de Ajustes.</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="agregarFilaArancelUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+                </header>
+                <div class="admin-card-body">
+                  <div id="arancelesEstadoBox" class="admin-banner is-info mb-3">Aún no se ha sincronizado.</div>
+                  <div class="admin-actions mb-3">
+                    <button type="button" id="btnSyncAranceles" class="btn admin-btn" onclick="sincronizarArancelesUI()"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar Drive</button>
+                    <button type="button" id="btnCronAranceles" class="btn admin-btn" onclick="activarCronArancelesUI()">Activar sync cada 7 días</button>
+                  </div>
+                  <p class="small text-muted mb-2">Duty sobre EXW o CIF. Taxes sobre CIF + gravamen cuando la base lo dice. Si la observación dice que lo paga el importador, la cotización no lo suma. En el PDF, Duties y Taxes salen sumados en una sola fila.</p>
+                </div>
+                <div class="admin-card-table">
+                  <div class="catalogo-tabla-wrap">
+                    <table class="table table-sm catalogo-tabla mb-0">
+                      <thead>
+                        <tr>
+                          <th>País</th>
+                          <th>Partida</th>
+                          <th>Duties %</th>
+                          <th>Base</th>
+                          <th>Taxes %</th>
+                          <th>Base</th>
+                          <th>Observación</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody id="arancelesBody"></tbody>
+                    </table>
                   </div>
                 </div>
               </section>
@@ -1236,13 +1310,13 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.29"></script>
+  <script src="admin.js?v=1.0.38"></script>
     <script src="seguridad.js?v=1.0.25"></script>
-    <script src="app.js?v=1.0.50"></script>
+    <script src="app.js?v=1.0.52"></script>
   <script src="engine.js?v=1.0.38"></script>
-  <script src="connectors.js?v=1.0.36"></script>
-  <script src="ia-core.js?v=1.0.40"></script>
+  <script src="connectors.js?v=1.0.38"></script>
+  <script src="ia-core.js?v=1.0.41"></script>
   <script src="export-excel.js?v=1.0.32"></script>
-  <script src="logistica.js?v=1.0.86"></script>
+  <script src="logistica.js?v=1.0.95"></script>
 </body>
 </html>

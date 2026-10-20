@@ -520,7 +520,7 @@ function logisticaLeerProyecto_() {
         return el ? String(el.value || "").trim() : "";
     };
     const nombre = v("noProyecto");
-    const codigo = (nombre.split(/\s+/)[0] || v("inputCodigo") || "").trim();
+    const codigo = (v("inputCodigo") || nombre.split(/\s+/)[0] || "").trim();
     let idioma = "es";
     try { idioma = localeProyectoActual().idioma === "en" ? "en" : "es"; } catch (e) { /* sin locale: español */ }
     return {
@@ -602,6 +602,53 @@ function logisticaPintarEstado_() {
         if (img) html += "<br>" + img;
     }
     el.innerHTML = html;
+    logisticaAvisoProyectoCostos_();
+}
+
+function logNormCod_(s) {
+    return String(s || "").trim().toUpperCase();
+}
+
+/** Código que se ve en la hoja (la primera fila), no el presupuesto abierto en Costos. */
+function logCodigoEnHoja_() {
+    const filas = (logQuote && logQuote.filas) || [];
+    const fila = filas.find(function (f) { return f.tipo === "item" && String(f.proy || "").trim(); });
+    if (fila) return String(fila.proy).trim();
+    if (logQuote && logQuote.abierta) return String(logQuote.codigo || "").trim();
+    return "";
+}
+
+function logisticaAvisoProyectoCostos_() {
+    const el = document.getElementById("logAvisoProyecto");
+    if (!el) return;
+    const p = logisticaLeerProyecto_();
+    const hoja = logCodigoEnHoja_();
+    const distinto = !!(p.hayProyecto && hoja && logNormCod_(p.codigo) !== logNormCod_(hoja));
+    if (!distinto) {
+        el.className = "d-none";
+        el.innerHTML = "";
+        return;
+    }
+    const a = logQuote && logQuote.abierta;
+    const cual = a ? (a.numero || a.id || hoja) : hoja;
+    const extra = (logQuote && logQuote.sucio) || a ? " Cotizar el de Costos deja esta hoja." : "";
+    el.className = "alert alert-warning py-2 px-3 mb-2 d-flex flex-wrap align-items-center justify-content-between gap-2";
+    el.innerHTML = "<div><i class=\"bi bi-exclamation-triangle me-1\"></i>En Costos está abierto <b>" + logEsc_(p.codigo) + "</b>. Esta cotización sigue en <b>" + logEsc_(cual) + "</b>." + extra + "</div>"
+        + "<button type=\"button\" class=\"btn btn-sm btn-primary\" onclick=\"logisticaTomarProyectoCostos_()\">Cotizar " + logEsc_(p.codigo) + "</button>";
+}
+
+function logisticaTomarProyectoCostos_() {
+    logQuote.inicializado = false;
+    logQuote.abierta = null;
+    logQuote.sucio = false;
+    logQuote.codigo = "";
+    logCab = { codigo: "", over: {}, idiomaPara: "", idiomaManual: false, sistemaManual: false };
+    logOdoo = { codigo: "", data: null, estado: "idle", mensaje: "" };
+    logisticaSincronizarProyecto();
+    if (typeof mostrarNotificacion === "function") {
+        const p = logisticaLeerProyecto_();
+        mostrarNotificacion(p.codigo ? ("Cotización armada con " + p.codigo + ".") : "Cotización armada con el proyecto de Costos.", "success");
+    }
 }
 
 /** Pide a Odoo el contacto y el comercial del proyecto de la cotización. force=true ignora lo ya cargado. */
@@ -659,6 +706,7 @@ function logisticaSincronizarProyecto() {
     logisticaActualizarVista();
     logisticaCargarOdoo_(false);
     logisticaCargarImagenOdoo_(false);
+    logisticaAvisoProyectoCostos_();
 }
 
 /* ------------------------------------------------------------------ */
@@ -971,7 +1019,11 @@ function logEnvNormalizar_(src) {
             valor: ln.valor === "" || ln.valor == null || !isFinite(Number(ln.valor)) ? null : Number(ln.valor),
             pct: ln.pct === "" || ln.pct == null || !isFinite(Number(ln.pct)) ? null : Number(ln.pct),
             notas: String(ln.notas || ""),
-            fuente: ln.fuente === "[Estimado IA]" ? "[Estimado IA]" : ""
+            fuente: (ln.fuente === "[Estimado IA]" || ln.fuente === "Aranceles") ? ln.fuente : "",
+            base: (ln.base === "CIF" || ln.base === "EXW" || ln.base === "CIF+DUTY") ? ln.base : "",
+            arancelManual: !!ln.arancelManual,
+            arancelFirma: String(ln.arancelFirma || "").slice(0, 120),
+            arancelNota: String(ln.arancelNota || "").slice(0, 180)
         };
     }) : [];
     return d;
@@ -980,6 +1032,28 @@ function logEnvNormalizar_(src) {
 function logEnv_() {
     logQuote.env = logEnvNormalizar_(logQuote.env);
     return logQuote.env;
+}
+
+function logEnvFilasImpresas_(lineas, esEn) {
+    const out = [];
+    let unificado = false;
+    const duties = lineas.filter(function (ln) { return ln.tipo === "duties"; });
+    const taxes = lineas.filter(function (ln) { return ln.tipo === "taxes"; });
+    const juntos = duties.length && taxes.length;
+    lineas.forEach(function (ln) {
+        if (ln.tipo !== "duties" && ln.tipo !== "taxes") {
+            out.push({ label: ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn), ln: ln });
+            return;
+        }
+        if (juntos) {
+            if (unificado) return;
+            unificado = true;
+            out.push({ label: esEn ? "Duties and Taxes" : "Duties y Taxes", grupo: duties.concat(taxes) });
+            return;
+        }
+        out.push({ label: ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn), ln: ln });
+    });
+    return out;
 }
 
 function logEnvEtiquetaTipo_(tipo, mod, esEn) {
@@ -1056,7 +1130,11 @@ function logEnvAsegurarLineas_(esEn, forzar) {
             valor: old ? old.valor : null,
             pct: old ? old.pct : null,
             notas: old ? old.notas : "",
-            fuente: old && old.fuente === "[Estimado IA]" ? "[Estimado IA]" : ""
+            fuente: old && (old.fuente === "[Estimado IA]" || old.fuente === "Aranceles") ? old.fuente : "",
+            base: old && (old.base === "CIF" || old.base === "EXW" || old.base === "CIF+DUTY") ? old.base : "",
+            arancelManual: !!(old && old.arancelManual),
+            arancelFirma: old ? String(old.arancelFirma || "") : "",
+            arancelNota: old ? String(old.arancelNota || "") : ""
         };
     }).concat(libres);
     e.plantilla = firma;
@@ -1097,15 +1175,260 @@ function logMargenTituloCosto_(ln) {
     return base + " En la cotización sale " + logEnvValorLinea_(ln, null) + " " + mon + ".";
 }
 
+function logCifExtra_() {
+    let s = 0;
+    let alguna = false;
+    (logEnv_().lineas || []).forEach(function (ln) {
+        if (ln.tipo !== "origen" && ln.tipo !== "flete_interno" && ln.tipo !== "flete_principal" && ln.tipo !== "seguro") return;
+        if (ln.valor == null || !isFinite(Number(ln.valor))) return;
+        s += Number(ln.valor);
+        alguna = true;
+    });
+    return alguna ? s : 0;
+}
+
+function logDutySobre_(baseProd) {
+    const lineas = (logQuote && logQuote.env && logQuote.env.lineas) || [];
+    const ln = lineas.find(function (x) { return x.tipo === "duties"; });
+    if (ln && ln.pct == null && ln.valor != null && isFinite(Number(ln.valor))) return Number(ln.valor);
+    if (!ln || ln.pct == null || !isFinite(Number(ln.pct))) return 0;
+    const cif = ln.base === "CIF";
+    let b = baseProd;
+    if (cif) {
+        const extra = logCifExtra_();
+        if (!(extra > 0)) return null;
+        b = baseProd + extra;
+    }
+    return b * Number(ln.pct) / 100;
+}
+
+function logEnvBasePct_(ln, baseProd) {
+    if (baseProd == null || !isFinite(baseProd)) return null;
+    if (ln && ln.base === "CIF+DUTY") {
+        const cif = logEnvBasePct_({ base: "CIF" }, baseProd);
+        const duty = logDutySobre_(baseProd);
+        if (cif == null || duty == null) return null;
+        return cif + duty;
+    }
+    if (ln && ln.base === "CIF") {
+        const extra = logCifExtra_();
+        if (!(extra > 0)) return null;
+        return baseProd + extra;
+    }
+    return baseProd;
+}
+
 function logEnvValorLinea_(ln, baseProd) {
     if (!ln) return null;
     let base = null;
     if (ln.valor != null && isFinite(ln.valor)) base = Number(ln.valor);
-    else if ((ln.tipo === "duties" || ln.tipo === "taxes") && ln.pct != null && isFinite(baseProd)) base = baseProd * ln.pct / 100;
+    else if ((ln.tipo === "duties" || ln.tipo === "taxes") && ln.pct != null) {
+        const b = logEnvBasePct_(ln, baseProd);
+        if (b == null) return null;
+        base = b * ln.pct / 100;
+    }
     if (base == null || !isFinite(base)) return null;
     let out = base * (1 + logMargenDeLinea_(ln) / 100);
     if (!logEsCotizacionExterior_() && ln.valor != null && isFinite(ln.valor)) out = logMonedaDesdeCop_(out);
     return logRedondear_(out);
+}
+
+var logAranceles = { filas: null, pedido: false };
+
+function logArancelDigitos_(s) {
+    return String(s || "").replace(/\D/g, "");
+}
+
+function logArancelNorm_(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
+function logArancelBuscar_(filas, partida) {
+    const d = logArancelDigitos_(partida);
+    if (d.length < 4) return null;
+    let best = null;
+    let amb = false;
+    filas.forEach(function (r) {
+        const rd = logArancelDigitos_(r.partida);
+        if (!rd) return;
+        const n = Math.min(d.length, rd.length);
+        if (d.slice(0, n) !== rd.slice(0, n)) return;
+        if (!best || rd.length > logArancelDigitos_(best.partida).length) {
+            best = r;
+            amb = false;
+        } else if (rd.length === logArancelDigitos_(best.partida).length &&
+            (r.dutiesPct !== best.dutiesPct || r.taxesPct !== best.taxesPct || r.dutiesBase !== best.dutiesBase || r.taxesBase !== best.taxesBase)) {
+            amb = true;
+        }
+    });
+    if (!best) return null;
+    return amb ? { ambiguo: true } : best;
+}
+
+function logBasesPorPartida_(idioma, k) {
+    const map = {};
+    (logQuote.filas || []).forEach(function (fila) {
+        if (fila.tipo !== "item" && fila.tipo !== "libre") return;
+        if (fila.demo != null) return;
+        const sub = logSub_(logFilaValores_(fila, idioma, k));
+        if (sub == null) return;
+        const f = logComisionFactor_(fila) || 1;
+        const key = logArancelDigitos_(fila.partida).slice(0, 10) || "_";
+        map[key] = (map[key] || 0) + sub / f;
+    });
+    return map;
+}
+
+function logMontoSobreBase_(exw, pct, kind, peso, duty) {
+    if (exw == null || pct == null || !isFinite(Number(pct))) return null;
+    let b = Number(exw);
+    if (kind === "CIF" || kind === "CIF+DUTY") {
+        const extra = logCifExtra_();
+        if (!(extra > 0) || !(peso > 0)) return null;
+        b = Number(exw) + extra * (Number(exw) / peso);
+    }
+    if (kind === "CIF+DUTY") {
+        if (duty == null || !isFinite(Number(duty))) return null;
+        b += Number(duty);
+    }
+    return b * Number(pct) / 100;
+}
+
+function logAplicarConceptoArancel_(ln, filasPais, bases, firma) {
+    if (!ln || ln.arancelManual) return false;
+    if (ln.arancelFirma && ln.arancelFirma !== firma) ln.arancelManual = false;
+    if (ln.arancelManual) return false;
+    const campo = ln.tipo === "duties" ? "duties" : "taxes";
+    const partes = [];
+    const sin = [];
+    let mezcla = false;
+    let kind = "";
+    Object.keys(bases).forEach(function (key) {
+        if (!(bases[key] > 0)) return;
+        if (key === "_") { sin.push("sin partida"); return; }
+        const hit = logArancelBuscar_(filasPais, key);
+        if (!hit || hit.ambiguo) { sin.push(key); return; }
+        let pct = hit[campo + "Pct"];
+        const baseKind = (hit[campo + "Base"] === "CIF" || hit[campo + "Base"] === "EXW" || hit[campo + "Base"] === "CIF+DUTY") ? hit[campo + "Base"] : "";
+        if (campo === "taxes" && /importador/i.test(hit.nota || "")) pct = 0;
+        if (pct == null || !isFinite(Number(pct))) { sin.push(key); return; }
+        if (!kind) kind = baseKind || "EXW";
+        else if ((baseKind || "EXW") !== kind) mezcla = true;
+        partes.push({
+            key: key, exw: bases[key], pct: Number(pct), kind: baseKind || "EXW", nota: hit.nota || "",
+            dPct: hit.dutiesPct == null ? null : Number(hit.dutiesPct),
+            dKind: hit.dutiesBase === "CIF" ? "CIF" : "EXW"
+        });
+    });
+    if (!partes.length) return false;
+    const notaCat = (partes.map(function (p) { return p.nota; }).filter(Boolean)[0] || "").slice(0, 180);
+    const notaPrev = ln.arancelNota || "";
+    const antes = [ln.pct, ln.base, ln.valor, ln.fuente, ln.notas].join("|");
+    ln.fuente = "Aranceles";
+    ln.arancelFirma = firma;
+    const ponerNota_ = function (txt) {
+        const t = String(txt || "").trim().slice(0, 400);
+        if (!ln.notas || ln.notas === notaPrev) ln.notas = t;
+        ln.arancelNota = t;
+    };
+    const detalle = partes.map(function (p) {
+        return (p.key && p.key !== "_" ? logPartidaFmt_(p.key) : "") + " " + p.pct + "%";
+    }).join(" · ");
+    if (sin.length) {
+        ln.pct = null;
+        ln.valor = null;
+        ln.base = "";
+        ponerNota_(("Sin tasa: " + sin.join(", ") + ". " + notaCat).trim());
+    } else if (mezcla) {
+        const peso = partes.reduce(function (s, p) { return s + p.exw; }, 0);
+        let suma = 0;
+        let ok = true;
+        partes.forEach(function (p) {
+            let duty = 0;
+            if (p.kind === "CIF+DUTY" && p.dPct != null) {
+                duty = logMontoSobreBase_(p.exw, p.dPct, p.dKind === "CIF" ? "CIF" : "EXW", peso, 0);
+                if (duty == null) ok = false;
+            }
+            const m = logMontoSobreBase_(p.exw, p.pct, p.kind, peso, duty || 0);
+            if (m == null) ok = false;
+            else suma += m;
+        });
+        ln.pct = null;
+        ln.base = "";
+        ln.valor = ok ? Math.round(suma * 100) / 100 : null;
+        ponerNota_(("Bases distintas. Valor sumado por partida. " + detalle + (notaCat ? ". " + notaCat : "")).trim());
+    } else {
+        const peso = partes.reduce(function (s, p) { return s + p.exw; }, 0);
+        const mix = peso ? partes.reduce(function (s, p) { return s + p.exw * p.pct; }, 0) / peso : null;
+        ln.valor = null;
+        ln.pct = mix == null ? null : Math.round(mix * 1000) / 1000;
+        ln.base = kind || "EXW";
+        const varios = partes.some(function (p) { return p.pct !== partes[0].pct; });
+        ponerNota_(varios ? ("Porcentajes distintos, prorrateados por valor. " + detalle).slice(0, 400) : notaCat);
+    }
+    const despues = [ln.pct, ln.base, ln.valor, ln.fuente, ln.notas].join("|");
+    return antes !== despues;
+}
+
+function logAplicarAranceles_() {
+    if (!logEsCotizacionExterior_() || !logAranceles.filas || !logAranceles.filas.length) return false;
+    const e = logEnv_();
+    const cod = String(e.destinoCodigo || logEnvCodigoDePais_(e.destinoPais) || "").toUpperCase();
+    const pais = logArancelNorm_(e.destinoPais);
+    if (!cod && !pais) return false;
+    const alias = { US: ["usa", "eeuu", "estados unidos", "united states"], PR: ["puerto rico"], MX: ["mexico"], GB: ["reino unido", "uk"] };
+    const filasPais = logAranceles.filas.filter(function (r) {
+        if (cod && String(r.codigo || "").toUpperCase() === cod) return true;
+        const n = logArancelNorm_(r.pais);
+        if (pais && n === pais) return true;
+        const lista = cod && alias[cod];
+        return !!(lista && lista.indexOf(n) >= 0);
+    });
+    if (!filasPais.length) return false;
+    const idioma = (typeof logisticaLeerOpciones_ === "function" ? logisticaLeerOpciones_().idioma : "es");
+    const bases = logBasesPorPartida_(idioma, "");
+    const firma = cod + "|" + Object.keys(bases).sort().join(",");
+    let cambio = false;
+    (e.lineas || []).forEach(function (ln) {
+        if (ln.tipo !== "duties" && ln.tipo !== "taxes") return;
+        if (logAplicarConceptoArancel_(ln, filasPais, bases, firma)) cambio = true;
+    });
+    if (cambio && typeof logMarcarSucio_ === "function") logMarcarSucio_();
+    return cambio;
+}
+
+function logArancelResumen_() {
+    if (!logEsCotizacionExterior_()) return null;
+    const out = {};
+    (logEnv_().lineas || []).forEach(function (ln) {
+        if (ln.fuente !== "Aranceles" || (ln.tipo !== "duties" && ln.tipo !== "taxes")) return;
+        const pct = ln.pct == null ? "" : (ln.pct + "%");
+        const base = ln.base ? (" sobre " + ln.base) : "";
+        const nota = ln.notas ? (" · " + ln.notas) : "";
+        out[ln.tipo] = (pct + base + nota).trim();
+    });
+    return Object.keys(out).length ? out : null;
+}
+
+async function logCargarAranceles_() {
+    if (logAranceles.filas || logAranceles.pedido) return;
+    if (!localStorage.getItem("smartbudget_token")) return;
+    if (!(typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl)) return;
+    logAranceles.pedido = true;
+    try {
+        const r = await realizarPeticionBD({ action: "aranceles_consultar" }, { timeoutMs: 25000 });
+        if (!r || !r.exito || !r.data) return;
+        logAranceles.filas = r.data.filas || [];
+        if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
+        if (typeof logPintarSelectPartida_ === "function" && document.getElementById("fichaPartida")) {
+            const el = typeof elementoActivoObj_ === "function" ? elementoActivoObj_() : null;
+            logPintarSelectPartida_(el && el.fichaComercial ? el.fichaComercial.partida : "");
+        }
+        if (logAplicarAranceles_()) {
+            logisticaPintarEnv_(true);
+            if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+        }
+    } catch (e) { /* el backend publicado todavía no tiene esta acción */ }
 }
 
 function logEnvActivo_() {
@@ -1411,6 +1734,7 @@ function logNuevaFilaItem_(verId, proy, elemId) {
     const ref = logImgRefElemento_(elemId, verId);
     if (ref) fila.imgRef = ref;
     if ((logQuote.escenarios || []).length) logOpcCompletar_(fila);
+    logAsegurarPartida_(fila);
     return fila;
 }
 
@@ -1506,7 +1830,8 @@ function logFilasDemo_() {
 function logAsegurarFilas_() {
     const p = logisticaLeerProyecto_();
     const clave = p.hayProyecto ? p.codigo : "";
-    if (logQuote.inicializado && (logQuote.codigo === clave || logQuote.abierta)) return;
+    /* Una cotización ya abierta o con cambios se conserva. El aviso ofrece pasar al proyecto de Costos. */
+    if (logQuote.inicializado && (logQuote.codigo === clave || logQuote.abierta || logQuote.sucio)) return;
     logQuote = {
         codigo: clave,
         inicializado: true,
@@ -1870,13 +2195,26 @@ function logisticaTablaHTML_(idioma) {
                 tClaves.forEach(function (k) { montos[k] = logSub_(logFilaValores_(fila, idioma, k)) || 0; });
                 bloqueLog += filaMontos_("it it-env", "env", edr(fila, "titulo", v0.titulo, esEn ? "Freight" : "Envío"), montos);
             });
-            envLineas.forEach(function (ln) {
+            logEnvFilasImpresas_(envLineas, esEn).forEach(function (item) {
                 const montos = {};
                 tClaves.forEach(function (k) {
-                    const v = logEnvValorLinea_(ln, logBaseLogistica_(idioma, k));
-                    montos[k] = v == null ? 0 : v;
+                    const base = logBaseLogistica_(idioma, k);
+                    if (item.grupo) {
+                        let s = 0;
+                        let alguna = false;
+                        item.grupo.forEach(function (ln) {
+                            const v = logEnvValorLinea_(ln, base);
+                            if (v == null) return;
+                            s += v;
+                            alguna = true;
+                        });
+                        montos[k] = alguna ? s : 0;
+                    } else {
+                        const v = logEnvValorLinea_(item.ln, base);
+                        montos[k] = v == null ? 0 : v;
+                    }
                 });
-                bloqueLog += filaMontos_("it it-env", "env", logEsc_(ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn)), montos);
+                bloqueLog += filaMontos_("it it-env", "env", logEsc_(item.label), montos);
             });
             if (envLineas.length + envios.length > 1) {
                 bloqueLog += filaMontos_("tot tot-sub tot-log", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn)), pres.env);
@@ -2904,6 +3242,281 @@ function logisticaOnComision_(ev) {
     logisticaActualizarVista();
 }
 
+var LOG_PARTIDAS_BASE_ = [
+    { codigo: "3926.90.00.00", nombre: "Displays plásticos" },
+    { codigo: "3926.90.90.00", nombre: "Displays plásticos" },
+    { codigo: "3926.90.90.90", nombre: "Displays plásticos" },
+    { codigo: "3926.90.97.00", nombre: "Displays plásticos" },
+    { codigo: "3926.90.99.00", nombre: "Displays plásticos" },
+    { codigo: "4819.10.00.00", nombre: "Cajas de cartón corrugado" },
+    { codigo: "4819.20.00.00", nombre: "Cajas plegadizas" },
+    { codigo: "4908.90.90.00", nombre: "Calcomanías" },
+    { codigo: "4911.10.00.00", nombre: "Impresos publicitarios y catálogos" },
+    { codigo: "4911.10.90.00", nombre: "Impresos publicitarios y catálogos" },
+    { codigo: "4911.10.90.90", nombre: "Impresos publicitarios y catálogos" },
+    { codigo: "4911.10.99.00", nombre: "Impresos publicitarios y catálogos" },
+    { codigo: "4911.99.00.00", nombre: "Demás impresos publicitarios" },
+    { codigo: "7310.29.90.00", nombre: "Envases de hojalata" },
+    { codigo: "8418.50.00.00", nombre: "Neveras comerciales" },
+    { codigo: "9403.20.00.00", nombre: "Exhibidores metálicos" },
+    { codigo: "9403.20.00.11", nombre: "Displays metálicos" },
+    { codigo: "9403.20.13.00", nombre: "Exhibidores metálicos" },
+    { codigo: "9403.20.93.00", nombre: "Displays metálicos" },
+    { codigo: "9403.20.99.00", nombre: "Exhibidores metálicos" },
+    { codigo: "9403.20.99.01", nombre: "Displays metálicos" },
+    { codigo: "9403.60.00.00", nombre: "Exhibidores de madera" },
+    { codigo: "9403.60.19.00", nombre: "Exhibidores de madera" },
+    { codigo: "9403.70.00.00", nombre: "Exhibidores plásticos" },
+    { codigo: "9403.70.11.00", nombre: "Exhibidor de plástico" },
+    { codigo: "9403.70.91.00", nombre: "Displays plásticos" },
+    { codigo: "9403.70.99.00", nombre: "Exhibidores plásticos" },
+    { codigo: "9403.80.00.00", nombre: "Exhibidores de cartón" },
+    { codigo: "9403.80.01.00", nombre: "Exhibidores de cartón" },
+    { codigo: "9403.89.00.00", nombre: "Exhibidores de cartón" },
+    { codigo: "9405.60.00.00", nombre: "Caja de luz publicitaria" }
+];
+
+function logPartidaFmt_(raw) {
+    const d = String(raw || "").replace(/\D/g, "");
+    if (d.length < 6) return String(raw || "").trim().slice(0, 24);
+    const p = (d.length >= 10 ? d.slice(0, 10) : d.padEnd(10, "0"));
+    return p.slice(0, 4) + "." + p.slice(4, 6) + "." + p.slice(6, 8) + "." + p.slice(8, 10);
+}
+
+function logNormalizarPartida_(raw) {
+    if (!raw) return null;
+    const codigo = logPartidaFmt_(raw.codigo);
+    const nombre = String(raw.nombre || "").trim();
+    if (logArancelDigitos_(codigo).length < 6 || !nombre) return null;
+    return { codigo: codigo, nombre: nombre.slice(0, 80) };
+}
+
+function logPartidasDesdeArancel_() {
+    const filas = (logAranceles && logAranceles.filas) || [];
+    const nombres = {};
+    LOG_PARTIDAS_BASE_.forEach(function (p) { nombres[logArancelDigitos_(p.codigo)] = p.nombre; });
+    const map = {};
+    filas.forEach(function (r) {
+        const codigo = logPartidaFmt_(r.partida);
+        if (logArancelDigitos_(codigo).length < 6) return;
+        if (!map[codigo]) map[codigo] = { codigo: codigo, nombre: "", paises: {} };
+        const nom = String(r.descripcion || "").trim();
+        if (nom && !map[codigo].nombre) map[codigo].nombre = nom;
+        if (r.pais) map[codigo].paises[r.pais] = true;
+    });
+    return Object.keys(map).sort().map(function (k) {
+        const p = map[k];
+        if (!p.nombre) p.nombre = nombres[logArancelDigitos_(p.codigo)] || "Partida";
+        p.paises = Object.keys(p.paises).sort();
+        return p;
+    });
+}
+
+function logPartidasBaseLista_() {
+    return LOG_PARTIDAS_BASE_.map(function (p) { return { codigo: p.codigo, nombre: p.nombre, paises: [] }; });
+}
+
+function logListaPartidas_() {
+    const base = logPartidasBaseLista_();
+    const enBase = {};
+    base.forEach(function (p) { enBase[p.codigo] = true; });
+    let raw = (typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL) ? CONFIG_GLOBAL.partidas : null;
+    if (typeof raw === "string") {
+        try { raw = JSON.parse(raw); } catch (e) { raw = null; }
+    }
+    let saved = [];
+    if (Array.isArray(raw)) {
+        const vistos = {};
+        saved = raw.map(logNormalizarPartida_).filter(Boolean).filter(function (p) {
+            if (vistos[p.codigo]) return false;
+            vistos[p.codigo] = true;
+            return true;
+        });
+    }
+    if (saved.length && saved.every(function (p) { return enBase[p.codigo]; }) && saved.length >= base.length) return saved;
+    const tienen = {};
+    saved.forEach(function (p) { tienen[p.codigo] = p; });
+    const out = base.map(function (p) { return tienen[p.codigo] || p; });
+    saved.forEach(function (p) { if (!enBase[p.codigo]) out.push(p); });
+    if (out.length) return out;
+    const delExcel = logPartidasDesdeArancel_();
+    return delExcel.length ? delExcel : base;
+}
+
+function logPaisesDelListado_() {
+    const vistos = {};
+    ((logAranceles && logAranceles.filas) || []).forEach(function (r) {
+        const p = String(r.pais || "").trim();
+        if (p) vistos[p] = true;
+    });
+    return Object.keys(vistos).sort();
+}
+
+function logTextoPartida_(fila) {
+    if (!fila || (fila.tipo !== "item" && fila.tipo !== "libre")) return "";
+    const f = fila.tipo === "item"
+        ? ((fila.snap && fila.snap.ficha) || logFichaVersion_(fila.ver, fila.elem) || {})
+        : {};
+    const ov = fila.over || {};
+    let nom = "";
+    if (fila.elem) {
+        const verEl = logVersiones_().find(function (x) { return String(x.id) === String(fila.ver); });
+        const elObj = verEl && verEl.elementos ? verEl.elementos.find(function (e) { return String(e.id) === String(fila.elem); }) : null;
+        nom = (elObj && elObj.nombre) || "";
+    }
+    return [nom, f.titulo, f.descripcion, ov.titulo, ov.desc].filter(Boolean).join("\n");
+}
+
+/** Una sola familia de material. Si la ficha mezcla dos, no elige. */
+function logSugerirPartida_(texto) {
+    const t = String(texto || "");
+    const ok = {};
+    logListaPartidas_().forEach(function (p) { ok[p.codigo] = true; });
+    const reglas = [
+        { codigo: "9403.20.00.00", re: /met[aá]lic|acero|aluminio|\bmetal\b/i },
+        { codigo: "9403.60.00.00", re: /madera|\bmdf\b|triplay|\bwood\b/i },
+        { codigo: "9403.70.00.00", re: /cartonplast|polionda|polipropileno/i },
+        { codigo: "3926.90.90.90", re: /displays?\s+pl[aá]stic/i },
+        { codigo: "9403.70.00.00", re: /pl[aá]stic|acr[ií]lic|termoform/i },
+        { codigo: "9403.89.00.00", re: /cart[oó]n(?!plast)|plegadiz/i },
+        { codigo: "4911.10.00.00", re: /cat[aá]logo|volante|impresos?\s+publicitari/i },
+        { codigo: "4819.10.00.00", re: /caja[s]?\s+(de\s+)?cart[oó]n\s+corrugado/i },
+        { codigo: "4819.20.00.00", re: /caja[s]?\s+plegadiz/i },
+        { codigo: "4908.90.90.00", re: /calcoman/i },
+        { codigo: "7310.29.90.00", re: /hojalata/i },
+        { codigo: "8418.50.00.00", re: /nevera|refrigerad/i },
+        { codigo: "9405.60.00.00", re: /caja de luz|light\s*box/i }
+    ];
+    const hits = [];
+    reglas.forEach(function (r) {
+        if (!ok[r.codigo] || !r.re.test(t) || hits.indexOf(r.codigo) >= 0) return;
+        hits.push(r.codigo);
+    });
+    if (hits.indexOf("3926.90.90.90") >= 0) {
+        const i = hits.indexOf("9403.70.00.00");
+        if (i >= 0) hits.splice(i, 1);
+    }
+    if (hits.indexOf("4819.10.00.00") >= 0 || hits.indexOf("4819.20.00.00") >= 0) {
+        const i = hits.indexOf("9403.89.00.00");
+        if (i >= 0) hits.splice(i, 1);
+    }
+    if (hits.length === 1) return { codigo: hits[0], ambiguo: false };
+    return { codigo: "", ambiguo: hits.length > 1 };
+}
+
+function logElementoDeFila_(fila) {
+    if (!fila || !fila.elem) return null;
+    const ver = logVersiones_().find(function (x) { return String(x.id) === String(fila.ver); });
+    if (!ver || !ver.elementos) return null;
+    return ver.elementos.find(function (e) { return String(e.id) === String(fila.elem); }) || null;
+}
+
+function logPartidaDeElemento_(fila) {
+    const el = logElementoDeFila_(fila);
+    const deEl = el && el.fichaComercial ? el.fichaComercial.partida : "";
+    if (deEl) return logPartidaFmt_(deEl);
+    if (fila && String(fila.elem) && typeof elementoActivoObj_ === "function") {
+        const activo = elementoActivoObj_();
+        if (activo && String(activo.id) === String(fila.elem) && activo.fichaComercial && activo.fichaComercial.partida) {
+            return logPartidaFmt_(activo.fichaComercial.partida);
+        }
+    }
+    return "";
+}
+
+function logEscribirPartidaFicha_(fila, codigo) {
+    const fmt = codigo ? logPartidaFmt_(codigo) : "";
+    const el = logElementoDeFila_(fila);
+    if (el) {
+        el.fichaComercial = el.fichaComercial || {};
+        el.fichaComercial.partida = fmt;
+    }
+    if (typeof elementoActivoObj_ === "function") {
+        const activo = elementoActivoObj_();
+        if (activo && fila && String(activo.id) === String(fila.elem)) {
+            activo.fichaComercial = activo.fichaComercial || {};
+            activo.fichaComercial.partida = fmt;
+            const sel = document.getElementById("fichaPartida");
+            if (sel && document.activeElement !== sel) sel.value = fmt;
+        }
+    }
+    if (fila) fila.partida = fmt;
+}
+
+function logAsegurarPartida_(fila) {
+    if (!fila || fila.demo != null || (fila.tipo !== "item" && fila.tipo !== "libre")) return;
+    if (typeof fila.partida === "string") return;
+    const deFicha = logPartidaDeElemento_(fila);
+    if (deFicha) { fila.partida = deFicha; return; }
+    const s = logSugerirPartida_(logTextoPartida_(fila));
+    if (s.codigo) logEscribirPartidaFicha_(fila, s.codigo);
+}
+
+function logPintarSelectPartida_(valor) {
+    const sel = document.getElementById("fichaPartida");
+    if (!sel) return;
+    const actual = logPartidaFmt_(valor || "");
+    let html = "<option value=\"\">Partida</option>";
+    let esta = !actual;
+    logListaPartidas_().forEach(function (p) {
+        if (p.codigo === actual) esta = true;
+        html += "<option value=\"" + logEsc_(p.codigo) + "\">" + logEsc_(p.codigo + " · " + p.nombre) + "</option>";
+    });
+    if (actual && !esta) html += "<option value=\"" + logEsc_(actual) + "\">" + logEsc_(actual) + "</option>";
+    sel.innerHTML = html;
+    sel.value = actual;
+}
+
+function logAlCambiarPartidaFicha_() {
+    const sel = document.getElementById("fichaPartida");
+    if (!sel || typeof elementoActivoObj_ !== "function") return;
+    const el = elementoActivoObj_();
+    if (!el) return;
+    const fmt = sel.value ? logPartidaFmt_(sel.value) : "";
+    el.fichaComercial = el.fichaComercial || {};
+    el.fichaComercial.partida = fmt;
+    (logQuote.filas || []).forEach(function (fila) {
+        if (String(fila.elem) !== String(el.id)) return;
+        fila.partida = fmt;
+    });
+    if (logAplicarAranceles_()) logisticaPintarEnv_(true);
+    if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+function logHtmlPartida_(fila) {
+    if (!fila || fila.demo != null || (fila.tipo !== "item" && fila.tipo !== "libre")) return "";
+    logAsegurarPartida_(fila);
+    const sug = logSugerirPartida_(logTextoPartida_(fila));
+    const lista = logListaPartidas_();
+    const actual = logPartidaFmt_(fila.partida || "");
+    let ops = "<option value=\"\">Sin partida</option>";
+    let esta = !actual;
+    lista.forEach(function (p) {
+        if (p.codigo === actual) esta = true;
+        ops += "<option value=\"" + logEsc_(p.codigo) + "\"" + (p.codigo === actual ? " selected" : "") + ">" +
+            logEsc_(p.codigo + " · " + p.nombre) + "</option>";
+    });
+    if (actual && !esta) {
+        ops += "<option value=\"" + logEsc_(actual) + "\" selected>" + logEsc_(actual) + "</option>";
+    }
+    let titulo = "No sale en el PDF. Sirve para calcular Duties y Taxes.";
+    if (sug.ambiguo && !actual) titulo = "La ficha menciona más de un material. Elige la partida. No sale en el PDF.";
+    else if (actual && actual === sug.codigo) titulo = "Sugerida desde la ficha comercial. No sale en el PDF.";
+    return "<label class=\"log-partida\" title=\"" + logEsc_(titulo) + "\"><span>Partida</span>" +
+        "<select class=\"form-select form-select-sm\" data-acc=\"partida\">" + ops + "</select></label>";
+}
+
+window.logNormalizarPartida = logNormalizarPartida_;
+window.logListaPartidas = logListaPartidas_;
+window.logPartidasDesdeArancel = logPartidasDesdeArancel_;
+window.logSugerirPartida = logSugerirPartida_;
+window.logPintarSelectPartida = logPintarSelectPartida_;
+window.logAlCambiarPartidaFicha = logAlCambiarPartidaFicha_;
+window.logPartidaFmt = logPartidaFmt_;
+window.logPaisesDelListado = logPaisesDelListado_;
+if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
+
 function logisticaPintarFilas_() {
     const box = document.getElementById("logFilasLista");
     if (!box) return;
@@ -2985,7 +3598,8 @@ function logisticaPintarFilas_() {
         }
         return "<div class=\"log-fila\" data-r=\"" + fila.uid + "\">" + grip + cuerpo +
             "<span class=\"log-fila-acc\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"dup\" title=\"Duplicar\"><i class=\"bi bi-files\"></i></button>" +
-            "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-acc=\"del\" title=\"Quitar de la cotización\"><i class=\"bi bi-trash\"></i></button></span>" + porOpcion + "</div>";
+            "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-acc=\"del\" title=\"Quitar de la cotización\"><i class=\"bi bi-trash\"></i></button></span>" +
+            logHtmlPartida_(fila) + porOpcion + "</div>";
     }).join("") || "<div class=\"text-muted small p-2\">Sin filas todavía.</div>";
     logisticaPintarComision_();
     logisticaPintarDescuento_();
@@ -3000,6 +3614,14 @@ function logisticaAccionFila_(ev) {
     if (!fila) return;
     const acc = t.getAttribute("data-acc");
     if (ev.type === "change") {
+        if (acc === "partida") {
+            logEscribirPartidaFicha_(fila, t.value);
+            logMarcarSucio_();
+            logAplicarAranceles_();
+            logisticaPintarEnv_(true);
+            if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+            return;
+        }
         if (acc === "ver" || acc === "lote" || acc === "lote-e") logMarcarSucio_();
         if (acc === "lote-e") {
             const e = t.getAttribute("data-e");
@@ -3113,6 +3735,7 @@ function logNuevaFilaCongelada_(p, ver, loteId) {
         }
     };
     if ((logQuote.escenarios || []).length) logOpcCompletar_(fila);
+    logAsegurarPartida_(fila);
     return fila;
 }
 
@@ -4266,19 +4889,34 @@ function logisticaLeerEnvUi_() {
             const pctEl = row.querySelector("[data-lp]");
             const nota = row.querySelector("[data-ln]");
             const nom = row.querySelector("[data-lc]");
+            const arancel = ln.tipo === "duties" || ln.tipo === "taxes";
+            let valorNuevo = ln.valor;
+            let pctNuevo = ln.pct;
             if (val) {
                 const t = String(val.value || "").trim();
                 const nuevo = t === "" ? null : Number(String(t).replace(",", "."));
-                const limpio = nuevo != null && isFinite(nuevo) ? nuevo : null;
-                if (limpio !== ln.valor) ln.fuente = "";
-                ln.valor = limpio;
+                valorNuevo = nuevo != null && isFinite(nuevo) ? nuevo : null;
             }
             if (pctEl) {
                 const t = String(pctEl.value || "").trim();
                 const nuevo = t === "" ? null : Number(String(t).replace(",", "."));
-                const limpio = nuevo != null && isFinite(nuevo) ? nuevo : null;
-                if (limpio !== ln.pct) ln.fuente = "";
-                ln.pct = limpio;
+                pctNuevo = nuevo != null && isFinite(nuevo) ? nuevo : null;
+            }
+            if (arancel && val && valorNuevo !== ln.valor) {
+                ln.fuente = "";
+                ln.arancelManual = true;
+                ln.valor = valorNuevo;
+                ln.pct = null;
+                if (pctEl) pctEl.value = "";
+            } else if (arancel && pctEl && pctNuevo !== ln.pct) {
+                ln.fuente = "";
+                ln.arancelManual = true;
+                ln.pct = pctNuevo;
+                ln.valor = null;
+                if (val) val.value = "";
+            } else {
+                if (val) ln.valor = valorNuevo;
+                if (pctEl) ln.pct = pctNuevo;
             }
             if (nota) ln.notas = nota.value || "";
             const mgN = row.querySelector("[data-lmg]");
@@ -4354,6 +4992,7 @@ function logisticaPintarEnv_(forzar) {
         } catch (err) { /* sin locale */ }
     }
     logEnvAsegurarLineas_(esEn);
+    logAplicarAranceles_();
     const e = logEnv_();
     const modSel = document.getElementById("logModalidad");
     if (modSel) {
@@ -4410,17 +5049,17 @@ function logisticaPintarEnv_(forzar) {
         box.innerHTML = e.lineas.map(function (ln) {
             const claveNal = logMargenClaveNal_(ln.tipo);
             const pct = (ln.tipo === "duties" || ln.tipo === "taxes")
-                ? "<input class=\"form-control form-control-sm\" data-lp type=\"number\" step=\"0.01\" placeholder=\"%\" title=\"Interno. No sale en el PDF. Si no hay valor, el % se aplica al precio de los proyectos sin la comisión de esta cotización.\" value=\"" + (ln.pct == null ? "" : ln.pct) + "\">"
+                ? "<input class=\"form-control form-control-sm\" data-lp type=\"number\" step=\"0.01\" placeholder=\"%\" title=\"" + logEsc_(ln.base ? ("Interno. No sale en el PDF. Base " + ln.base + ".") : "Interno. No sale en el PDF. Si no hay valor, el % se aplica al precio de los proyectos sin la comisión de esta cotización.") + "\" value=\"" + (ln.pct == null ? "" : ln.pct) + "\">"
                 : (claveNal && !exterior
                     ? "<input class=\"form-control form-control-sm\" data-lmg=\"" + claveNal + "\" type=\"number\" min=\"0\" max=\"200\" step=\"1\" placeholder=\"%\" title=\"Margen de esta fila. Se suma al costo en la cotización y no se imprime.\" value=\"" + e.margenNal[claveNal] + "\">"
                     : "");
             const nota = (ln.tipo === "duties" || ln.tipo === "taxes")
-                ? "<input class=\"form-control form-control-sm\" data-ln type=\"text\" maxlength=\"180\" placeholder=\"Observación interna\" title=\"No sale en el PDF\" value=\"" + logEsc_(ln.notas) + "\">"
+                ? "<input class=\"form-control form-control-sm\" data-ln type=\"text\" maxlength=\"400\" placeholder=\"Observación\" title=\"Se guarda con la cotización. No sale en el PDF. En la hoja, Duties y Taxes se imprimen sumados en una sola fila.\" value=\"" + logEsc_(ln.notas) + "\">"
                 : "";
             return "<div class=\"log-env-row\" data-lid=\"" + logEsc_(ln.id) + "\">" +
                 "<span class=\"log-env-grip\" title=\"Arrastrar\"><i class=\"bi bi-grip-vertical\"></i></span>" +
                 "<input class=\"form-control form-control-sm\" data-lc type=\"text\" maxlength=\"80\" value=\"" + logEsc_(ln.concepto) + "\">" +
-                "<input class=\"form-control form-control-sm text-end" + (ln.fuente ? " log-ia-est" : "") + "\" data-lv type=\"number\" step=\"0.01\" placeholder=\"" + (exterior ? "Costo" : "Costo COP") + "\" title=\"" + logEsc_(logMargenTituloCosto_(ln)) + "\" value=\"" + (ln.valor == null ? "" : ln.valor) + "\">" +
+                "<input class=\"form-control form-control-sm text-end" + (ln.fuente === "[Estimado IA]" ? " log-ia-est" : "") + "\" data-lv type=\"number\" step=\"0.01\" placeholder=\"" + (exterior ? "Costo" : "Costo COP") + "\" title=\"" + logEsc_(logMargenTituloCosto_(ln)) + "\" value=\"" + (ln.valor == null ? "" : ln.valor) + "\">" +
                 pct + nota +
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-ldup title=\"Duplicar\"><i class=\"bi bi-copy\"></i></button>" +
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-ldel title=\"Quitar\"><i class=\"bi bi-trash\"></i></button>" +
@@ -4501,7 +5140,11 @@ function logisticaOnEnvUi_(ev) {
                 valor: src.valor,
                 pct: src.pct,
                 notas: src.notas,
-                fuente: src.fuente === "[Estimado IA]" ? "[Estimado IA]" : ""
+                fuente: (src.fuente === "[Estimado IA]" || src.fuente === "Aranceles") ? src.fuente : "",
+                base: src.base || "",
+                arancelManual: !!src.arancelManual,
+                arancelFirma: src.arancelFirma || "",
+                arancelNota: src.arancelNota || ""
             });
         }
         logMarcarSucio_();
@@ -4540,6 +5183,9 @@ function logisticaOnEnvUi_(ev) {
             ln.valor = null;
             ln.pct = null;
             ln.fuente = "";
+            ln.base = "";
+            ln.arancelManual = false;
+            ln.arancelFirma = "";
         });
     }
     if (t && (t.id === "logIncoterm" || t.id === "logMercado") && (logQuote.env.incoterm !== incAntes || t.id === "logMercado")) logQuote.env.titGran = "";
@@ -4996,6 +5642,7 @@ function logIaContexto_() {
         ciudad: e.destinoCiudad,
         pais: e.destinoPais,
         codigoPais: e.destinoCodigo,
+        arancel: logArancelResumen_(),
         puerto: e.destinoPuerto,
         moneda: logQuote.moneda === "USD" ? "USD" : "COP",
         cubicaje: {
@@ -5024,7 +5671,7 @@ function logIaPrompt_(modo) {
 Eres el asistente de logística de SmartBudget. El chat es interno y SIEMPRE en español.
 No tocas precios de proyectos, comisión, descuento ni el gran total a mano. Solo hablas del envío.
 La modalidad, el destino y el Incoterm los elige la persona. Tú puedes SUGIRIR una modalidad (courier, aerea, fcl, lcl, terrestre) y explicar por qué. PROHIBIDO decir que ya la cambiaste.
-El catálogo de proveedores logísticos todavía no está conectado. Si propones un número, es una conjetura: fuente "[Estimado IA]". PROHIBIDO presentarlo como tarifa de un proveedor o como dato de Drive.
+El catálogo de fletes todavía no está conectado. Si propones un flete, es una conjetura: fuente "[Estimado IA]". PROHIBIDO presentarlo como tarifa de un proveedor. Si el contexto trae arancel, Duties y Taxes ya tienen su % y su base: no los estimes ni los cambies.
 No consultes la web ni archivos. Usa solo este contexto y el chat.
 Valores en ${ctx.moneda}, totales del envío (no por unidad). Escribe el COSTO, sin margen: la app suma el margen al pasarlo a la cotización. No lo sumes tú. Duties y Taxes pueden ir en pct (porcentaje) en lugar de valor y no llevan margen.
 Filas que existen ahora y son las únicas que puedes llenar: ${tipos}.
@@ -5092,6 +5739,7 @@ function logIaEscribirLineas_(obj) {
         const tipo = String(item && item.tipo || "").trim();
         const ln = e.lineas.find(function (x) { return x.tipo === tipo && x.tipo !== "libre"; });
         if (!ln) return;
+        if ((tipo === "duties" || tipo === "taxes") && ln.fuente === "Aranceles") return;
         const valor = Number(item.valor);
         const pct = Number(item.pct);
         let puso = false;
@@ -5201,6 +5849,8 @@ function logisticaInit() {
         if (pais && p) p.value = pais;
     });
     logCargarPaises_();
+    logCargarAranceles_();
+    if (document.getElementById("fichaPartida")) logPintarSelectPartida_("");
     logisticaInitIa_();
     ["logMercado", "logModalidad", "logIncoterm", "logDestCiudad", "logDestPais", "logDestCodigo", "logDestPuerto", "logResumenPct", "logMargenLog", "logCostosOn"].forEach(function (id) {
         const el = document.getElementById(id);
