@@ -212,6 +212,7 @@ function actualizarSimuladorFinanciero() {
     });
     panel.innerHTML = htmlCartas;
     pintarResumenStand_(trm);
+    if (typeof logisticaTrasPresupuesto_ === "function") logisticaTrasPresupuesto_();
 }
 
 function pintarResumenStand_(trm) {
@@ -511,6 +512,7 @@ function renderizarTablaItems() {
     });
     actualizarSimuladorFinanciero();
     if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+    if (typeof logisticaTrasPresupuesto_ === "function") logisticaTrasPresupuesto_();
 }
 
 function escAttrMatriz(s) {

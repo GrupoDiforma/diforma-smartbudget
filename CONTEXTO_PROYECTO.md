@@ -44,7 +44,7 @@ Mantener módulos independientes. Todo módulo nuevo (ej. `logistica.js`, `ia-co
 | `connectors.js` | Odoo CRM/productos, archivos adjuntos, locale del Brief (`idioma`, `tipo_medida`, país) y ficha comercial (UI) |
 | `ia-core.js` | Chat único, entrevista, generar matriz, rellenar ficha comercial |
 | `export-excel.js` | Rellena la plantilla .xlsx Diforma (EXP/NAL). Duplica pestañas por versión y, si hay candados, clona AUX con el mismo formato. Publica plantilla desde Admin → Conexiones |
-| `logistica.js` | Cotización PDF, envío (Incoterm, destino, costos) y ficha **Comisión de venta** de esta cotización. No meter flete ni comisión en `engine.js` ni `ia-core.js`. |
+| `logistica.js` | Cotización PDF, envío (Incoterm, destino, costos), tarifas manuales de Ajustes → Logística y ficha **Comisión de venta**. No meter flete ni comisión en `engine.js` ni `ia-core.js`. |
 | `backend.gs` | Proxy GAS (Sheets, catálogo, Odoo, Gemini, OTP, Drive, plantilla Excel, cotizaciones) |
 | `config.json` | Config de cliente (sin secretos) |
 
@@ -92,7 +92,7 @@ Si hace falta un parámetro nuevo (ej. anchos de matriz), se **añade** una clav
 - **Google Drive (bóveda del sistema):** unidad **GD-SmartBudget**, pocos miembros (cuenta que ejecuta el Script + 1 respaldo). Carpetas: `01_Sistema` (libro + plantilla Excel) y `02_Cotizaciones` (renders JPG al guardar). IDs solo en Script Properties (`DRIVE_SISTEMA_FOLDER_ID`, `DRIVE_COTIZACIONES_FOLDER_ID`, `DRIVE_PLANTILLA_FOLDER_ID`). El Script **no** debe crear carpetas en Mi unidad. Función de anclaje: `anclarBovedaSmartBudget` en GAS.
 - **Google Drive (buzón de precios):** listados crudos de proveedores (PDF/xlsx) siguen en la carpeta de **Compras** (`DRIVE_PRECIOS_FOLDER_ID`). No viven en GD-SmartBudget. No es el motor de búsqueda en cada cotización.
 - **Historial compartido:** cualquier `@grupodiforma.com` autenticado ve y reabre todas las cotizaciones. El dueño del Script es el custodio de Drive; los comerciales no necesitan ser miembros de la unidad.
-- **Gemini:** entrevista/costeo, ficha comercial **y** extracción de tablas al sincronizar PDF hacia el maestro (clave solo en GAS).
+- **Gemini:** entrevista/costeo, ficha comercial y extracción de tablas al sincronizar PDF hacia el maestro (clave solo en GAS). En Logística el chat solo opina (modalidad, huecos, preguntas). Análisis y Generar datos logísticos los hace la app con las tarifas de Ajustes.
 - **TRM:** API Socrata (Datos Abiertos Colombia).
 
 ---
@@ -144,7 +144,7 @@ Hay **una sola ventana de chat** (`ia-core.js`) con un único historial de sesi�
 
 Precios: según la sección Catálogo maestro. Híbrido: no fingir match de catálogo.
 
-No confundir las fases del **chat de costeo** (entrevista → matriz → ajustes) con las **pestañas de producto**: Ingeniería (fase 1, hecha) vs Logística (Etapa 1 del PDF hecha; Etapa 2 flete real pendiente).
+No confundir las fases del **chat de costeo** (entrevista → matriz → ajustes) con las **pestañas de producto**: Ingeniería (fase 1, hecha) vs Logística (PDF hecho; el envío lo liquida la app desde Ajustes, no Gemini).
 
 `es_global: true` (fletes, cajas máster, elaboración de troquel/dado, moldes, setup CNC) se diluye `Costo / Q`. En la matriz: columna **`$ LOTE`** (check + valor del pedido). `$ UNIT` = lote÷Q. El troquelado por golpe y los materiales por pieza no se marcan solos. El chat de costeo no debe copiar el valor de una caja o un flete en cada unidad del rango.
 
@@ -155,7 +155,7 @@ Prompt de Ajustes (`promptMaestro`): oficio y reglas de fabricación. **Las fase
 ### Prompts de negocio
 
 - **Presupuestos y Costos (pestaña Ingeniería):** ver `PROMPT_COSTEO_MAESTRO` en `ia-core.js` y el campo admin.
-- **Logístico:** chat propio en Logística, separado del de Costos. Entrevista y **Generar datos logísticos**. El valor de cada fila sale del catálogo de costos logísticos (Drive). Si ese concepto no está en el catálogo para el modo y el destino, queda `[Estimado IA]`. Aranceles ya no van por ese chat: salen de la hoja `Aranceles`. Ver checkpoint 19 oct.
+- **Logístico:** chat propio en Logística, separado del de Costos. **Análisis** y **Generar datos logísticos** no llaman a Gemini: leen `logTarifas` en Ajustes y escriben el costo. El chat (Gemini) sugiere modalidad y explica huecos; no inventa tarifas ni cambia la modalidad. Aranceles salen de la hoja `Aranceles`. Ver checkpoint 21 oct.
 
 ---
 
@@ -252,10 +252,10 @@ Módulo `logistica.js`. Hoja **Carta**, iframe `srcdoc`, PDF = impresión nativa
 **Formato en uso.** Dos bloques y un gran total.
 
 - Bloque proyectos (exportación): subtotal por defecto **PRECIO SUBTOTAL EXWORKS (USD)** (precio en planta). El texto del subtotal es editable.
-- Bloque logística aparte, con su subtotal (título editable). Las filas salen de la matriz según Incoterm × modalidad. El comercial llena el valor. Siempre puede agregar una **fila libre**.
+- Bloque logística aparte, con su subtotal (título editable). Las filas salen de la matriz según Incoterm × modalidad. **Generar datos logísticos** escribe el costo desde Ajustes. El comercial puede editarlo. Siempre puede agregar una **fila libre**.
 - Cierre por defecto: **GRAN TOTAL + Incoterm + ciudad + código de país** (ej. `GRAN TOTAL CIF MIAMI US`). El título es editable (ej. `DDP SIN IVU`: el IVU lo paga el importador). Editar el título no cambia qué filas abre el Incoterm.
 - El comercial elige **detalle** (cada fila) o **una línea**. En una línea, un % (0–100) se ve como logística y el resto se reparte en los proyectos **según el subtotal de cada uno**. El gran total no cambia. El % no se imprime.
-- Listas desplegables (la IA logística las podrá seleccionar después): **modalidad**, **Incoterm**, **país** y **código corto**. País y código salen de Odoo y se pueden cambiar. **Puerto/lugar** no va en el PDF; queda opcional y oculto, solo como dato para la IA en marítimo.
+- **Modalidad**, **Incoterm**, **país** y **código** los elige la persona. País y código salen de Odoo y se pueden cambiar. El chat puede sugerir modalidad y no la cambia sola. **Puerto** no va en el PDF; sirve para casar el flete marítimo.
 - Modalidades: **Courier** (una sola línea consolidada), **Aérea**, **Marítimo FCL**, **Marítimo LCL**, **Terrestre** (frontera: Ecuador, Venezuela). FCL y LCL usan las mismas filas.
 - Incoterms solo marítimos (FAS, FOB, CFR, CIF) no se ofrecen en aérea, courier ni terrestre.
 - **Aéreo:** el flete terrestre local entra dentro de **Costos en origen** (no hay fila aparte). El flete principal, si el Incoterm lo marca, es el **flete aéreo internacional**.
@@ -293,24 +293,31 @@ La liquidación (`valor = subtotal de proyectos × % / (100 + % + fee)`) usa el 
 
 Al guardar, `datos.comision` (`pct`, `pctBase`, `fee`) y `snap.pctCom` van en el JSON. El total de la lista es el gran total ya ajustado. Reabrir la revisión restaura % y precios. Una cotización vieja, sin ese bloque, asume que la comisión ahora seleccionada en Costos es la que está dentro del precio: no salta hasta que se cambie el %.
 
-**Asistente IA de logística.** Chat en la pestaña, aparte del de Costos. Lee el Prompt logístico de Ajustes. Entrevista en español; **Generar datos logísticos** escribe solo las filas que ya abre modalidad × Incoterm. Sugiere modalidad y no la cambia sola. No mueve comisión ni el precio de los proyectos. El valor lo pone el catálogo de costos logísticos. Si ese concepto no tiene tarifa para el modo y el destino, estimado marcado `[Estimado IA]`. No es búsqueda web. Duties y Taxes no los estima este chat: los calcula la lista de aranceles.
+**Precio del proyecto en la cotización activa.** La ficha (medidas y empaque) se lee en vivo. El precio unitario también, mientras la fila no tenga `snap`. Si la hoja se quedó con el primer precio, al cambiar la matriz, la cantidad o el simulador se suelta y vuelve el del presupuesto (`logAlinearPrecioVivo_`, `logisticaTrasPresupuesto_` desde `engine.js`). Una cotización **guardada** conserva el `snap` y no se mueve. El botón refrescar de esa fila vuelve a leer el presupuesto abierto. El tamaño de la caja no cambia el unitario: ese sale de la matriz y del AIU.
+
+**Asistente de logística.** Tres papeles, no uno. **Análisis costos logísticos** y **Generar datos logísticos** son locales e instantáneos: no llaman a Gemini. El análisis liquida lo que hay en Ajustes y sugiere otra modalidad si el volumen lo pide; no la cambia. Generar escribe el costo en la ficha (`fuente` `[Catálogo]`). La cotización le suma el margen. El **chat** es lo único que usa Gemini: sugiere modalidad, explica un hueco (rango aéreo vacío, contenedor justo, Incoterm) y responde preguntas. No inventa tarifas, no reescribe el catálogo y no dice que ya cambió la modalidad. Duties y Taxes siguen en Aranceles.
 
 **Catálogo de aranceles (en local, falta publicar).** Misma mecánica que `Catalogo_Maestro`: el archivo sigue en Drive, la sync escribe la hoja `Aranceles`, Logística lee la hoja. Fuente: `GD-Logistica\Aranceles\Impuestos y aranceles_listado.xlsx` (una fila por país + partida `9403.20.00.00`, duties %, base, taxes %, base, observación). El país de la cotización es el de Odoo (`res.country`); el Excel no duplica esa lista. Ajustes → Logística: primero Partidas (solo código y descripción; Agregar y Quitar) y debajo Aranceles (agregar a mano, observación, sin Guardar ni Duplicar por fila). Las dos se graban con el Guardar de Ajustes. Sincronizar Drive reemplaza la tabla de aranceles y suma partidas nuevas. El IVU de Puerto Rico lo paga el importador: la cotización no lo suma mientras la observación lo diga. No copiar usuarios ni claves de las primeras filas del libro original. Ids de Drive no van al frontend ni aquí. El script no crea carpetas. Falta pegar `backend.gs` y publicar una versión nueva de la implementación que ya usa la app; si no, Guardar aranceles y la sync del listado plano responden «Acción no válida».
 
-**Catálogo maestro de costos logísticos (siguiente chat).** Aparte de materiales (`Catalogo_Maestro`) y aparte de aranceles. Misma mecánica: las cotizaciones de los proveedores siguen en Drive (`GD-Logistica\Cotizaciones expo-impo\Exportaciones`; piloto IFS), una sync escribe una hoja, Ajustes → Logística la lee. El botón no va dentro de Catálogo maestro de materiales. No scrapear TCC ni Servientrega. No volver a abrir las 12 cotizaciones de IFS: la tabla de abajo ya dice en qué fila cae cada cargo.
+**Tarifas logísticas (hecho en local, sin publicar).** No hay sync de Drive ni hoja nueva. Las cotizaciones de forwarder se transcriben a mano en **Ajustes → Logística**. Persisten en el JSON de config, campo `logTarifas` (`origen`, `interno`, `aereo`, `fcl`, `lcl`, `seguro`, `destino`, `conceptos`), con el botón Guardar que ya existe. No hay acción GAS nueva. El UI ya no llama `costos_log_*`. No scrapear TCC ni Servientrega. No volver a abrir las 12 cartas de IFS: la tabla de abajo y las semillas bastan.
 
-Una cotización IFS no es una fila. Cada cargo cae en un concepto y **Generar** suma los vigentes en la fila única del Incoterm. Moneda por cargo; el TRM de la cotización convierte al final. El margen de la ficha se suma después. Duties y Taxes no llevan margen.
+Cada cargo es una fila de tarifa. **Generar** suma las preferidas en la fila única que el Incoterm ya abrió. No crea filas por cargo. Moneda por cargo; COP se pasa a USD con la TRM de Ajustes (`#cfgLogTrm` o `logTrm`) y, si la cotización es COP, el total vuelve a COP con la TRM de la cotización. El margen de la ficha se suma después, en la hoja, no dentro del costo. Duties y Taxes no llevan margen.
 
-| Bloque IFS | Concepto | Precio |
+Preferida **S** es una sola por grupo (origen: modalidad|concepto; interno: modalidad|contenedor; aéreo: país|ciudad; FCL: país|puerto|contenedor; LCL: país|puerto; seguro: modalidad; destino: país|ciudad|modalidad|concepto). Vigencia: fecha + meses de Ajustes (defecto 6). Sigue aplicando y avisa que conviene cotizar. Semilla solo si el arreglo está vacío. Origen y destino ya cargados no se pisan. Edwin debe pulsar **Guardar** en Ajustes para que seguro e interno queden en la nube.
+
+| Bloque IFS | Dónde | Cómo se liquida |
 | --- | --- | --- |
-| Flete 20'/40' o USD/kg + combustible | Flete principal | Por contenedor o por kg. A veces dos rangos o dos rutas. |
-| Bogotá–Cartagena, COP por contenedor | Flete interno | Solo marítimo o terrestre. En aéreo el camión urbano entra en origen. |
-| Document fee, maniobras, AMS, aeropuerto, agenciamiento 0,35 % FOB (mín. COP 470.000) + SAE/planilla | Origen | USD y COP. |
-| Seguro 0,40 % del valor asegurado, mín. USD 60 o 75 | Seguro | Casi fijo en IFS. |
-| Delivery, customs entry, ISF, bond, doc fee destino | Destino | Solo en DDP. |
-| Duty & Taxes del forwarder | No usar | El % sale del Excel, por país y partida. |
+| Flete aéreo por rango + combustible | Aéreo | Kg cobrable = max(peso real, kg vol). Rango: ≥500 +500, ≥300 +300, ≥100 +100, si no +45. Si esa celda está vacía, no se usa otro rango: se avisa llenarla en Ajustes → Logística → Aéreo. |
+| Camión urbano aéreo | Origen, no flete interno | En aéreo la matriz no abre flete interno. La fila interna aérea existe en la tabla y no se suma otra vez. |
+| Bogotá–puerto | Interno | Aéreo: El Dorado, camión COP 470.000 (8 oct 2026). LCL: Cartagena, VH turbo COP 4.690.000 (23 jul 2025). FCL: Cartagena, 20' COP 5.100.000 y 40' COP 6.600.000 (6 oct 2026). No hay 40HC: no inventarlo. |
+| Documentos, AMS, maniobras, DTHC, SOLAS, agenciamiento | Origen | Por embarque, por contenedor o % del EXW, según la fila. IVA de origen ya va dentro del precio guardado: no aplicar 1,19 otra vez. |
+| Seguro | Seguro | Aéreo y FCL 0,40 % mín. USD 75 (2026). LCL 0,40 % mín. USD 60 (2025). Base: precio subtotal EXW de la cotización, pasado a USD. |
+| Destino Miami | Destino | Solo la página DDP de abril 2025. El resto de ciudades se duplica en la tabla y se edita. |
+| Duty & Taxes del forwarder | No usar | Salen de Aranceles. |
 
-Un archivo DDP también alimenta un CIF: se usan los bloques que el Incoterm abre. «Al costo», «se confirmará» y «en caso de requerirse» no entran como cifra. Cargos repetidos (dos document fee) se marcan para revisar y no se suman dos veces. La fila de catálogo es trayecto + equipo (20', 40' o kg), no el archivo. La vigencia es la fecha impresa en la oferta. Estas 12 de IFS son aéreo y FCL; no hay LCL, courier, terrestre ni nacional. No scrapear TCC ni Servientrega.
+«Al costo», «se confirmará» y «en caso de requerirse» no entran. Origen aéreo es la carta de San Juan del 8 oct 2026, no la de Miami de abril 2025. Las tablas de flete marítimo (FCL por naviera y LCL 180 USD W/M) no están cargadas salvo lo que Edwin escriba. Sin tarifa preferida, la fila queda vacía: no se inventa un `[Estimado IA]` en Análisis ni en Generar.
+
+**Envío, contenedores y embarques.** Cubicaje (m³, peso real, kg vol) es editable en la ficha. Vacío usa el empaque. En FCL el análisis propone cuántos 20', 40' y 40HC caben y los deja editables. **Calcular** vuelve a poner la mezcla. Útiles de planificación, no tarifas: 20' 28 m³ / 21.700 kg, 40' 58 m³ / 26.500 kg, 40HC 68 m³ / 26.500 kg. Si la operación usa otros, se cambian en `LOG_CONT_CAP_`. Lo escrito no se pisa. **Embarques** (defecto 1) multiplican los cargos marcados por embarque. El flete por kg, por W/M o por contenedor usa el cubicaje o la cantidad de cada equipo y no se multiplica otra vez.
 
 **Partida arancelaria (en el working tree, sin commit).** Vive en la ficha comercial del elemento (`fichaComercial.partida`) y en la fila de la cotización. Desplegable editable. **Rellenar con IA** está junto al título comercial, no en la barra de país, idioma y sistema. No se imprime. Lista en **Ajustes → Logística → Partidas** (`CONFIG_GLOBAL.partidas`), formato `9403.20.00.00`. Semilla: las 31 del listado (metálico, madera, plástico, display plástico, impresos, cartón, cajas corrugadas y plegadizas, calcomanías, hojalata, neveras, caja de luz, y los códigos nacionales del Excel, p. ej. `9403.20.99.00`). La ficha sugiere una sola; si nombra dos materiales, queda vacía. Cartonplast → plástico. El cruce con Duties y Taxes es país de destino × esa partida.
 
@@ -327,24 +334,22 @@ Un archivo DDP también alimenta un CIF: se usan los bloques que el Incoterm abr
 
 ---
 
-## CHECKPOINT — 19 oct 2026
+## CHECKPOINT — 21 oct 2026
 
-Para gastar pocos tokens: lee solo este checkpoint y **Catálogo maestro de costos logísticos** (dentro de Fase 2 → Etapa 2). No abras chats anteriores ni vuelvas a leer las 12 cotizaciones de IFS. La tabla «Bloque IFS» de esa sección basta.
+Para gastar pocos tokens: lee solo este checkpoint y **Tarifas logísticas** (Fase 2 → Etapa 2). No abras chats anteriores ni las cartas de IFS.
 
-Producción (`main` y `origin/desarrollo`): **V1.0.33**, commit `70606d6`. Preview: `http://127.0.0.1:8765/`. No publicar ni hacer commit salvo que Edwin lo pida. No recargar sus pestañas de cotización abiertas. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni en este archivo. El script no crea carpetas en Mi unidad. No alterar Motor AIU, Márgenes, Catálogos fijos, Comisiones ni Prompts IA.
+Nada de esto está publicado ni en commit. Producción sigue en **V1.0.33**. No hacer `git push`, `./desplegar.sh` ni commit salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, Catálogos fijos, Comisiones ni el texto de Prompts IA. Las reglas del asistente de logística viven en `logistica.js` y mandan sobre el prompt de Ajustes.
 
-`desarrollo` local va 2 commits por delante, sin push. Sin commit, en el working tree: aranceles, partidas y la ficha. Caché local: `styles.css 1.0.60` · `admin.js 1.0.38` · `connectors.js 1.0.37` · `ia-core.js 1.0.41` · `engine.js 1.0.38` · `logistica.js 1.0.94`. Insignia V1.0.33. Aranceles y partidas ya están en Ajustes → Logística; no rehacerlos. Publicar `backend.gs` (versión nueva de la implementación que ya usa la app) sigue pendiente y no bloquea este catálogo.
+Caché local: `styles.css 1.0.69` · `admin.js 1.0.46` · `connectors.js 1.0.38` · `ia-core.js 1.0.42` · `engine.js 1.0.39` · `logistica.js 1.0.109`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin debe recargar. Si las semillas de seguro o flete interno llenaron tablas vacías, pulsar **Guardar** en Ajustes una vez.
 
-**Siguiente paso único: catálogo maestro de costos logísticos.** Analizar cómo se configura cada ítem para que aplique según el Incoterm, el modo de envío y el destino. La fuente es Drive. Si ese costo no está en el catálogo, **Generar datos logísticos** lo deja como `[Estimado IA]`.
+Hecho y no reabrir el diseño:
 
-Ya decidido, no volver a discutirlo:
+- Tarifas manuales en `logTarifas`. Análisis y Generar son de la app. Gemini solo está en el chat.
+- Generar escribe el costo en Costos logísticos y la cotización suma el margen. El fallo era escribir en una copia que la pantalla ya no usaba.
+- FCL: cantidad editable de 20' / 40' / 40HC y número de embarques. Capacidades en `LOG_CONT_CAP_`.
+- Aéreo: si falta el rango que corresponde al peso, no se toma otro.
+- Seguro y cargos en % usan el subtotal EXW de la cotización.
+- La cotización activa sigue la matriz y el simulador. La guardada queda congelada.
 
-- Hoja aparte de `Catalogo_Maestro` y de `Aranceles`. Sync en Ajustes → Logística. Carpeta `GD-Logistica\Cotizaciones expo-impo\Exportaciones`.
-- La matriz Incoterm × modalidad ya dice qué filas existen (origen, flete interno, flete principal, seguro, destino, courier; en nacional: envío, montaje, bodegaje, otro). El catálogo llena el valor de esas filas. No crea filas nuevas por cada cargo del proveedor.
-- Duties y Taxes no entran aquí. Salen de la hoja `Aranceles`.
-- El destino es el país de Odoo (nombre + código). El equipo (20', 40' o kg) y la vigencia salen de la oferta. Varios cargos del mismo concepto se suman en la fila única. «Al costo», «se confirmará» y «en caso de requerirse» no entran como cifra.
-- El margen de la ficha se suma después. Duties y Taxes no llevan margen.
-- No scrapear cotizadores nacionales.
-
-**No reabrir** salvo regresión: Excel AUX, candados, OTP, matriz AIU, renders con pin, comisión, descuento, IVA, aranceles, partidas.
+Siguiente, solo si Edwin lo pide: cargar fletes marítimos FCL/LCL que él dicte, o corregir los m³ útiles del contenedor. No inventar 40HC de flete interno ni tarifas de puerto.
 

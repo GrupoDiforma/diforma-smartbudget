@@ -299,7 +299,9 @@ body {
 }
 .log-cubica b { display: block; font-size: 0.68rem; letter-spacing: .04em; text-transform: uppercase; color: #6b6b6b; }
 .log-cubica .log-cubica-num { font-weight: 700; }
-.log-cubica .text-muted { font-size: 0.72rem; }
+.log-cubica .log-cubica-edit { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.log-cubica .log-cubica-edit label { display: flex; flex-direction: column; gap: 2px; font-size: 0.68rem; letter-spacing: .04em; text-transform: uppercase; color: #6b6b6b; }
+.log-cubica .log-cubica-edit input { width: 7.2rem; text-transform: none; letter-spacing: 0; }
 .log-ia-box {
     background: #fbfbfb;
     border: 1px solid var(--sb-line);
@@ -319,7 +321,9 @@ body {
     margin-bottom: 6px;
     max-width: 95%;
 }
-.log-ia-box .log-ia-user { margin-left: auto; background: #1a1a1a; color: #fff; }
+.log-ia-box .log-ia-user { margin-left: auto; background: #ececec; color: #333; border: 1px solid #d5d5d5; }
+#logDestCiudad::placeholder { color: #b0b0b0; font-style: italic; }
+.chat-box .chat-user { background: #ececec; color: #333; border: 1px solid #d5d5d5; }
 .log-ia-box .log-ia-model { background: #fff; border: 1px solid var(--sb-line); }
 .log-ia-box .log-ia-nota { background: #fff8e8; border: 1px solid #f0e0b0; color: #5c4a12; }
 .log-ia-sug {
@@ -1144,6 +1148,70 @@ html, body { overflow-x: hidden; }
 .sb-modal-footer .btn {
     min-width: 108px;
 }
+.log-ajustes-sub { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.log-ajustes-sub-btn {
+    border: 1px solid var(--sb-line);
+    background: #fff;
+    color: var(--sb-text);
+    border-radius: 999px;
+    padding: 4px 14px;
+    font-size: 0.8rem;
+}
+.log-ajustes-sub-btn.active { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+.cl-sort {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    cursor: pointer;
+}
+.cl-sort:hover { color: var(--diforma-red); }
+#logTarBody tr.lt-pref td:first-child { box-shadow: inset 3px 0 0 #2f7d4a; }
+#logTarBody tr.lt-vieja { background: #fff8e8; }
+#logTarBody .log-tar-grupo td { background: #f4f4f5; font-weight: 600; font-size: 0.75rem; }
+#logTarBody .lt-num { width: 5.6rem; }
+#logTarBody .lt-lugar { min-width: 12.5rem; width: 12.5rem; }
+#logTarBody .lt-concepto { min-width: 13.5rem; }
+.lt-menu {
+    position: fixed;
+    z-index: 5000;
+    max-height: 240px;
+    overflow: auto;
+    background: #fff;
+    border: 1px solid #d4d4d4;
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.18);
+    padding: 4px;
+}
+.lt-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+}
+.lt-menu button:hover { background: #f3f3f3; }
+.lt-menu .lt-menu-nuevo { color: var(--diforma-red); font-weight: 600; }
+.lt-menu-vacio { padding: 6px 8px; color: #777; font-size: 0.8rem; }
+#logTarBody .lt-fecha { width: 8.6rem; }
+#logTarBody .lt-mon { width: 4.6rem; }
+.lt-otro { display: flex; gap: 4px; margin-bottom: 4px; }
+.lt-otros { min-width: 220px; }
+.log-tar-sim { background: #fafafa; border: 1px solid var(--sb-line); border-radius: 8px; padding: 10px 12px; }
+.log-tar-copia { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+#logTarHead .lt-sel, #logTarBody .lt-sel { width: 2.2rem; text-align: center; }
+#logTarPanel .admin-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.log-cont-row { display: flex; gap: 8px; }
+.log-cont-row label { font-size: 0.75rem; color: var(--sb-muted); }
+.log-cont-row input { width: 64px; }
+.log-cont-nota { font-size: 0.72rem; color: #6b6b6b; margin-top: 4px; line-height: 1.35; }
+#logEmbarques { max-width: 6rem; }
+.log-env-row [data-lv].log-cat { background: #f4f8fb; }
 .admin-nav {
     gap: 4px;
     border-bottom: 1px solid var(--sb-line);

@@ -158,7 +158,7 @@ function pintarMensaje(rol, html, modelo) {
     if (!box) return;
     limpiarPlaceholderSiHaceFalta();
     if (rol === 'user') {
-        box.innerHTML += `<div class="text-end mb-2"><span class="bg-primary text-white p-2 rounded d-inline-block text-start" style="font-size:0.8rem; max-width:90%; white-space:pre-wrap;">${html}</span></div>`;
+        box.innerHTML += `<div class="text-end mb-2"><span class="chat-user p-2 rounded d-inline-block text-start" style="font-size:0.8rem; max-width:90%; white-space:pre-wrap;">${html}</span></div>`;
     } else {
         const etiqueta = modelo ? `<b>${modelo}:</b><br>` : '';
         box.innerHTML += `<div class="text-start mb-2"><span class="bg-light border p-2 rounded d-inline-block text-dark" style="font-size:0.8rem; max-width:90%;">${etiqueta}${html}</span></div>`;
