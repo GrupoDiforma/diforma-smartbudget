@@ -358,7 +358,7 @@ Lee este checkpoint y la sección **Tarifas logísticas**. No abras chats anteri
 
 La versión de la app es **V2.0**, **V2.1** … **V2.9**, **V3.0**. El badge lo cambia solo `./desplegar.sh`. El esquema de tres números (`V1.0.33`) ya no se usa. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
 
-Caché local: `styles.css 1.0.80` · `admin.js 1.0.72` · `connectors.js 1.0.41` · `ia-core.js 1.0.43` · `engine.js 1.0.39` · `logistica.js 1.0.140` · `export-excel.js 1.0.33`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
+Caché local: `styles.css 1.0.80` · `admin.js 1.0.72` · `connectors.js 1.0.41` · `ia-core.js 1.0.43` · `engine.js 1.0.39` · `logistica.js 1.0.149` · `export-excel.js 1.0.33`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
 
 Nube, una fila por dato:
 

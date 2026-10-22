@@ -1042,18 +1042,40 @@ function logPaisesFuente_() {
     return logPaisesBase_();
 }
 
+/** Nombre normalizado → ISO, armado una vez. Recorrer el catálogo en cada
+ * ciudad o tarifa congelaba la pestaña al abrir una cotización. */
+var logPaisIndice_ = null;
+var logPaisPorCodigo_ = null;
+function logPaisIndiceOlvidar_() {
+    logPaisIndice_ = null;
+    logPaisPorCodigo_ = null;
+}
+function logPaisIndiceArmar_() {
+    if (logPaisIndice_) return;
+    const porNom = {};
+    const porCod = {};
+    LOG_PAISES_.forEach(function (x) {
+        const n = logTarNorm_(x[0]);
+        if (n && !porNom[n]) porNom[n] = x[1];
+    });
+    Object.keys(LOG_PAISES_EN_).forEach(function (k) { porNom[k] = LOG_PAISES_EN_[k]; });
+    logPaisesFuente_().forEach(function (x) {
+        const cod = String(x.codigo || "").trim().toUpperCase();
+        const n = logTarNorm_(x.nombre);
+        if (!cod) return;
+        porCod[cod] = x.nombre;
+        if (n) porNom[n] = cod;
+        porNom[cod.toLowerCase()] = cod;
+    });
+    logPaisIndice_ = porNom;
+    logPaisPorCodigo_ = porCod;
+}
+
 function logEnvCodigoDePais_(pais) {
     const p = logTarNorm_(pais);
     if (!p) return "";
-    if (/^[a-z]{2}$/.test(p)) {
-        const porCod = logPaisesFuente_().find(function (x) { return x.codigo === p.toUpperCase(); });
-        if (porCod) return porCod.codigo;
-    }
-    const hit = logPaisesFuente_().find(function (x) { return logTarNorm_(x.nombre) === p; });
-    if (hit) return hit.codigo;
-    if (LOG_PAISES_EN_[p]) return LOG_PAISES_EN_[p];
-    const alias = LOG_PAISES_.find(function (x) { return logTarNorm_(x[0]) === p; });
-    return alias ? alias[1] : "";
+    logPaisIndiceArmar_();
+    return logPaisIndice_[p] || "";
 }
 
 /** Clave de país para diccionarios: el ISO si se resuelve (el idioma del
@@ -1065,8 +1087,8 @@ function logPaisClave_(pais) {
 function logPaisDeCodigo_(cod) {
     const c = String(cod || "").trim().toUpperCase();
     if (!c) return "";
-    const hit = logPaisesFuente_().find(function (x) { return x.codigo === c; });
-    return hit ? hit.nombre : "";
+    logPaisIndiceArmar_();
+    return logPaisPorCodigo_[c] || "";
 }
 
 function logPaisNombreEs_(codigo, nombre) {
@@ -1093,6 +1115,7 @@ function logPaisesAplicar_(lista) {
     const es = logPaisesEnEspanol_(lista);
     if (!es.length) return;
     logPaisesCat_ = es;
+    logPaisIndiceOlvidar_();
     const e = logQuote && logQuote.env;
     if (!e || !e.destinoPais || e.destinoCodigo) return;
     const cod = logEnvCodigoDePais_(e.destinoPais);
@@ -6238,7 +6261,7 @@ function logTarCodigoPais_(s) {
 function logTarMismoPais_(a, b) {
     const ca = logTarCodigoPais_(a);
     const cb = logTarCodigoPais_(b);
-    if (ca && cb && ca === cb) return true;
+    if (ca && cb) return ca === cb;
     const na = (ca && typeof logPaisDeCodigo_ === "function" && logPaisDeCodigo_(ca)) || a;
     const nb = (cb && typeof logPaisDeCodigo_ === "function" && logPaisDeCodigo_(cb)) || b;
     return logTarSi_(na, nb);
