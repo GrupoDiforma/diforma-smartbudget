@@ -45,12 +45,18 @@ function doPost(e) {
     else if (action === "odoo_cotizacion_datos") result = proxyOdooCotizacionDatos(params.codigo);
     else if (action === "odoo_imagen_proyecto") result = proxyOdooImagenProyecto(params.codigo, params.campo);
     else if (action === "guardar_cotizacion") result = guardarCotizacionBD(params, params.email);
+    else if (action === "eliminar_cotizacion") result = eliminarCotizacionBD(params);
     else if (action === "listar_cotizaciones") result = listarCotizacionesBD();
     else if (action === "obtener_cotizacion") result = obtenerCotizacionBD(params.id, params.rev);
     else if (action === "cotizacion_imagenes") result = imagenesCotizacionBD(params.ids, params.modo);
     else if (action === "resolver_imagenes_cotizacion") result = resolverImagenesCotizacionBD(params.imagenes);
     else if (action === "odoo_productos") result = proxyOdooProductos(params.query);
     else if (action === "odoo_paises") result = proxyOdooPaises();
+    else if (action === "odoo_ciudades") result = proxyOdooCiudades(params);
+    else if (action === "ciudades_consultar") result = ciudadesConsultar(params);
+    else if (action === "ciudades_reemplazar") result = ciudadesReemplazar(params, params.email);
+    else if (action === "tarifas_consultar") result = tarifasConsultar();
+    else if (action === "tarifas_reemplazar") result = tarifasReemplazar(params, params.email);
     else if (action === "gemini_analizar") result = proxyGeminiAnalizar(params);
     else if (action === "gemini_chat") result = proxyGeminiChat(params);
     else if (action === "gemini_uso") result = obtenerUsoGemini();
@@ -118,24 +124,225 @@ function obtenerHojaConfig() {
   return sheet;
 }
 
+function unirConfigHoja_(sheet) {
+  var ancho = Math.max(sheet.getLastColumn(), 16);
+  var values = sheet.getRange(1, 1, 2, ancho).getValues();
+  var headers = values[0];
+  var row = values[1];
+  if (!row || row[1] == null || String(row[1]) === "") return { json: "", trozos: 0, chars: 0 };
+  var json = String(row[1]);
+  var extras = [];
+  for (var c = 4; c < ancho; c++) {
+    var v = row[c] == null ? "" : String(row[c]);
+    if (!v) continue;
+    var h = String(headers[c] || "");
+    var n = h.match(/^JSON_(\d+)$/);
+    if (n) extras.push({ n: Number(n[1]), v: v });
+    else if (v.length > 40) extras.push({ n: 100 + c, v: v });
+  }
+  extras.sort(function (a, b) { return a.n - b.n; });
+  extras.forEach(function (x) { json += x.v; });
+  return { json: json, trozos: 1 + extras.length, chars: json.length };
+}
+
+function escribirConfigHoja_(sheet, jsonStr, fecha, email) {
+  var n = 40000;
+  var partes = [];
+  for (var i = 0; i < jsonStr.length; i += n) partes.push(jsonStr.substring(i, i + n));
+  if (!partes.length) partes.push("");
+  var cols = 4 + partes.length - 1;
+  if (sheet.getMaxColumns() < cols) sheet.insertColumnsAfter(sheet.getMaxColumns(), cols - sheet.getMaxColumns());
+  var ancho = Math.max(sheet.getLastColumn(), cols, 8);
+  var headers = ["ID", "JSON_Config", "Ultima_Actualizacion", "Actualizado_Por"];
+  var row = ["CONF_MAESTRA", partes[0], fecha, email];
+  for (var p = 1; p < partes.length; p++) {
+    headers.push("JSON_" + (p + 1));
+    row.push(partes[p]);
+  }
+  while (headers.length < ancho) {
+    headers.push("");
+    row.push("");
+  }
+  sheet.getRange(1, 1, 2, ancho).setValues([headers, row]);
+}
+
 function obtenerConfiguracionGlobal() {
   var sheet = obtenerHojaConfig();
-  var data = sheet.getDataRange().getValues();
-  if (data.length > 1 && data[1][1]) {
-    return { exito: true, data: JSON.parse(data[1][1]) };
+  var info = unirConfigHoja_(sheet);
+  if (!info.json) return { exito: false, mensaje: "Sin configuración remota aún." };
+  try {
+    return { exito: true, data: JSON.parse(info.json) };
+  } catch (e) {
+    return { exito: false, mensaje: "La configuración de la hoja quedó partida (" + info.trozos + " trozo" + (info.trozos === 1 ? "" : "s") + ", " + info.chars + " caracteres). No guardes hasta publicar backend.gs y reintentar. " + e.message };
   }
-  return { exito: false, mensaje: "Sin configuración remota aún." };
 }
 
 function guardarConfiguracionGlobal(configData, email) {
   if (ADMIN_EMAILS.indexOf(email.toLowerCase()) === -1) return {exito: false, mensaje: "Permisos insuficientes."};
+  configData = configData || {};
+  var tarifasFilas = 0;
+  if (configData.logTarifas) {
+    var tarifas = tarifasDesdePayload_(configData.logTarifas);
+    if (tarifas) tarifasFilas = tarifasEscribirHoja_(tarifas).filas;
+    delete configData.logTarifas;
+  }
   var sheet = obtenerHojaConfig();
   var fechaHoy = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  var jsonStr = JSON.stringify(configData);
+  escribirConfigHoja_(sheet, JSON.stringify(configData), fechaHoy, email);
+  var avisoTarifas = tarifasFilas ? " Tarifas logísticas: " + tarifasFilas + " filas." : "";
+  return {exito: true, mensaje: "Configuración global actualizada para toda la empresa." + avisoTarifas};
+}
+
+var TARIFA_TIPOS_ = ["origen", "interno", "aereo", "fcl", "lcl", "seguro", "destino"];
+var TARIFA_COLS_ = ["tipo", "id", "preferida", "origen", "salida", "modalidad", "equipo", "precio", "moneda", "proveedor", "fecha", "cobro", "factor", "desde", "hasta", "minimo", "maximo", "pais", "ciudad", "puerto", "concepto", "forma", "baseVar", "baseCargos", "aplica", "r45", "r100", "r300", "r500", "fsIncluido", "fsKg", "aerolinea", "transito", "naviera", "otros"];
+
+function obtenerHojaTarifas_() {
+  var ss = libroHistorico_();
+  var sheet = ss.getSheetByName("Tarifas_Logistica");
+  if (!sheet) {
+    sheet = ss.insertSheet("Tarifas_Logistica");
+    sheet.appendRow(TARIFA_COLS_);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function tarifasDesdePayload_(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try { raw = JSON.parse(raw); } catch (e) { return null; }
+  }
+  return raw && typeof raw === "object" ? raw : null;
+}
+
+var TARIFA_NUM_ = { factor: 1, desde: 1, hasta: 1, minimo: 1, maximo: 1, precio: 1, r45: 1, r100: 1, r300: 1, r500: 1, fsKg: 1 };
+
+function tarifasComoNumero_(v) {
+  if (v == null || v === "") return "";
+  if (Object.prototype.toString.call(v) === "[object Date]") {
+    v = Utilities.formatDate(v, Session.getScriptTimeZone(), "d.M");
+  }
+  var s = String(v).trim().replace(",", ".");
+  if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+  return v;
+}
+
+function tarifasCelda_(col, v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "object" && Object.prototype.toString.call(v) !== "[object Date]") return JSON.stringify(v);
+  if (TARIFA_NUM_[col]) return tarifasComoNumero_(v);
+  if (Object.prototype.toString.call(v) === "[object Date]") return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  return v;
+}
+
+function tarifasEscribirHoja_(tarifas) {
+  var sheet = obtenerHojaTarifas_();
+  var filas = [TARIFA_COLS_];
+  TARIFA_TIPOS_.forEach(function (tipo) {
+    var lista = Array.isArray(tarifas[tipo]) ? tarifas[tipo] : [];
+    lista.forEach(function (f) {
+      if (!f || typeof f !== "object") return;
+      filas.push(TARIFA_COLS_.map(function (col) {
+        if (col === "tipo") return tipo;
+        return tarifasCelda_(col, f[col]);
+      }));
+    });
+  });
+  (Array.isArray(tarifas.lugares) ? tarifas.lugares : []).forEach(function (f) {
+    if (!f || typeof f !== "object") return;
+    var row = TARIFA_COLS_.map(function () { return ""; });
+    row[0] = "lugar";
+    row[1] = tarifasCelda_("id", f.id);
+    row[TARIFA_COLS_.indexOf("pais")] = tarifasCelda_("pais", f.pais);
+    row[TARIFA_COLS_.indexOf("concepto")] = tarifasCelda_("concepto", f.nombre);
+    row[TARIFA_COLS_.indexOf("aplica")] = tarifasCelda_("aplica", f.uso);
+    filas.push(row);
+  });
+  var conceptos = tarifas.conceptos && typeof tarifas.conceptos === "object" ? tarifas.conceptos : {};
+  ["origen", "destino"].forEach(function (grupo) {
+    (Array.isArray(conceptos[grupo]) ? conceptos[grupo] : []).forEach(function (nombre) {
+      var row = TARIFA_COLS_.map(function () { return ""; });
+      row[0] = "concepto";
+      row[TARIFA_COLS_.indexOf("modalidad")] = grupo;
+      row[TARIFA_COLS_.indexOf("concepto")] = tarifasCelda_("concepto", nombre);
+      filas.push(row);
+    });
+  });
+  sheet.clearContents();
+  var rango = sheet.getRange(1, 1, filas.length, TARIFA_COLS_.length);
+  rango.setNumberFormat("@");
+  if (filas.length > 1) {
+    TARIFA_COLS_.forEach(function (col, i) {
+      if (!TARIFA_NUM_[col]) return;
+      sheet.getRange(2, i + 1, filas.length - 1, 1).setNumberFormat("0.####");
+    });
+  }
+  rango.setValues(filas);
+  sheet.setFrozenRows(1);
+  return { filas: filas.length - 1 };
+}
+
+function tarifasLeerHoja_() {
+  var sheet = obtenerHojaTarifas_();
   var data = sheet.getDataRange().getValues();
-  if (data.length > 1) { sheet.getRange(2, 2, 1, 3).setValues([[jsonStr, fechaHoy, email]]); }
-  else { sheet.appendRow(["CONF_MAESTRA", jsonStr, fechaHoy, email]); }
-  return {exito: true, mensaje: "Configuración global actualizada para toda la empresa."};
+  var head = data.length ? data[0].map(function (h) { return String(h || "").trim(); }) : TARIFA_COLS_;
+  var col = {};
+  head.forEach(function (h, i) { if (h) col[h] = i; });
+  var out = { origen: [], interno: [], aereo: [], fcl: [], lcl: [], seguro: [], destino: [], lugares: [], conceptos: { origen: [], destino: [] } };
+  for (var r = 1; r < data.length; r++) {
+    var tipo = String(data[r][col.tipo == null ? 0 : col.tipo] || "").trim();
+    if (!tipo) continue;
+    if (tipo === "lugar") {
+      out.lugares.push({
+        id: String(data[r][col.id] || ""),
+        pais: String(data[r][col.pais] || ""),
+        nombre: String(data[r][col.concepto] || ""),
+        uso: String(data[r][col.aplica] || "ciudad")
+      });
+      continue;
+    }
+    if (tipo === "concepto") {
+      var grupo = String(data[r][col.modalidad] || "");
+      var nombre = String(data[r][col.concepto] || "").trim();
+      if (nombre && out.conceptos[grupo]) out.conceptos[grupo].push(nombre);
+      continue;
+    }
+    if (!out[tipo]) continue;
+    var fila = {};
+    TARIFA_COLS_.forEach(function (k) {
+      if (k === "tipo" || col[k] == null) return;
+      var v = data[r][col[k]];
+      if (v == null || v === "") return;
+      if (k === "otros" && typeof v === "string" && v.charAt(0) === "[") {
+        try { v = JSON.parse(v); } catch (e) {}
+      }
+      if (Object.prototype.toString.call(v) === "[object Date]") {
+        v = Utilities.formatDate(v, Session.getScriptTimeZone(), TARIFA_NUM_[k] ? "d.M" : "yyyy-MM-dd");
+      }
+      if (TARIFA_NUM_[k]) v = tarifasComoNumero_(v);
+      fila[k] = v;
+    });
+    if (fila.id || fila.concepto || fila.precio != null || fila.pais || fila.ciudad || fila.puerto) out[tipo].push(fila);
+  }
+  return out;
+}
+
+function tarifasConsultar() {
+  try {
+    var data = tarifasLeerHoja_();
+    var n = TARIFA_TIPOS_.reduce(function (s, k) { return s + data[k].length; }, 0);
+    return { exito: true, data: data, total: n };
+  } catch (e) {
+    return { exito: false, mensaje: String(e.message || e) };
+  }
+}
+
+function tarifasReemplazar(params, email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Permisos insuficientes." };
+  var tarifas = tarifasDesdePayload_(params && (params.tarifas || params.logTarifas));
+  if (!tarifas) return { exito: false, mensaje: "No hay tarifas para guardar." };
+  var escrito = tarifasEscribirHoja_(tarifas);
+  return { exito: true, mensaje: "Tarifas logísticas guardadas en su pestaña.", data: escrito };
 }
 
 function guardarAnchosMatriz(anchos, email) {
@@ -143,16 +350,11 @@ function guardarAnchosMatriz(anchos, email) {
     return { exito: false, mensaje: "Permisos insuficientes." };
   }
   var sheet = obtenerHojaConfig();
-  var data = sheet.getDataRange().getValues();
   var cfg = {};
-  if (data.length > 1 && data[1][1]) {
-    try { cfg = JSON.parse(data[1][1]); } catch (e) { cfg = {}; }
-  }
+  try { cfg = JSON.parse((unirConfigHoja_(sheet) || {}).json || "{}"); } catch (e) { cfg = {}; }
   cfg.anchosMatriz = (anchos && typeof anchos === "object") ? anchos : {};
   var fechaHoy = new Date().toISOString().replace("T", " ").substring(0, 19);
-  var jsonStr = JSON.stringify(cfg);
-  if (data.length > 1) { sheet.getRange(2, 2, 1, 3).setValues([[jsonStr, fechaHoy, email]]); }
-  else { sheet.appendRow(["CONF_MAESTRA", jsonStr, fechaHoy, email]); }
+  escribirConfigHoja_(sheet, JSON.stringify(cfg), fechaHoy, email);
   return { exito: true, mensaje: "Anchos de matriz guardados para toda la empresa." };
 }
 
@@ -233,6 +435,184 @@ function proxyOdooPaises() {
   } catch (e) {
     return { exito: false, mensaje: String(e.message || e) };
   }
+}
+
+/** Ciudades de Odoo de un país. Sin país no recorre el mundo: el corte de 8000 dejaba fuera a Puerto Rico y México. */
+function proxyOdooCiudades(params) {
+  try {
+    params = params || {};
+    var paisPedido = String(params.pais || "").trim();
+    var codigoPedido = String(params.codigo || "").trim().toUpperCase();
+    if (!paisPedido && !codigoPedido) return { exito: true, data: [], mensaje: "Indica el país." };
+    var paisId = odooPaisId_(paisPedido, codigoPedido);
+    if (!paisId) return { exito: true, data: [], mensaje: "Odoo no tiene ese país." };
+    var cache = CacheService.getScriptCache();
+    var cacheKey = "odoo_ciudades_v3_" + paisId;
+    var hit = null;
+    try { hit = cache.get(cacheKey); } catch (e0) {}
+    if (hit) return { exito: true, data: JSON.parse(hit), modelo: "cache" };
+    var modelo = odooModeloCiudades_();
+    if (!modelo) return { exito: false, mensaje: "Odoo no tiene un catálogo de ciudades disponible para este usuario." };
+    var c = odooCredenciales_();
+    var uid = odooUid_();
+    var meta = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, modelo, "fields_get", [[]], { attributes: ["type", "string", "relation"] }]) || {};
+    if (!meta.name || !meta.country_id) return { exito: false, mensaje: "El catálogo de ciudades no trae nombre y país." };
+    var campos = ["name", "country_id"];
+    if (meta.state_id) campos.push("state_id");
+    var out = [];
+    var offset = 0;
+    var langOk = null;
+    var domain = [["country_id", "=", paisId]];
+    while (out.length < 12000) {
+      var pagina = odooLeerCiudadesPagina_(c, uid, modelo, campos, offset, langOk, domain);
+      langOk = pagina.lang;
+      var rows = pagina.rows;
+      if (!rows.length) break;
+      rows.forEach(function (r) {
+        var pais = r.country_id && r.country_id[1] ? String(r.country_id[1]).trim() : "";
+        var nombre = String(r.name || "").trim();
+        if (!nombre || !pais) return;
+        var estado = r.state_id && r.state_id[1] ? String(r.state_id[1]).trim() : "";
+        out.push({ nombre: nombre, pais: pais, estado: estado });
+      });
+      if (rows.length < 500) break;
+      offset += 500;
+    }
+    var json = JSON.stringify(out);
+    if (json.length < 90000) {
+      try { cache.put(cacheKey, json, 21600); } catch (e2) {}
+    }
+    return { exito: true, data: out, modelo: modelo };
+  } catch (e) {
+    return { exito: false, mensaje: String(e.message || e) };
+  }
+}
+
+function odooPaisId_(pais, codigo) {
+  var rows = [];
+  if (codigo) rows = odooSearchRead_("res.country", [["code", "=", codigo]], ["id", "name", "code"], 1, 0, "") || [];
+  if (!rows.length && pais) rows = odooSearchRead_("res.country", [["name", "=", pais]], ["id", "name", "code"], 1, 0, "") || [];
+  if (!rows.length && pais) rows = odooSearchRead_("res.country", [["name", "ilike", pais]], ["id", "name", "code"], 5, 0, "") || [];
+  return rows.length ? rows[0].id : 0;
+}
+
+function odooLeerCiudadesPagina_(c, uid, modelo, campos, offset, langFijo, domain) {
+  var probar = langFijo === null || langFijo === undefined ? ["es_CO", "es", ""] : [langFijo];
+  var i, last;
+  for (i = 0; i < probar.length; i++) {
+    var kw = { fields: campos, limit: 500, offset: offset, order: "name" };
+    if (probar[i]) kw.context = { lang: probar[i] };
+    try {
+      var rows = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, modelo, "search_read", [domain || []], kw]) || [];
+      return { rows: rows, lang: probar[i] };
+    } catch (e) {
+      last = e;
+      if (!/language code/i.test(String(e.message || e))) throw e;
+    }
+  }
+  throw last;
+}
+
+function ciudadesNorm_(s) {
+  return String(s || "").toLowerCase()
+    .replace(/á/g, "a").replace(/é/g, "e").replace(/í/g, "i").replace(/ó/g, "o").replace(/ú/g, "u").replace(/ñ/g, "n")
+    .replace(/\s+/g, " ").trim();
+}
+
+function obtenerHojaCiudades_() {
+  var ss = libroHistorico_();
+  var sheet = ss.getSheetByName("Ciudades");
+  if (!sheet) {
+    sheet = ss.insertSheet("Ciudades");
+    sheet.appendRow(["id", "nombre", "pais", "uso"]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function ciudadesLeerHoja_() {
+  var sheet = obtenerHojaCiudades_();
+  var data = sheet.getDataRange().getValues();
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    var nombre = String(data[i][1] || "").trim();
+    var pais = String(data[i][2] || "").trim();
+    if (!nombre || !pais) continue;
+    var uso = String(data[i][3] || "ciudad").trim();
+    if (uso !== "puerto" && uso !== "ambas") uso = "ciudad";
+    out.push({ id: String(data[i][0] || ""), nombre: nombre, pais: pais, uso: uso });
+  }
+  return out;
+}
+
+function ciudadesConsultar(params) {
+  try {
+    var pais = String((params && params.pais) || "").trim();
+    var todas = ciudadesLeerHoja_();
+    if (!pais) return { exito: true, data: todas };
+    var n = ciudadesNorm_(pais);
+    return { exito: true, data: todas.filter(function (x) { return ciudadesNorm_(x.pais) === n; }) };
+  } catch (e) {
+    return { exito: false, mensaje: String(e.message || e) };
+  }
+}
+
+function ciudadesReemplazar(params, email) {
+  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Permisos insuficientes." };
+  try {
+    var pais = String((params && params.pais) || "").trim();
+    if (!pais) return { exito: false, mensaje: "Falta el país." };
+    var filas = (params && params.filas) || [];
+    if (!filas.length) return { exito: false, mensaje: "No hay ciudades para guardar." };
+    var sheet = obtenerHojaCiudades_();
+    var data = sheet.getDataRange().getValues();
+    var n = ciudadesNorm_(pais);
+    var quedan = [["id", "nombre", "pais", "uso"]];
+    for (var i = 1; i < data.length; i++) {
+      if (ciudadesNorm_(data[i][2]) === n) continue;
+      if (!String(data[i][1] || "").trim()) continue;
+      quedan.push([data[i][0], data[i][1], data[i][2], data[i][3]]);
+    }
+    var vistos = {};
+    filas.forEach(function (f) {
+      var nombre = String(f.nombre || "").trim();
+      if (!nombre) return;
+      var k = ciudadesNorm_(nombre);
+      if (vistos[k]) return;
+      vistos[k] = 1;
+      var uso = f.uso === "puerto" || f.uso === "ambas" ? f.uso : "ciudad";
+      quedan.push([String(f.id || ("ci" + quedan.length)), nombre, pais, uso]);
+    });
+    sheet.clearContents();
+    sheet.getRange(1, 1, quedan.length, 4).setValues(quedan);
+    sheet.setFrozenRows(1);
+    return { exito: true, mensaje: "Ciudades de " + pais + " guardadas en la app.", data: { filas: Object.keys(vistos).length } };
+  } catch (e2) {
+    return { exito: false, mensaje: String(e2.message || e2) };
+  }
+}
+
+function odooModeloCiudades_() {
+  var candidatos = ["res.city"];
+  var i;
+  for (i = 0; i < candidatos.length; i++) {
+    try {
+      var meta = odooCamposExistentes_(candidatos[i], ["name", "country_id"]);
+      if (meta.name && meta.country_id) return candidatos[i];
+    } catch (e1) {}
+  }
+  try {
+    var rows = odooSearchRead_("ir.model", [["name", "ilike", "Ciudad"]], ["model", "name"], 40, 0, "model") || [];
+    for (i = 0; i < rows.length; i++) {
+      var modelo = String(rows[i].model || "");
+      if (!modelo || (modelo.indexOf("city") < 0 && modelo.indexOf("ciudad") < 0)) continue;
+      try {
+        var campos = odooCamposExistentes_(modelo, ["name", "country_id"]);
+        if (campos.name && campos.country_id) return modelo;
+      } catch (e2) {}
+    }
+  } catch (e3) {}
+  return "";
 }
 
 function proxyOdooBuscar(codigo) {
@@ -618,6 +998,59 @@ function fechaCotizacion_(d) {
   return d instanceof Date ? Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm") : String(d || "");
 }
 
+function cotFilaPorIdRev_(sh, id, rev) {
+  var last = sh.getLastRow();
+  if (last < 2) return 0;
+  var v = sh.getRange(2, 1, last - 1, 2).getValues();
+  for (var i = 0; i < v.length; i++) {
+    if (String(v[i][0]) === String(id) && (Number(v[i][1]) || 1) === Number(rev)) return i + 2;
+  }
+  return 0;
+}
+
+function cotRefsDeJson_(json) {
+  var out = [];
+  var datos;
+  try { datos = JSON.parse(json); } catch (e) { return out; }
+  (datos.filas || []).forEach(function (f) {
+    if (f && f.imgRef) out.push(String(f.imgRef));
+    if (f && f.srcRef) out.push(String(f.srcRef));
+  });
+  return out;
+}
+
+function cotTextoDatos_(sh) {
+  var last = sh.getLastRow();
+  var cols = sh.getLastColumn();
+  if (last < 2 || cols < 14) return "";
+  var n = Math.min(4, cols - 13);
+  return sh.getRange(2, 14, last - 1, n).getValues().map(function (r) { return r.join(""); }).join("\n");
+}
+
+/** Borra en Drive solo renders de cotización que ya no aparecen en ninguna fila. */
+function cotTirarHuerfanos_(sh, ids) {
+  var n = 0;
+  var texto = cotTextoDatos_(sh);
+  var vistos = {};
+  (ids || []).forEach(function (fid) {
+    fid = String(fid || "");
+    if (!fid || vistos[fid] || texto.indexOf(fid) >= 0) return;
+    vistos[fid] = 1;
+    try {
+      var file = DriveApp.getFileById(fid);
+      if (!/^C-\d+_r\d+_/.test(file.getName())) return;
+      file.setTrashed(true);
+      n++;
+    } catch (e) { /* el archivo ya no está o no se puede tirar */ }
+  });
+  return n;
+}
+
+function cotLimpiarCacheLista_() {
+  try { CacheService.getScriptCache().remove("cot_list_v1"); } catch (eC) {}
+  try { CacheService.getScriptCache().remove("cot_list_v2"); } catch (eC2) {}
+}
+
 function guardarCotizacionBD(p, email) {
   if (!p || !p.datos) return { exito: false, mensaje: "Falta el contenido de la cotización." };
   var lock = LockService.getScriptLock();
@@ -626,8 +1059,18 @@ function guardarCotizacionBD(p, email) {
     var sh = obtenerHojaCotizaciones_();
     var props = PropertiesService.getScriptProperties();
     var id = String(p.id || "");
+    var modo = String(p.modo || "");
     var rev = 1;
-    if (id) {
+    var filaMisma = 0;
+    var refsViejas = [];
+    if (modo === "misma") {
+      var revPedida = Number(p.rev) || 0;
+      if (!id || !revPedida) return { exito: false, mensaje: "Falta la revisión que hay que reescribir." };
+      filaMisma = cotFilaPorIdRev_(sh, id, revPedida);
+      if (!filaMisma) return { exito: false, mensaje: "No encontré esa revisión para reescribirla." };
+      rev = revPedida;
+      refsViejas = cotRefsDeJson_(sh.getRange(filaMisma, 14, 1, 4).getValues()[0].join(""));
+    } else if (id) {
       var last = sh.getLastRow();
       if (last > 1) {
         var v = sh.getRange(2, 1, last - 1, 2).getValues();
@@ -675,9 +1118,41 @@ function guardarCotizacionBD(p, email) {
     var partes = [];
     for (var k = 0; k < 4; k++) partes.push(json.substring(k * COT_CHUNK_, (k + 1) * COT_CHUNK_));
     var creado = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
-    sh.appendRow([id, rev, String(p.numero || ""), String(p.tipo || ""), String(p.proyecto || ""), String(p.proyectos || ""), String(p.cliente || ""), String(p.idioma || ""), String(p.moneda || ""), Number(p.total) || 0, creado, String(email || ""), String(p.comentario || "")].concat(partes));
-    try { CacheService.getScriptCache().remove("cot_list_v1"); } catch (eC) {}
-    return { exito: true, mensaje: "Cotización guardada.", data: { id: id, rev: rev, numero: String(p.numero || ""), refs: refs } };
+    var fila = [id, rev, String(p.numero || ""), String(p.tipo || ""), String(p.proyecto || ""), String(p.proyectos || ""), String(p.cliente || ""), String(p.idioma || ""), String(p.moneda || ""), Number(p.total) || 0, creado, String(email || ""), String(p.comentario || "")].concat(partes);
+    if (filaMisma) {
+      if (sh.getMaxColumns() < fila.length) sh.insertColumnsAfter(sh.getMaxColumns(), fila.length - sh.getMaxColumns());
+      sh.getRange(filaMisma, 1, 1, fila.length).setValues([fila]);
+      var quedan = {};
+      (datos.filas || []).forEach(function (f) {
+        if (f && f.imgRef) quedan[String(f.imgRef)] = 1;
+        if (f && f.srcRef) quedan[String(f.srcRef)] = 1;
+      });
+      cotTirarHuerfanos_(sh, refsViejas.filter(function (fid) { return !quedan[fid]; }));
+    } else {
+      sh.appendRow(fila);
+    }
+    cotLimpiarCacheLista_();
+    return { exito: true, mensaje: filaMisma ? "Revisión reescrita." : "Cotización guardada.", data: { id: id, rev: rev, numero: String(p.numero || ""), refs: refs } };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function eliminarCotizacionBD(p) {
+  var id = String((p && p.id) || "");
+  var rev = Number(p && p.rev) || 0;
+  if (!id || !rev) return { exito: false, mensaje: "Falta la revisión." };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var sh = obtenerHojaCotizaciones_();
+    var fila = cotFilaPorIdRev_(sh, id, rev);
+    if (!fila) return { exito: false, mensaje: "No encontré esa revisión." };
+    var refs = cotRefsDeJson_(sh.getRange(fila, 14, 1, 4).getValues()[0].join(""));
+    sh.deleteRow(fila);
+    var archivos = cotTirarHuerfanos_(sh, refs);
+    cotLimpiarCacheLista_();
+    return { exito: true, mensaje: "Revisión borrada.", data: { id: id, rev: rev, archivos: archivos } };
   } finally {
     lock.releaseLock();
   }

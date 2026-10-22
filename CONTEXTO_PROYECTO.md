@@ -63,7 +63,7 @@ Los valores de **Ajustes** (Motor AIU, Márgenes, Catálogos fijos / tarifas y U
 - Editar `config.json` en tarifas, UM, comisiones, prompts, topes AIU, márgenes NAL/EXP, tyc o membrete “para probar”.
 - Rellenar Ajustes con filas de ejemplo y guardarlas en la nube.
 - Llamar `guardar_config` salvo que Edwin lo pida explícito.
-- Mezclar el `config.json` local encima de la config remota: si hay config en Sheets, esa manda; `config.json` solo aporta el `gasUrl` de respaldo.
+- Mezclar el resto de `config.json` encima de la config remota. Si hay config en Sheets, esa manda en tarifas, prompts, membrete y demás. La excepción es `gasUrl`: la app usa el de `config.json` y, al Guardar, lo escribe en la hoja. Una URL vieja guardada en `Configuracion_Global` no puede volver a ocupar Conexiones. No crear una implementación nueva: cambia la URL y la app seguiría llamando la anterior.
 
 Si hace falta un parámetro nuevo (ej. anchos de matriz), se **añade** una clave sin reescribir las demás (`guardar_anchos_matriz` hace parche, no sustituye el JSON entero).
 
@@ -88,7 +88,7 @@ Si hace falta un parámetro nuevo (ej. anchos de matriz), se **añade** una clav
 ### Integraciones (nombres públicos, sin secretos)
 
 - **Odoo v19:** instancia Odoo.sh `https://grupodiforma.odoo.com`. CRM `crm.lead` al **Buscar** código (cabecera + locale). `product.product` alimenta el catálogo maestro; no es tabla paralela que Gemini adivine.
-- **Google Sheets:** un solo libro (`DB_SHEET_ID_V28`), hoy en la unidad compartida **GD-SmartBudget → 01_Sistema** (no en “Mi unidad”). Hojas: `Presupuestos`, `Cotizaciones`, `Configuracion_Global`, `Catalogo_Maestro`, `Ingesta_Log`, `Catalogo_Meta`, `Gemini_Uso`.
+- **Google Sheets:** un solo libro (`DB_SHEET_ID_V28`), en la unidad compartida **GD-SmartBudget → 01_Sistema**. Hojas vivas: `Presupuestos`, `Cotizaciones`, `Configuracion_Global`, `Catalogo_Maestro`, `Ingesta_Log`, `Catalogo_Meta`, `Gemini_Uso`, `Ciudades`, `Aranceles`, `Tarifas_Logistica`. `Costos_Logisticos` es un volcado viejo de cartas de operadores: la app no lo lee y se puede borrar.
 - **Google Drive (bóveda del sistema):** unidad **GD-SmartBudget**, pocos miembros (cuenta que ejecuta el Script + 1 respaldo). Carpetas: `01_Sistema` (libro + plantilla Excel) y `02_Cotizaciones` (renders JPG al guardar). IDs solo en Script Properties (`DRIVE_SISTEMA_FOLDER_ID`, `DRIVE_COTIZACIONES_FOLDER_ID`, `DRIVE_PLANTILLA_FOLDER_ID`). El Script **no** debe crear carpetas en Mi unidad. Función de anclaje: `anclarBovedaSmartBudget` en GAS.
 - **Google Drive (buzón de precios):** listados crudos de proveedores (PDF/xlsx) siguen en la carpeta de **Compras** (`DRIVE_PRECIOS_FOLDER_ID`). No viven en GD-SmartBudget. No es el motor de búsqueda en cada cotización.
 - **Historial compartido:** cualquier `@grupodiforma.com` autenticado ve y reabre todas las cotizaciones. El dueño del Script es el custodio de Drive; los comerciales no necesitan ser miembros de la unidad.
@@ -175,13 +175,19 @@ Mismo libro (`DB_SHEET_ID_V28`):
 
 - `Presupuestos`: historial de proyectos de Costos (matriz, versiones, chat).
 - `Cotizaciones`: historial de PDF comerciales (una fila por revisión: ID `C-00001`, Rev, número, cliente, JSON partido en 4 celdas, usuario). Las imágenes no van en la celda: archivos en `02_Cotizaciones` y refs `imgRef`/`srcRef`.
-- `Configuracion_Global`: tarifas, topes, márgenes, comisiones, prompts, URL GAS, **`tyc`**, **`membrete`** y **`anchosMatriz`**. `guardar_config` sustituye el JSON entero: hay que persistir siempre `tyc`, `membrete` y `anchosMatriz`. Los anchos también se pueden parchear con `guardar_anchos_matriz` sin tocar el resto.
+- `Configuracion_Global`: TRM, vigencia, AIU, márgenes, comisiones, prompts, URL GAS, **`tyc`**, **`membrete`** y **`anchosMatriz`**. El Guardar sigue enviando esos tres junto con el resto. El JSON se parte en celdas de 40.000 caracteres (`JSON_Config`, `JSON_2`…). Si la lectura falla, Guardar queda apagado para no pisar la nube con una copia local. `logTarifas` ya no vive aquí: al Guardar con el backend nuevo se escribe en `Tarifas_Logistica` y se quita del JSON.
+- `Tarifas_Logistica`: una fila por tarifa (origen, interno, aéreo, FCL, LCL, seguro, destino) más filas `lugar` y `concepto`. La crea el Guardar. Los precios numéricos se guardan como número: Sheets estaba leyendo `2.5` como 2 de mayo y `2.4` como 2 de abril, y la caja de número salía vacía.
+- `Ciudades`: una fila por ciudad (`id`, `nombre`, `pais`, `uso`). El alta manda el correo del admin.
+- `Aranceles`: una fila por tasa.
+- `Costos_Logisticos`: importación vieja, columnas corridas. No la lee ningún módulo. Se puede eliminar la pestaña.
 - `Catalogo_Maestro`: corazón de precios (categoria, proveedor, nombre, um, costo_cop, vigente, revisar, fuente_archivo, file_id, ruta, actualizado). Vive en este libro (GD-SmartBudget / 01_Sistema), **no** dentro del buzón de listados de Compras.
 - `Ingesta_Log`: cada archivo procesado (estado OK/VACIO/ERROR, filas, fecha).
 - `Catalogo_Meta`: una fila de progreso (`estado`, archivo, índice, mensaje, `ultima_sync`, `ultima_por`).
 - `Gemini_Uso`: consumo mensual **de toda la empresa** (tokens/USD). El medidor “Equipo” lee esta hoja, no propiedades del script por cada deployment.
 
 Los JSON de `Presupuestos` incluyen `versiones[]` (V1, V2… con matriz, chat, comentario y `fichaComercial`) y `cabecera.locale`.
+
+**Cuando la información crece.** Una celda no es una base de datos. Lo que aumenta (tarifas, ciudades, aranceles, filas de catálogo) va en filas de una pestaña, una fila por dato. Un documento (presupuesto o cotización) sigue siendo una fila de resumen; si el cuerpo no cabe, se parte en celdas y, si aun así no cabe, el archivo va a Drive. No volver a meter listas crecientes dentro de `Configuracion_Global`. Si una pestaña se vuelve inmanejable, se abre otra pestaña en el mismo libro con la misma forma. Si el libro mismo se queda corto, se crea otro archivo con la misma dinámica (una fila por dato, el script lo abre por id) y no se aplasta todo en una celda. `Costos_Logisticos` no se reutiliza para eso.
 
 ---
 
@@ -261,7 +267,7 @@ Módulo `logistica.js`. Hoja **Carta**, iframe `srcdoc`, PDF = impresión nativa
 - **Aéreo:** el flete terrestre local entra dentro de **Costos en origen** (no hay fila aparte). El flete principal, si el Incoterm lo marca, es el **flete aéreo internacional**.
 - **Marítimo:** flete interno = terrestre Bogotá–puerto; flete principal = flete marítimo.
 - **Duties** y **Taxes** se editan como dos filas (%, valor y observación). La observación se guarda con la cotización y no se imprime. En la hoja y en el PDF salen sumados en una sola fila **Duties y Taxes**. No llevan el margen de logística. El % sale de Ajustes → Logística → Aranceles (país de Odoo × partida de la ficha). Si varias partidas tienen distinto duty, se prorratea por valor; el tax, si el % es el mismo, va una sola vez.
-- **Margen de logística.** El valor de la fila es el costo. Para la cotización se le suma un %. En exportación es uno solo (defecto 20%) y cubre origen, fletes, seguro, destino, courier y la fila libre. En nacional cada uno tiene el suyo: envío, montaje, bodegaje y otro (defecto 30%). El % no se imprime. Una cotización ya guardada, sin este dato, queda en 0% para no cambiar el total.
+- **Margen de logística.** El valor de la fila es el costo. Para la cotización de exportación se le suma el % de **Ajustes → Logística → Margen logística** (defecto 30%, clave `logMargenPct`). Una cotización nueva lo toma de ahí. Una ya guardada conserva el % con el que se armó. En la ficha se puede cambiar solo para esa cotización. En nacional cada fila tiene el suyo: envío, montaje, bodegaje y otro (defecto 30%). El % no se imprime. Duties y Taxes no lo llevan.
 - Nacional (cerrado): Envío nacional, Montaje e instalación, Bodegaje, Otro. Gran total **SIN IVA**, título editable. Sin modalidad ni Incoterm.
 
 Matriz vendedor (Sí = la fila existe):
@@ -299,7 +305,7 @@ Al guardar, `datos.comision` (`pct`, `pctBase`, `fee`) y `snap.pctCom` van en el
 
 **Catálogo de aranceles (en local, falta publicar).** Misma mecánica que `Catalogo_Maestro`: el archivo sigue en Drive, la sync escribe la hoja `Aranceles`, Logística lee la hoja. Fuente: `GD-Logistica\Aranceles\Impuestos y aranceles_listado.xlsx` (una fila por país + partida `9403.20.00.00`, duties %, base, taxes %, base, observación). El país de la cotización es el de Odoo (`res.country`); el Excel no duplica esa lista. Ajustes → Logística: primero Partidas (solo código y descripción; Agregar y Quitar) y debajo Aranceles (agregar a mano, observación, sin Guardar ni Duplicar por fila). Las dos se graban con el Guardar de Ajustes. Sincronizar Drive reemplaza la tabla de aranceles y suma partidas nuevas. El IVU de Puerto Rico lo paga el importador: la cotización no lo suma mientras la observación lo diga. No copiar usuarios ni claves de las primeras filas del libro original. Ids de Drive no van al frontend ni aquí. El script no crea carpetas. Falta pegar `backend.gs` y publicar una versión nueva de la implementación que ya usa la app; si no, Guardar aranceles y la sync del listado plano responden «Acción no válida».
 
-**Tarifas logísticas (hecho en local, sin publicar).** No hay sync de Drive ni hoja nueva. Las cotizaciones de forwarder se transcriben a mano en **Ajustes → Logística**. Persisten en el JSON de config, campo `logTarifas` (`origen`, `interno`, `aereo`, `fcl`, `lcl`, `seguro`, `destino`, `conceptos`), con el botón Guardar que ya existe. No hay acción GAS nueva. El UI ya no llama `costos_log_*`. No scrapear TCC ni Servientrega. No volver a abrir las 12 cartas de IFS: la tabla de abajo y las semillas bastan.
+**Tarifas logísticas.** Una fila por tarifa en la hoja `Tarifas_Logistica`. El Guardar de Ajustes escribe esa hoja y saca `logTarifas` del JSON de configuración. Si la hoja todavía está vacía, la app sigue leyendo el JSON viejo. Análisis y Generar datos logísticos son locales y escriben el costo con fuente `[Catálogo]`. El chat de Gemini no inventa tarifas. Los países del menú salen en español (`Estados Unidos`, no `United States`); el cruce con ciudades es por código ISO.
 
 Cada cargo es una fila de tarifa. **Generar** suma las preferidas en la fila única que el Incoterm ya abrió. No crea filas por cargo. Moneda por cargo; COP se pasa a USD con la TRM de Ajustes (`#cfgLogTrm` o `logTrm`) y, si la cotización es COP, el total vuelve a COP con la TRM de la cotización. El margen de la ficha se suma después, en la hoja, no dentro del costo. Duties y Taxes no llevan margen.
 
@@ -334,22 +340,32 @@ Preferida **S** es una sola por grupo (origen: modalidad|concepto; interno: moda
 
 ---
 
-## CHECKPOINT — 21 oct 2026
+## CHECKPOINT — 21 oct 2026, tarde
 
-Para gastar pocos tokens: lee solo este checkpoint y **Tarifas logísticas** (Fase 2 → Etapa 2). No abras chats anteriores ni las cartas de IFS.
+Lee este checkpoint y la sección **Tarifas logísticas**. No abras chats anteriores ni las cartas de IFS.
 
-Nada de esto está publicado ni en commit. Producción sigue en **V1.0.33**. No hacer `git push`, `./desplegar.sh` ni commit salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, Catálogos fijos, Comisiones ni el texto de Prompts IA. Las reglas del asistente de logística viven en `logistica.js` y mandan sobre el prompt de Ajustes.
+Producción sigue en **V1.0.33**. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
 
-Caché local: `styles.css 1.0.69` · `admin.js 1.0.46` · `connectors.js 1.0.38` · `ia-core.js 1.0.42` · `engine.js 1.0.39` · `logistica.js 1.0.109`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin debe recargar. Si las semillas de seguro o flete interno llenaron tablas vacías, pulsar **Guardar** en Ajustes una vez.
+Caché local: `styles.css 1.0.77` · `admin.js 1.0.68` · `connectors.js 1.0.41` · `ia-core.js 1.0.42` · `engine.js 1.0.39` · `logistica.js 1.0.135`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
 
-Hecho y no reabrir el diseño:
+Nube, una fila por dato:
 
-- Tarifas manuales en `logTarifas`. Análisis y Generar son de la app. Gemini solo está en el chat.
-- Generar escribe el costo en Costos logísticos y la cotización suma el margen. El fallo era escribir en una copia que la pantalla ya no usaba.
-- FCL: cantidad editable de 20' / 40' / 40HC y número de embarques. Capacidades en `LOG_CONT_CAP_`.
-- Aéreo: si falta el rango que corresponde al peso, no se toma otro.
-- Seguro y cargos en % usan el subtotal EXW de la cotización.
-- La cotización activa sigue la matriz y el simulador. La guardada queda congelada.
+- `Tarifas_Logistica` guarda las tarifas. `Configuracion_Global` guarda solo ajustes cortos. `Ciudades` y `Aranceles` ya tenían su pestaña. Presupuestos y cotizaciones siguen siendo una fila de resumen, con el cuerpo partido y las imágenes en Drive.
+- `Costos_Logisticos` no se usa. Edwin puede borrar esa pestaña.
+- La URL de Conexiones es la de `config.json`. Guardar contra otra implementación no crea la hoja de tarifas.
+- Al guardar una cotización hay overlay con segundos. La fila entra a Guardadas en ese navegador al terminar. El backend debe borrar la caché `cot_list_v2` para que el otro navegador la vea al momento.
+- Con una cotización abierta, **Guardar** reescribe esa misma Rev (`modo: misma`). **Guardar como Rev N+1** añade otra fila. Una cotización nueva solo nace si no hay ninguna abierta. En Guardadas, el basurero borra esa revisión; el segundo clic confirma. Drive solo tira un render `C-#####_r#_…` si ninguna otra fila lo cita. Los renders de presupuesto no se tocan. Hasta publicar este `backend.gs`, el servidor viejo sigue creando una Rev nueva.
 
-Siguiente, solo si Edwin lo pide: cargar fletes marítimos FCL/LCL que él dicte, o corregir los m³ útiles del contenedor. No inventar 40HC de flete interno ni tarifas de puerto.
+Cotización y ficha, en el working tree:
+
+- Encabezado gris de la tabla a dos líneas: Código de / proyecto, Precio / unitario · moneda, Precio / subtotal. La franja crece; ya no recorta con una sola línea.
+- Flete marítimo del PDF: `(FCL 1×40')` o `(LCL 2,350 m³)`.
+- Ficha de costos: el total de los valores queda en la misma columna que los costos, y el % del gran total a su derecha.
+- La firma del comercial (nombre, cargo e imagen) es más grande que los términos.
+- Aéreo: un rango vacío no se reemplaza por otro. `2.5` y `2.4` no pueden guardarse como fecha.
+- Sobre **Otros cargos**: el precio es el porcentaje de los conceptos nombrados en esa ruta, no de la mercancía.
+- El margen de exportación sale de Ajustes → Logística (defecto 30%). La ficha puede cambiarlo solo en esa cotización. Una guardada no se mueve.
+- Leer una carta de operador muestra el avance. No hay duplicado masivo de filas. Ciudades es la última pestaña de Ajustes → Logística.
+
+Siguiente, solo si Edwin lo pide: publicar `backend.gs`, o cargar la escala LCL de Cartagena que él dicte. No inventar 40HC de flete interno ni tarifas de puerto.
 

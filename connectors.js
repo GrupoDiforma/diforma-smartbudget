@@ -670,6 +670,58 @@ function pintarLocaleProyecto() {
     const um = umFichaActual();
     document.querySelectorAll(".ficha-um").forEach(function (el) { el.textContent = um; });
     document.querySelectorAll(".ficha-um-peso").forEach(function (el) { el.textContent = loc.sistema === "imperial" ? "lb" : "kg"; });
+    pintarFichaEquivalencia();
+}
+
+/** La cifra de la ficha sigue el sistema elegido. Debajo se ve el otro, sin poder editarla. */
+function fichaNumAlt_(id) {
+    const el = document.getElementById(id);
+    if (!el || el.value === "" || el.value == null) return null;
+    const n = Number(el.value);
+    return isFinite(n) ? n : null;
+}
+
+function fichaFmtAlt_(n) {
+    const r = Math.round(n * 100) / 100;
+    return r.toLocaleString("es-CO", { maximumFractionDigits: 2 });
+}
+
+function pintarFichaEquivalencia() {
+    const imperial = localeProyectoActual().sistema === "imperial";
+    const umAlt = imperial ? "cm" : "in";
+    const pesoAlt = imperial ? "kg" : "lb";
+    const kDim = imperial ? 2.54 : (1 / 2.54);
+    const kPeso = imperial ? (1 / 2.2046226218) : 2.2046226218;
+    const map = {
+        dimAncho: ["fichaDimAncho", kDim, umAlt],
+        dimFondo: ["fichaDimFondo", kDim, umAlt],
+        dimAlto: ["fichaDimAlto", kDim, umAlt],
+        empAncho: ["fichaEmpAncho", kDim, umAlt],
+        empFondo: ["fichaEmpFondo", kDim, umAlt],
+        empAlto: ["fichaEmpAlto", kDim, umAlt],
+        empPeso: ["fichaEmpPeso", kPeso, pesoAlt]
+    };
+    document.querySelectorAll(".ficha-alt[data-alt]").forEach(function (el) {
+        const spec = map[el.getAttribute("data-alt")];
+        if (!spec) { el.textContent = ""; return; }
+        const n = fichaNumAlt_(spec[0]);
+        el.textContent = n == null ? "" : (fichaFmtAlt_(n * spec[1]) + " " + spec[2]);
+    });
+}
+
+function enlazarFichaEquivalencia_() {
+    if (document.body && document.body.getAttribute("data-ficha-alt")) return;
+    if (document.body) document.body.setAttribute("data-ficha-alt", "1");
+    ["fichaDimAncho", "fichaDimFondo", "fichaDimAlto", "fichaEmpAncho", "fichaEmpFondo", "fichaEmpAlto", "fichaEmpUnd", "fichaEmpPeso"].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const fn = function () {
+            pintarFichaEquivalencia();
+            if (typeof logisticaTrasPresupuesto_ === "function") logisticaTrasPresupuesto_();
+        };
+        el.addEventListener("input", fn);
+        el.addEventListener("change", fn);
+    });
 }
 
 function pintarFichaComercial(ficha) {
@@ -700,11 +752,13 @@ function aplicarLocaleProyecto(loc, opts) {
     if (window.localeProyecto.idioma !== "en") window.localeProyecto.idioma = "es";
     if (window.localeProyecto.sistema !== "imperial") window.localeProyecto.sistema = "metrico";
     pintarLocaleProyecto();
+    if (typeof logAplicarPaisCliente_ === "function") logAplicarPaisCliente_();
     if (!opts.silencio && typeof programarGuardarSesion === "function") programarGuardarSesion();
 }
 
 function cambiarLocaleProyecto(parcial) {
     aplicarLocaleProyecto(parcial);
+    if (typeof logisticaTrasPresupuesto_ === "function") logisticaTrasPresupuesto_();
 }
 
 function aplicarFichaComercial(ficha, opts) {
@@ -740,10 +794,14 @@ function aplicarFichaComercial(ficha, opts) {
 window.localeProyectoActual = localeProyectoActual;
 window.leerFichaComercialUI = leerFichaComercialUI;
 window.pintarFichaComercial = pintarFichaComercial;
+window.pintarFichaEquivalencia = pintarFichaEquivalencia;
 window.aplicarLocaleProyecto = aplicarLocaleProyecto;
 window.cambiarLocaleProyecto = cambiarLocaleProyecto;
 window.aplicarFichaComercial = aplicarFichaComercial;
 window.fichaComercialVacia = fichaComercialVacia;
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", enlazarFichaEquivalencia_);
+else enlazarFichaEquivalencia_();
+
 function aplicarMercado(tipo) {
     const t = String(tipo || "NACIONAL").toUpperCase().includes("EXPORT") ? "EXPORTACION" : "NACIONAL";
     const sel = document.getElementById("selMercado");
@@ -787,13 +845,18 @@ function confirmarImportOdooDesdeCero() {
     aplicarImportacionOdoo_(p.rec, p.cod);
 }
 
-function abrirProyectoGuardadoDesdeBusqueda() {
+async function abrirProyectoGuardadoDesdeBusqueda() {
     const p = window._importOdooPendiente;
     const id = p && p.idGuardado;
+    const rec = p && p.rec;
     if (!id || typeof cargarProyectoBD !== "function") return;
     window._importOdooPendiente = null;
     if (typeof ocultarAvisoCodigoGuardado === "function") ocultarAvisoCodigoGuardado();
-    cargarProyectoBD(id);
+    await cargarProyectoBD(id);
+    const paisOdoo = rec && typeof mapearLocaleOdoo === "function" ? String((mapearLocaleOdoo(rec) || {}).pais || "").trim() : "";
+    if (paisOdoo && typeof localeProyectoActual === "function" && !localeProyectoActual().pais && typeof aplicarLocaleProyecto === "function") {
+        aplicarLocaleProyecto({ pais: paisOdoo }, { silencio: true });
+    }
 }
 
 async function buscarProyectoOdooServerless() {

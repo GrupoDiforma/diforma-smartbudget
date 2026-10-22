@@ -417,6 +417,7 @@ function fusionarPartidasDesdeArancel_() {
 async function cargarConfiguracionGlobal() {
     _configHojaOk = false;
     _configHojaFallo = false;
+    _configHojaMensaje = "";
     try {
         const resBase = await fetch('config.json');
         let baseConfig = resBase.ok ? await resBase.json() : {};
@@ -430,9 +431,11 @@ async function cargarConfiguracionGlobal() {
                     _configHojaOk = true;
                 } else if (!(dataRemota && /Sin configuración remota/i.test(String(dataRemota.mensaje || "")))) {
                     _configHojaFallo = true;
+                    _configHojaMensaje = String((dataRemota && dataRemota.mensaje) || "");
                 }
             } catch(e) {
                 _configHojaFallo = true;
+                _configHojaMensaje = e && e.message ? e.message : "";
                 console.warn("Modo offline o error al traer config remota.");
             }
         } else {
@@ -440,7 +443,7 @@ async function cargarConfiguracionGlobal() {
         }
         if (remotaConfig) {
             CONFIG_GLOBAL = Object.assign({}, remotaConfig);
-            if (!CONFIG_GLOBAL.gasUrl) CONFIG_GLOBAL.gasUrl = baseConfig.gasUrl;
+            if (baseConfig.gasUrl) CONFIG_GLOBAL.gasUrl = baseConfig.gasUrl;
         } else {
             CONFIG_GLOBAL = baseConfig;
         }
@@ -456,6 +459,10 @@ async function cargarConfiguracionGlobal() {
             if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
         }
         pintarAvisoConfigRemota_();
+        if (typeof logTarCargar_ === "function") logTarCargar_(CONFIG_GLOBAL && CONFIG_GLOBAL.logTarifas);
+        if (typeof logTarTraerHoja_ === "function") await logTarTraerHoja_();
+        if (typeof logCargarPaises_ === "function") logCargarPaises_();
+        if (typeof logCargarCiudades_ === "function") logCargarCiudades_();
         return CONFIG_GLOBAL;
     } catch (err) {
         _configHojaFallo = true;
@@ -475,8 +482,11 @@ function pintarAvisoConfigRemota_() {
     }
     if (aviso) {
         aviso.classList.remove("d-none");
-        aviso.innerHTML = "No se pudo leer la configuración de la empresa. Lo que aparece aquí puede ser la copia del sitio, no la hoja global. Guardar está apagado para no reemplazarla. " +
-            "<button type=\"button\" class=\"btn admin-btn btn-sm ms-1\" onclick=\"reintentarConfigAjustes()\">Reintentar</button>";
+        const partida = /45000|40000|partida|Unterminated/i.test(_configHojaMensaje || "");
+        const texto = partida
+            ? "La configuración de la nube quedó partida al guardarla. Lo de esta ventana puede ser la copia del sitio, no la hoja. No pulses Guardar: la reemplazaría. Pega backend.gs, publica la misma implementación y pulsa Reintentar."
+            : "No se pudo leer la configuración de la empresa. Lo que aparece aquí puede ser la copia del sitio, no la hoja global. Guardar está apagado para no reemplazarla.";
+        aviso.innerHTML = texto + " <button type=\"button\" class=\"btn admin-btn btn-sm ms-1\" onclick=\"reintentarConfigAjustes()\">Reintentar</button>";
     }
     if (btn) { btn.disabled = true; btn.title = "Se activa cuando la hoja responda."; }
     if (nota) nota.textContent = "Sin lectura de la hoja no se puede guardar.";
@@ -495,8 +505,52 @@ async function reintentarConfigAjustes() {
     }
 }
 
+function adminNavSoloPane_(target) {
+    document.querySelectorAll("#modalAdmin .tab-pane").forEach(function (p) {
+        const on = "#" + p.id === target;
+        p.classList.toggle("show", on);
+        p.classList.toggle("active", on);
+    });
+    document.querySelectorAll("#modalAdmin [data-bs-toggle=\"tab\"]").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-bs-target") === target);
+    });
+}
+
+function adminNavCostosInit_() {
+    const sub = document.getElementById("adminNavCostos");
+    const btn = document.getElementById("adminNavCostosBtn");
+    const modal = document.getElementById("modalAdmin");
+    if (!sub || !btn || !modal || btn.getAttribute("data-on")) return;
+    btn.setAttribute("data-on", "1");
+    let ultimo = "#panel-catalogo";
+    const marcar = function (costos) {
+        sub.hidden = !costos;
+        btn.classList.toggle("active", !!costos);
+        if (costos) {
+            btn.parentElement.parentElement.querySelectorAll(":scope > .nav-item > .nav-link").forEach(function (n) {
+                if (n !== btn) n.classList.remove("active");
+            });
+        }
+    };
+    btn.addEventListener("click", function () {
+        marcar(true);
+        const activo = sub.querySelector("[data-bs-target=\"" + ultimo + "\"]") || sub.querySelector(".nav-link");
+        if (!activo) return;
+        adminNavSoloPane_(activo.getAttribute("data-bs-target"));
+        if (window.bootstrap && bootstrap.Tab) bootstrap.Tab.getOrCreateInstance(activo).show();
+    });
+    modal.addEventListener("shown.bs.tab", function (ev) {
+        const target = ev.target.getAttribute("data-bs-target");
+        const costos = !!ev.target.closest("#adminNavCostos");
+        if (target) adminNavSoloPane_(target);
+        if (costos) ultimo = target || ultimo;
+        marcar(costos);
+    });
+}
+
 function abrirModalAdmin() {
     if(!CONFIG_GLOBAL) return;
+    adminNavCostosInit_();
     pintarFormularioAjustes_();
     pintarAvisoConfigRemota_();
     if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
@@ -524,6 +578,7 @@ function pintarFormularioAjustes_() {
     setVal('cfgDiasVigProc', (d.diasVigencia && d.diasVigencia.procesos) != null ? d.diasVigencia.procesos : 90);
     setVal('cfgLogTrm', d.logTrm != null ? d.logTrm : "");
     setVal('cfgLogMeses', d.logMeses != null ? d.logMeses : 6);
+    setVal('cfgLogMargen', d.logMargenPct != null && d.logMargenPct !== "" ? d.logMargenPct : 30);
     setVal('cfgPrompt', d.promptMaestro); setVal('cfgPromptLogistico', d.promptLogistico);
     setVal('cfgGeminiCupo', d.geminiCupoTokens != null ? d.geminiCupoTokens : 2000000);
     setVal('cfgGeminiCupoUsd', d.geminiCupoUsd != null ? d.geminiCupoUsd : 20);
@@ -828,22 +883,23 @@ var LOG_TAR_TABS = [
     ["lcl", "Marítimo LCL"],
     ["seguro", "Seguro"],
     ["destino", "Destino"],
-    ["aranceles", "Aranceles"]
+    ["aranceles", "Aranceles"],
+    ["ciudades", "Ciudades"]
 ];
 
 var LOG_TAR_DESC = {
     origen: "Cargos que salen de Bogotá. Puedes cambiar la ciudad y agregar conceptos. Si el cargo es variable sobre el valor, el precio es un porcentaje. Entra la fila preferida.",
-    interno: "De Bogotá al puerto o al aeropuerto. En FCL el precio es por contenedor. Si hay varios puertos, entra la preferida.",
+    interno: "De Bogotá al puerto o al aeropuerto. En FCL el precio es por contenedor. En LCL, Cobro «Escala» es una fila por tramo: Desde y Hasta son kg facturables y el Precio es el valor de ese tramo, no un valor por kilo. 1 m³ cuenta como los kg de la columna kg/m³ (400 si la dejas vacía). Marca preferida cada tramo; si hay escalas preferidas, la fila de viaje no se suma. Cobro «Por kg» usa el precio por kilo y el mínimo. Cobro «Viaje» es un monto fijo.",
     aereo: "Una fila por ruta. Se usa el rango que cubre el peso (+45, +100, +300, +500) y, si el combustible no va incluido, se suma aparte.",
     fcl: "Una fila por puerto y tipo de contenedor. Los otros cargos se suman cuando no van dentro del flete. Entra la preferida.",
     lcl: "Una fila por puerto. Se cobra el precio por el mayor entre toneladas y m³, y después el mínimo.",
     seguro: "Un porcentaje del valor de la mercancía, según la modalidad, con mínimo.",
-    destino: "Un cargo por país y ciudad. Marca varias filas y duplícalas a otra ciudad del mismo país; después corriges solo lo que cambie. Si es variable sobre el valor, el precio es un porcentaje."
+    destino: "Un cargo por país, ciudad y modalidad. Si Forma es Fijo, Precio es el valor del cargo. Si Forma es Variable y Sobre es Valor, Precio es el porcentaje de la mercancía (0,125 significa 0,125 %). Si Sobre es Otros cargos, Precio es el porcentaje de otros cargos de esta misma ruta: en el recuadro escribe sus conceptos tal como están en la columna Concepto, separados por coma. Ejemplo: Inland Fuel, Precio 42, y en el recuadro Container Drayage, Container Empty Return.",
 };
 
 var LOG_TAR_COLS = {
     origen: [["preferida", "Pref"], ["origen", "Origen"], ["modalidad", "Modalidad"], ["concepto", "Concepto"], ["forma", "Forma"], ["baseVar", "Sobre"], ["aplica", "Aplica"], ["precio", "Precio"], ["moneda", "Moneda"], ["minimo", "Mínimo"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
-    interno: [["preferida", "Pref"], ["origen", "Origen"], ["salida", "Puerto"], ["modalidad", "Modalidad"], ["equipo", "Contenedor"], ["precio", "Precio"], ["moneda", "Moneda"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
+    interno: [["preferida", "Pref"], ["origen", "Origen"], ["salida", "Puerto"], ["modalidad", "Modalidad"], ["equipo", "Contenedor"], ["cobro", "Cobro"], ["desde", "Desde kg"], ["hasta", "Hasta kg"], ["precio", "Precio"], ["factor", "kg/m³"], ["minimo", "Mínimo"], ["moneda", "Moneda"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
     aereo: [["preferida", "Pref"], ["origen", "Origen"], ["pais", "País"], ["ciudad", "Ciudad"], ["r45", "+45"], ["r100", "+100"], ["r300", "+300"], ["r500", "+500"], ["minimo", "Mínimo"], ["moneda", "Moneda"], ["fsIncluido", "FS incl."], ["fsKg", "FS / kg"], ["aerolinea", "Aerolínea"], ["transito", "Tránsito"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
     fcl: [["preferida", "Pref"], ["origen", "Origen"], ["pais", "País"], ["puerto", "Puerto"], ["equipo", "Contenedor"], ["precio", "Flete"], ["moneda", "Moneda"], ["otros", "Otros no incluidos"], ["naviera", "Naviera"], ["transito", "Tránsito"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
     lcl: [["preferida", "Pref"], ["origen", "Origen"], ["pais", "País"], ["puerto", "Puerto"], ["precio", "Por ton / m³"], ["minimo", "Mínimo"], ["moneda", "Moneda"], ["naviera", "Naviera"], ["transito", "Tránsito"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
@@ -852,7 +908,7 @@ var LOG_TAR_COLS = {
 };
 
 var LOG_TAR_SUG_ORIGEN = ["Agenciamiento", "SAE", "Planilla", "Document fee", "AMS", "Aeropuerto", "Due agent", "Due carrier", "Maniobras", "SOLAS", "Handling", "Camión urbano", "Emisión BL", "Gastos operativos"];
-var LOG_TAR_SUG_DESTINO = ["Delivery", "Customs entry", "ISF", "Bond", "Doc fee", "Warehouse transfer", "DTHC"];
+var LOG_TAR_SUG_DESTINO = ["Delivery", "Warehouse Transfer", "Fuel surcharge", "Emergency inland fuel", "Handling", "Tax clearance", "Messenger fee", "Doc turnover", "Airline THC", "Operational charges", "Customs entry", "Customs messenger", "Harbor maintenance fee", "Merchandise processing fee", "Single entry bond", "ISF", "DTHC"];
 
 function escLogTar_(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -870,12 +926,38 @@ function logTarId_() {
 function logTarNueva_(tab) {
     const base = { id: logTarId_(), preferida: "S", proveedor: "", fecha: logTarHoy_(), moneda: "USD", origen: "Bogotá" };
     if (tab === "origen") return Object.assign(base, { modalidad: "fcl", concepto: "", forma: "fijo", baseVar: "valor", aplica: "embarque", precio: "", minimo: "" });
-    if (tab === "interno") return Object.assign(base, { salida: "", modalidad: "fcl", equipo: "40", precio: "" });
+    if (tab === "interno") return Object.assign(base, { salida: "", modalidad: "fcl", equipo: "40", precio: "", cobro: "fijo", desde: "", hasta: "", factor: "", minimo: "" });
     if (tab === "aereo") return Object.assign(base, { pais: "", ciudad: "", r45: "", r100: "", r300: "", r500: "", minimo: "", fsIncluido: "N", fsKg: "", aerolinea: "", transito: "" });
     if (tab === "fcl") return Object.assign(base, { pais: "", puerto: "", equipo: "40", precio: "", otros: [], naviera: "", transito: "" });
     if (tab === "lcl") return Object.assign(base, { pais: "", puerto: "", precio: "", minimo: "", naviera: "", transito: "" });
     if (tab === "seguro") return { id: base.id, preferida: "S", modalidad: "aerea", precio: "", minimo: "", moneda: "USD", proveedor: "", fecha: base.fecha };
     return Object.assign(base, { pais: "", ciudad: "", modalidad: "fcl", concepto: "", forma: "fijo", baseVar: "valor", aplica: "embarque", precio: "", minimo: "" });
+}
+
+function logTarNormalizarFila_(f) {
+    if (!f || typeof f !== "object") return f;
+    ["precio", "minimo", "maximo", "desde", "hasta", "factor", "r45", "r100", "r300", "r500", "fsKg"].forEach(function (k) {
+        if (f[k] == null || f[k] === "") return;
+        const iso = String(f[k]).trim().match(/^(\d{4})-(\d{2})-(\d{2})T/);
+        if (iso) f[k] = String(Number(iso[3])) + "." + String(Number(iso[2]));
+    });
+    return f;
+}
+
+function logTarHayFilas_(o) {
+    if (!o) return false;
+    return ["origen", "interno", "aereo", "fcl", "lcl", "seguro", "destino"].some(function (k) {
+        return Array.isArray(o[k]) && o[k].length;
+    });
+}
+
+async function logTarTraerHoja_() {
+    if (!localStorage.getItem("smartbudget_token") || typeof realizarPeticionBD !== "function") return;
+    try {
+        const r = await realizarPeticionBD({ action: "tarifas_consultar" }, { timeoutMs: 30000 });
+        if (!r || !r.exito || !logTarHayFilas_(r.data)) return;
+        logTarCargar_(r.data);
+    } catch (e) {}
 }
 
 function logTarCargar_(raw) {
@@ -888,23 +970,63 @@ function logTarCargar_(raw) {
         }
         const base = typeof logTarVacio_ === "function" ? logTarVacio_() : { origen: [], interno: [], aereo: [], fcl: [], lcl: [], seguro: [], destino: [] };
         if (o && typeof o === "object") {
-            Object.keys(base).forEach(function (k) { base[k] = Array.isArray(o[k]) ? o[k] : []; });
+            Object.keys(base).forEach(function (k) {
+                base[k] = Array.isArray(o[k]) ? o[k].map(logTarNormalizarFila_) : [];
+            });
         }
         window.logTarifas = base;
         window.logTarConceptos = (o && o.conceptos && typeof o.conceptos === "object") ? o.conceptos : { origen: [], destino: [] };
         window.logTarifas.conceptos = window.logTarConceptos;
+        window.logTarifas.lugares = (o && Array.isArray(o.lugares)) ? o.lugares : [];
         if (typeof logTarSemillaSiVacio_ === "function") logTarSemillaSiVacio_();
     }
     if (!window.logTarPagina) window.logTarPagina = {};
     if (!window.logTarGrupo) window.logTarGrupo = { destino: "pais" };
+    logTarReponerBorrador_();
     logTarPintar_();
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+}
+
+function logTarReponerBorrador_() {
+    try {
+        const raw = localStorage.getItem("smartbudget_tarifas_borrador");
+        if (!raw || !window.logTarifas) return;
+        const o = JSON.parse(raw);
+        if (!o || !o.t || Date.now() - o.t > 6 * 3600 * 1000) return;
+        const tarifas = typeof o.logTarifas === "string" ? JSON.parse(o.logTarifas) : o.logTarifas;
+        if (!tarifas || !Array.isArray(tarifas.destino)) return;
+        ["origen", "interno", "aereo", "fcl", "lcl", "seguro", "destino"].forEach(function (k) {
+            if (Array.isArray(tarifas[k])) window.logTarifas[k] = tarifas[k];
+        });
+        if (tarifas.conceptos && typeof tarifas.conceptos === "object") {
+            window.logTarConceptos = tarifas.conceptos;
+            window.logTarifas.conceptos = tarifas.conceptos;
+        }
+        if (Array.isArray(tarifas.lugares)) window.logTarifas.lugares = tarifas.lugares;
+    } catch (e) {}
 }
 
 function logTarParaGuardar_() {
     logTarFlush_();
     if (typeof logTarAsegurar_ === "function") logTarAsegurar_();
     if (window.logTarifas) window.logTarifas.conceptos = window.logTarConceptos || window.logTarifas.conceptos || { origen: [], destino: [] };
-    return window.logTarifas;
+    const src = window.logTarifas || {};
+    const claves = ["id", "preferida", "origen", "salida", "modalidad", "equipo", "precio", "moneda", "proveedor", "fecha", "cobro", "factor", "desde", "hasta", "minimo", "maximo", "pais", "ciudad", "puerto", "concepto", "forma", "baseVar", "baseCargos", "aplica", "r45", "r100", "r300", "r500", "fsIncluido", "fsKg", "aerolinea", "transito", "naviera", "otros"];
+    const copiar = function (f) {
+        const o = {};
+        claves.forEach(function (k) {
+            if (f[k] == null || f[k] === "") return;
+            o[k] = typeof f[k] === "string" ? f[k].slice(0, k === "baseCargos" ? 240 : 120) : f[k];
+        });
+        return o;
+    };
+    const out = {};
+    ["origen", "interno", "aereo", "fcl", "lcl", "seguro", "destino"].forEach(function (k) {
+        out[k] = (Array.isArray(src[k]) ? src[k] : []).map(copiar);
+    });
+    out.conceptos = src.conceptos && typeof src.conceptos === "object" ? src.conceptos : { origen: [], destino: [] };
+    out.lugares = Array.isArray(src.lugares) ? src.lugares.slice(0, 400) : [];
+    return out;
 }
 
 function logTarFlush_() {
@@ -957,14 +1079,54 @@ function logTarCelda_(tab, f, col) {
     }
     if (k === "modalidad") return logTarSelect_(logTarMods_(tab), f.modalidad, "modalidad");
     if (k === "forma") return logTarSelect_([["fijo", "Fijo"], ["variable", "Variable"]], f.forma || "fijo", "forma");
-    if (k === "baseVar") return logTarSelect_([["peso", "Peso"], ["volumen", "Volumen"], ["wm", "Ton / m³"], ["valor", "Valor"]], f.baseVar || "valor", "baseVar", f.forma === "variable" ? "" : "lt-off");
+    if (k === "baseVar") {
+        let html = logTarSelect_([["peso", "Peso"], ["volumen", "Volumen"], ["wm", "Ton / m³"], ["valor", "Valor"], ["cargos", "Otros cargos"]], f.baseVar || "valor", "baseVar", f.forma === "variable" ? "" : "lt-off");
+        if (f.forma === "variable" && f.baseVar === "cargos") {
+            html += "<input data-k=\"baseCargos\" class=\"form-control form-control-sm mt-1\" placeholder=\"Container Drayage, Container Empty Return\" title=\"Conceptos de esta misma ruta. El precio de la fila es el porcentaje de esos cargos.\" value=\"" + escLogTar_(f.baseCargos || "") + "\">";
+            html += "<div class=\"lt-ayuda\">Nombres de los otros cargos de esta ruta, separados por coma. El precio de esta fila es el porcentaje, no un valor en dólares.</div>";
+        }
+        return html;
+    }
     if (k === "aplica") return logTarSelect_([["embarque", "Embarque"], ["contenedor", "Contenedor"]], f.aplica || "embarque", "aplica", f.forma === "variable" ? "lt-off" : "");
     if (k === "moneda") return logTarSelect_([["USD", "USD"], ["COP", "COP"]], f.moneda || "USD", "moneda", "lt-mon");
     if (k === "equipo") {
         const ops = tab === "fcl" ? [["20", "20"], ["40", "40"], ["40hc", "40HC"]] : [["", "—"], ["20", "20"], ["40", "40"], ["40hc", "40HC"]];
-        return logTarSelect_(ops, f.equipo || (tab === "fcl" ? "40" : ""), "equipo");
+        const off = tab === "interno" && f.modalidad !== "fcl" ? "lt-off" : "";
+        return logTarSelect_(ops, f.equipo || (tab === "fcl" ? "40" : ""), "equipo", off);
+    }
+    if (k === "cobro") {
+        const off = tab === "interno" && f.modalidad === "lcl" ? "" : "lt-off";
+        return logTarSelect_([["fijo", "Viaje"], ["escala", "Escala"], ["kg", "Por kg"]], f.cobro || "fijo", "cobro", off);
+    }
+    if (k === "desde" || k === "hasta") {
+        const on = tab === "interno" && f.modalidad === "lcl" && f.cobro === "escala";
+        return logTarInput_(k, f[k], "number", "text-end lt-num" + (on ? "" : " lt-off"));
+    }
+    if (k === "factor" || (k === "minimo" && tab === "interno")) {
+        const on = f.modalidad === "lcl" && (k === "factor" ? (f.cobro === "kg" || f.cobro === "escala") : f.cobro === "kg");
+        return logTarInput_(k, f[k], "number", "text-end lt-num" + (on ? "" : " lt-off"));
     }
     if (k === "pais") return logTarPaisSelect_(f.pais);
+    if (k === "ciudad" && typeof logCiudadesParaPais_ === "function") {
+        const dePais = logCiudadesParaPais_(f.pais);
+        if (dePais.length) {
+            const ops = [["", "Ciudad"]].concat(dePais.map(function (c) { return [c, c]; }));
+            if (f.ciudad && !dePais.some(function (c) { return c === f.ciudad; })) ops.splice(1, 0, [f.ciudad, f.ciudad]);
+            return logTarSelect_(ops, f.ciudad, "ciudad", "lt-lugar");
+        }
+    }
+    if (k === "puerto" && typeof logPuertosTarifa_ === "function") {
+        const dePais = f.pais ? logPuertosTarifa_(f.pais) : [];
+        const ops = [["", f.pais ? "Puerto" : "Elige el país"]].concat(dePais.map(function (c) { return [c, c]; }));
+        if (f.puerto && !dePais.some(function (c) { return c === f.puerto; })) ops.splice(1, 0, [f.puerto, f.puerto]);
+        return logTarSelect_(ops, f.puerto, "puerto", "lt-lugar");
+    }
+    if (k === "salida" && typeof logPuertosTarifa_ === "function") {
+        const dePais = logPuertosTarifa_("Colombia");
+        const ops = [["", "Puerto"]].concat(dePais.map(function (c) { return [c, c]; }));
+        if (f.salida && !dePais.some(function (c) { return c === f.salida; })) ops.splice(1, 0, [f.salida, f.salida]);
+        return logTarSelect_(ops, f.salida, "salida", "lt-lugar");
+    }
     if (k === "concepto") {
         return "<input data-k=\"concepto\" class=\"form-control form-control-sm lt-concepto\" autocomplete=\"off\" value=\"" + escLogTar_(f.concepto || "") + "\">";
     }
@@ -1061,7 +1223,7 @@ function logTarPintarNav_() {
 function logTarPintar_() {
     logTarPintarNav_();
     const tab = window.logTarTab || "origen";
-    if (tab === "aranceles") return;
+    if (tab === "aranceles" || tab === "ciudades") return;
     const head = document.getElementById("logTarHead");
     const body = document.getElementById("logTarBody");
     if (!head || !body || !window.logTarifas) return;
@@ -1085,8 +1247,7 @@ function logTarPintar_() {
         }).join("");
         agr.hidden = ops.length < 2;
     }
-    const extra = tab === "destino" ? 1 : 0;
-    head.innerHTML = "<tr>" + (extra ? "<th class=\"lt-sel\"><input type=\"checkbox\" id=\"logTarSelTodo\" title=\"Marcar esta página\"></th>" : "") + cols.map(function (c) {
+    head.innerHTML = "<tr>" + cols.map(function (c) {
         if (c[0] === "fecha") return "<th><button type=\"button\" class=\"cl-sort\" id=\"logTarOrdenFecha\">Fecha " + ((window.logTarOrden || "desc") === "asc" ? "↑" : "↓") + "</button></th>";
         return "<th>" + c[1] + "</th>";
     }).join("") + "<th></th></tr>";
@@ -1104,24 +1265,20 @@ function logTarPintar_() {
         if (grupo) {
             const g = String(f[grupo] || "Sin grupo");
             if (g !== prev) {
-                html.push("<tr class=\"log-tar-grupo\"><td colspan=\"" + (cols.length + 1 + extra) + "\">" + escLogTar_(g) + "</td></tr>");
+                html.push("<tr class=\"log-tar-grupo\"><td colspan=\"" + (cols.length + 1) + "\">" + escLogTar_(g) + "</td></tr>");
                 prev = g;
             }
         }
         const vieja = typeof logTarVieja_ === "function" && logTarVieja_(f);
-        const marca = extra ? "<td class=\"lt-sel\"><input type=\"checkbox\" data-sel=\"1\"" + (window.logTarSel && window.logTarSel[f.id] ? " checked" : "") + "></td>" : "";
-        html.push("<tr data-id=\"" + escLogTar_(f.id) + "\" class=\"" + (f.preferida === "S" ? "lt-pref" : "") + (vieja ? " lt-vieja" : "") + "\">" + marca +
+        html.push("<tr data-id=\"" + escLogTar_(f.id) + "\" class=\"" + (f.preferida === "S" ? "lt-pref" : "") + (vieja ? " lt-vieja" : "") + "\">" +
             cols.map(function (c) { return "<td>" + logTarCelda_(tab, f, c) + "</td>"; }).join("") +
             "<td class=\"text-nowrap\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-lt=\"dup\" title=\"Duplicar\">Duplicar</button> <button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-lt=\"del\" title=\"Quitar\">×</button></td></tr>");
     });
     const vacioTxt = (window.logTarifas[tab] || []).length ? "Ninguna tarifa coincide con la búsqueda." : "Todavía no hay tarifas. Agrega la primera.";
-    body.innerHTML = html.length ? html.join("") : "<tr><td colspan=\"" + (cols.length + 1 + extra) + "\" class=\"text-muted\">" + vacioTxt + "</td></tr>";
+    body.innerHTML = html.length ? html.join("") : "<tr><td colspan=\"" + (cols.length + 1) + "\" class=\"text-muted\">" + vacioTxt + "</td></tr>";
     if (tab === "destino") {
         logTarLlenarSelectPais_(document.getElementById("logTarSimPais"));
-        logTarLlenarSelectPais_(document.getElementById("logTarCopiaPais"));
-        const todo = document.getElementById("logTarSelTodo");
-        const boxes = document.querySelectorAll("#logTarBody [data-sel]");
-        if (todo) todo.checked = boxes.length > 0 && Array.prototype.every.call(boxes, function (b) { return b.checked; });
+        logTarLlenarSelectCiudad_(document.getElementById("logTarSimCiudad"), (document.getElementById("logTarSimPais") || {}).value);
     }
     logTarAplicarOff_();
     logTarPintarPager_(ordenadas.length, pagOk, tam);
@@ -1159,17 +1316,113 @@ function logTarPintarPager_(total, pag, tam) {
 function logAjustesVista(vista) {
     logTarPintarNav_();
     const id = LOG_TAR_TABS.some(function (t) { return t[0] === vista; }) ? vista : "origen";
-    if (window.logTarTab && window.logTarTab !== "aranceles") logTarFlush_();
+    if (window.logTarTab && window.logTarTab !== "aranceles" && window.logTarTab !== "ciudades") logTarFlush_();
     window.logTarTab = id;
     const panel = document.getElementById("logTarPanel");
     const ar = document.getElementById("logVistaAranceles");
-    if (panel) panel.hidden = id === "aranceles";
+    const ciu = document.getElementById("logVistaCiudades");
+    if (panel) panel.hidden = id === "aranceles" || id === "ciudades";
     if (ar) ar.hidden = id !== "aranceles";
+    if (ciu) ciu.hidden = id !== "ciudades";
     document.querySelectorAll("#logTarNav [data-log-vista]").forEach(function (btn) {
         btn.classList.toggle("active", btn.getAttribute("data-log-vista") === id);
     });
     try { sessionStorage.setItem("logAjustesVista", id); } catch (e) {}
-    if (id !== "aranceles") logTarPintar_();
+    if (id === "ciudades") logCiudadesPintar_();
+    else if (id !== "aranceles") logTarPintar_();
+}
+
+function logCiudadesUsoTxt_(uso) {
+    if (uso === "puerto") return "Puerto";
+    if (uso === "ambas") return "Las dos";
+    return "Ciudad";
+}
+
+function logCiudadesPintar_() {
+    logCiudadesEnlazar_();
+    const box = document.getElementById("logCiudadesEstado");
+    const st = (typeof logCiudadesEstado_ !== "undefined" && logCiudadesEstado_) || { clase: "is-info", texto: "Las ciudades quedan en la app, ligadas al país. Elige un país." };
+    if (box) {
+        box.className = "admin-banner mb-3 " + (st.clase || "is-info");
+        box.textContent = st.texto || "";
+    }
+    const sel = document.getElementById("logCiudadesPais");
+    const body = document.getElementById("logCiudadesBody");
+    const info = document.getElementById("logCiudadesInfo");
+    if (!sel || !body) return;
+    const listaPaises = typeof logPaisesFuente_ === "function" ? logPaisesFuente_() : [];
+    const previo = sel.value;
+    let pais = previo;
+    if (!pais) {
+        const env = typeof logEnv_ === "function" ? logEnv_() : {};
+        const loc = (typeof localeProyecto !== "undefined" && localeProyecto && localeProyecto.pais) || "";
+        pais = (env && env.destinoPais) || loc || "";
+    }
+    sel.innerHTML = "<option value=\"\">Elige un país</option>" + listaPaises.map(function (x) {
+        return "<option value=\"" + escLogTar_(x.nombre) + "\"" + (x.nombre === pais ? " selected" : "") + ">" + escLogTar_(x.nombre) + "</option>";
+    }).join("");
+    if (pais && sel.value !== pais) sel.value = pais;
+    pais = sel.value || "";
+    const q = String((document.getElementById("logCiudadesBuscar") || {}).value || "").toLowerCase().trim();
+    const filas = (!pais || typeof logCiudadesCatalogo_ !== "function") ? [] : logCiudadesCatalogo_(pais).filter(function (x) {
+        return !q || String(x.nombre || "").toLowerCase().indexOf(q) >= 0;
+    });
+    if (!pais) {
+        body.innerHTML = "<tr><td colspan=\"4\" class=\"text-muted\">Elige un país para ver sus ciudades.</td></tr>";
+    } else if (!filas.length) {
+        body.innerHTML = "<tr><td colspan=\"4\" class=\"text-muted\">No hay ciudades de " + escLogTar_(pais) + " en la app. Escríbela arriba y agrégala. No hace falta Odoo.</td></tr>";
+    } else {
+        body.innerHTML = filas.map(function (x) {
+            const u = x.uso === "puerto" || x.uso === "ambas" ? x.uso : "ciudad";
+            const uso = "<select class=\"form-select form-select-sm\" data-lg-uso=\"1\" data-lg-id=\"" + escLogTar_(x.id || "") + "\" data-lg-nombre=\"" + escLogTar_(x.nombre) + "\" data-lg-pais=\"" + escLogTar_(x.pais) + "\">" +
+                "<option value=\"ciudad\"" + (u === "ciudad" ? " selected" : "") + ">Ciudad</option>" +
+                "<option value=\"puerto\"" + (u === "puerto" ? " selected" : "") + ">Puerto</option>" +
+                "<option value=\"ambas\"" + (u === "ambas" ? " selected" : "") + ">Las dos</option></select>";
+            const quitar = x.origen === "App" && x.id
+                ? "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-lg-del=\"" + escLogTar_(x.id) + "\" title=\"Quitar\">×</button>"
+                : "";
+            return "<tr><td>" + escLogTar_(x.nombre) + "</td><td>" + uso + "</td><td>" + escLogTar_(x.origen) + "</td><td>" + quitar + "</td></tr>";
+        }).join("");
+    }
+    if (info) info.textContent = pais ? (filas.length + " en " + pais) : "";
+    if (pais && typeof logCiudadesAsegurarPais_ === "function") logCiudadesAsegurarPais_(pais);
+}
+
+function logCiudadesEnlazar_() {
+    const box = document.getElementById("logVistaCiudades");
+    if (!box || box.getAttribute("data-on")) return;
+    box.setAttribute("data-on", "1");
+    const sel = document.getElementById("logCiudadesPais");
+    const buscar = document.getElementById("logCiudadesBuscar");
+    const btn = document.getElementById("logCiudadesAgregar");
+    if (sel) sel.addEventListener("change", logCiudadesPintar_);
+    if (buscar) buscar.addEventListener("input", logCiudadesPintar_);
+    if (btn) btn.addEventListener("click", function () {
+        const pais = (document.getElementById("logCiudadesPais") || {}).value || "";
+        const nombre = (document.getElementById("logCiudadesNombre") || {}).value || "";
+        const uso = (document.getElementById("logCiudadesUso") || {}).value || "ciudad";
+        const r = typeof logLugarManualAgregar_ === "function" ? logLugarManualAgregar_(pais, nombre, uso) : { ok: false, mensaje: "No se pudo agregar." };
+        if (!r.ok) {
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion(r.mensaje || "No se pudo agregar.", "warning");
+            return;
+        }
+        const nom = document.getElementById("logCiudadesNombre");
+        if (nom) nom.value = "";
+        logCiudadesPintar_();
+        if ((window.logTarTab === "aereo" || window.logTarTab === "destino") && typeof logTarPintar_ === "function") logTarPintar_();
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Quedó en la app, ligada a " + pais + ". Pulsa Guardar para que la vean los otros equipos.", "success");
+    });
+    box.addEventListener("change", function (ev) {
+        const selUso = ev.target.closest("[data-lg-uso]");
+        if (!selUso || typeof logCiudadUsoCambiar_ !== "function") return;
+        logCiudadUsoCambiar_(selUso.getAttribute("data-lg-pais"), selUso.getAttribute("data-lg-nombre"), selUso.value, selUso.getAttribute("data-lg-id"));
+    });
+    box.addEventListener("click", function (ev) {
+        const b = ev.target.closest("[data-lg-del]");
+        if (!b || typeof logLugarManualQuitar_ !== "function") return;
+        logLugarManualQuitar_(b.getAttribute("data-lg-del"));
+        logCiudadesPintar_();
+    });
 }
 
 function logTarAgregar_() {
@@ -1227,26 +1480,35 @@ function logTarInit_() {
         const row = (window.logTarifas[tab] || []).find(function (r) { return r.id === tr.getAttribute("data-id"); });
         if (!row) return;
         if (row.preferida === "S") logTarDejarUnaPreferida_(tab, row);
-        if (ev.target.getAttribute("data-k") === "forma") logTarPintar_();
+        const kPinta = ev.target.getAttribute("data-k");
+        if (kPinta === "forma" || kPinta === "baseVar") logTarPintar_();
         else tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
     });
     body.addEventListener("change", function (ev) {
-        if (ev.target.getAttribute("data-sel")) {
-            if (!window.logTarSel) window.logTarSel = {};
-            const tr = ev.target.closest("tr[data-id]");
-            if (!tr) return;
-            const id = tr.getAttribute("data-id");
-            if (ev.target.checked) window.logTarSel[id] = 1;
-            else delete window.logTarSel[id];
-            return;
-        }
-        if (ev.target.getAttribute("data-k") === "preferida") {
+        const kCampo = ev.target.getAttribute("data-k");
+        if (kCampo === "preferida") {
             logTarFlush_();
             const tr = ev.target.closest("tr[data-id]");
             const tab = window.logTarTab;
             const row = tr && (window.logTarifas[tab] || []).find(function (r) { return r.id === tr.getAttribute("data-id"); });
             if (row) logTarDejarUnaPreferida_(tab, row);
             logTarPintar_();
+            return;
+        }
+        if (kCampo) {
+            logTarFlush_();
+            if ((kCampo === "pais" || kCampo === "ciudad" || kCampo === "puerto") && typeof logRefrescarCiudadesEnv_ === "function") {
+                logRefrescarCiudadesEnv_(false);
+            }
+            if (kCampo === "pais") logTarPintar_();
+            if (window.logTarTab === "interno" && (kCampo === "modalidad" || kCampo === "cobro")) {
+                if (kCampo === "cobro") {
+                    const trCob = ev.target.closest("tr[data-id]");
+                    const rowCob = trCob && (window.logTarifas.interno || []).find(function (r) { return r.id === trCob.getAttribute("data-id"); });
+                    if (rowCob && (rowCob.cobro === "kg" || rowCob.cobro === "escala") && (rowCob.factor === "" || rowCob.factor == null)) rowCob.factor = 400;
+                }
+                logTarPintar_();
+            }
         }
     });
     body.addEventListener("click", function (ev) {
@@ -1270,7 +1532,7 @@ function logTarInit_() {
         if (btn.getAttribute("data-lt") === "dup") {
             const copia = JSON.parse(JSON.stringify(lista[i]));
             copia.id = logTarId_();
-            copia.preferida = "N";
+            copia.preferida = copia.cobro === "escala" ? "S" : "N";
             copia.fecha = logTarHoy_();
             lista.splice(i + 1, 0, copia);
         }
@@ -1318,16 +1580,6 @@ function logTarInit_() {
             logTarPintar_();
         }
     });
-    document.getElementById("logTarPanel").addEventListener("change", function (ev) {
-        if (!ev.target || ev.target.id !== "logTarSelTodo") return;
-        if (!window.logTarSel) window.logTarSel = {};
-        document.querySelectorAll("#logTarBody [data-sel]").forEach(function (box) {
-            box.checked = ev.target.checked;
-            const id = box.closest("tr").getAttribute("data-id");
-            if (ev.target.checked) window.logTarSel[id] = 1;
-            else delete window.logTarSel[id];
-        });
-    });
     body.addEventListener("mouseover", function (ev) {
         const el = ev.target.closest("input, select");
         if (!el || el.type === "checkbox" || el.type === "number") return;
@@ -1352,22 +1604,26 @@ function logTarInit_() {
     if (btn) btn.addEventListener("click", logTarAgregar_);
     const sim = document.getElementById("logTarSimBtn");
     if (sim) sim.addEventListener("click", logTarSimularClick_);
-    ["logTarSimCiudad", "logTarCopiaCiudad"].forEach(function (id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.addEventListener("focus", function () { logTarMenuCiudad_(el); });
-        el.addEventListener("input", function () { logTarMenuCiudad_(el); });
-    });
-    ["logTarSimPais", "logTarCopiaPais"].forEach(function (id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.addEventListener("change", function () {
-            const ciudad = document.getElementById(id === "logTarSimPais" ? "logTarSimCiudad" : "logTarCopiaCiudad");
-            if (ciudad && document.activeElement === ciudad) logTarMenuCiudad_(ciudad);
+    const cartaBtn = document.getElementById("logTarCartaBtn");
+    if (cartaBtn) cartaBtn.addEventListener("click", logTarCartaLeer_);
+    const cartaOut = document.getElementById("logTarCartaOut");
+    if (cartaOut && !cartaOut.getAttribute("data-on")) {
+        cartaOut.setAttribute("data-on", "1");
+        cartaOut.addEventListener("click", function (ev) {
+            const b = ev.target.closest("[data-carta]");
+            if (!b) return;
+            if (b.getAttribute("data-carta") === "no") {
+                window.logTarCartaPendiente = null;
+                cartaOut.innerHTML = "";
+                return;
+            }
+            logTarCartaAplicar_();
         });
+    }
+    const simPais = document.getElementById("logTarSimPais");
+    if (simPais) simPais.addEventListener("change", function () {
+        logTarLlenarSelectCiudad_(document.getElementById("logTarSimCiudad"), simPais.value);
     });
-    const copia = document.getElementById("logTarCopiaBtn");
-    if (copia) copia.addEventListener("click", logTarDuplicarCiudad_);
 }
 
 function logTarMenuCerrar_() {
@@ -1444,25 +1700,23 @@ function logTarLlenarSelectPais_(sel) {
     sel.value = v;
 }
 
-function logTarCiudadesDe_(pais) {
-    const n = typeof logTarNorm_ === "function" ? logTarNorm_ : function (s) { return String(s || "").trim().toLowerCase(); };
-    const want = n(pais);
-    const out = [];
-    ((window.logTarifas && window.logTarifas.destino) || []).forEach(function (f) {
-        if (want && n(f.pais) !== want) return;
-        const c = String(f.ciudad || "").trim();
-        if (c && out.indexOf(c) < 0) out.push(c);
-    });
-    out.sort(function (a, b) { return a.localeCompare(b, "es"); });
-    return out;
+function logTarLlenarSelectCiudad_(sel, pais) {
+    if (!sel) return;
+    const v = sel.value;
+    const lista = typeof logCiudadesParaPais_ === "function" ? logCiudadesParaPais_(pais) : [];
+    const ops = [["", "Ciudad"]].concat(lista.map(function (c) { return [c, c]; }));
+    if (v && !ops.some(function (o) { return o[0] === v; })) ops.splice(1, 0, [v, v]);
+    sel.innerHTML = ops.map(function (o) {
+        return "<option value=\"" + escLogTar_(o[0]) + "\">" + escLogTar_(o[1]) + "</option>";
+    }).join("");
+    sel.value = ops.some(function (o) { return o[0] === v; }) ? v : "";
 }
 
 function logTarMenuCiudad_(input) {
     logTarMenuCerrar_();
-    const paisId = input.id === "logTarCopiaCiudad" ? "logTarCopiaPais" : "logTarSimPais";
-    const paisEl = document.getElementById(paisId);
+    const paisEl = document.getElementById("logTarSimPais");
     const q = String(input.value || "").trim().toLowerCase();
-    const lista = logTarCiudadesDe_(paisEl ? paisEl.value : "").filter(function (s) { return !q || s.toLowerCase().indexOf(q) >= 0; });
+    const lista = (typeof logCiudadesParaPais_ === "function" ? logCiudadesParaPais_(paisEl ? paisEl.value : "") : []).filter(function (s) { return !q || s.toLowerCase().indexOf(q) >= 0; });
     if (!lista.length) return;
     const menu = document.createElement("div");
     menu.id = "logTarMenu";
@@ -1484,32 +1738,178 @@ function logTarMenuCiudad_(input) {
     });
 }
 
-function logTarDuplicarCiudad_() {
+function logTarRutaCarta_() {
+    const g = function (id) { const el = document.getElementById(id); return el ? String(el.value || "").trim() : ""; };
+    return { pais: g("logTarSimPais"), ciudad: g("logTarSimCiudad"), modalidad: g("logTarSimMod") || "aerea" };
+}
+
+function logTarZipEocd_(u8) {
+    const min = Math.max(0, u8.length - 22 - 65536);
+    for (let i = u8.length - 22; i >= min; i--) {
+        if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) return i;
+    }
+    return -1;
+}
+
+async function logTarZipTexto_(buf, nombre) {
+    const u8 = new Uint8Array(buf);
+    const view = new DataView(buf);
+    const eocd = logTarZipEocd_(u8);
+    if (eocd < 0) return "";
+    const count = view.getUint16(eocd + 10, true);
+    let p = view.getUint32(eocd + 16, true);
+    for (let n = 0; n < count && p + 46 < u8.length; n++) {
+        if (view.getUint32(p, true) !== 0x02014b50) break;
+        const method = view.getUint16(p + 10, true);
+        const compSize = view.getUint32(p + 20, true);
+        const nameLen = view.getUint16(p + 28, true);
+        const extraLen = view.getUint16(p + 30, true);
+        const commentLen = view.getUint16(p + 32, true);
+        const local = view.getUint32(p + 42, true);
+        const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nameLen));
+        p += 46 + nameLen + extraLen + commentLen;
+        if (name !== nombre) continue;
+        if (local + 30 > u8.length) return "";
+        const localName = view.getUint16(local + 26, true);
+        const localExtra = view.getUint16(local + 28, true);
+        const start = local + 30 + localName + localExtra;
+        const data = u8.subarray(start, start + compSize);
+        if (method === 0) return new TextDecoder().decode(data);
+        if (method !== 8 || typeof DecompressionStream === "undefined") return "";
+        const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        return await new Response(stream).text();
+    }
+    return "";
+}
+
+async function logTarTextoCarta_(file) {
+    const nombre = String(file && file.name || "").toLowerCase();
+    if (nombre.endsWith(".txt")) return { texto: await file.text(), parte: null };
+    if (nombre.endsWith(".docx")) {
+        const xml = await logTarZipTexto_(await file.arrayBuffer(), "word/document.xml");
+        if (!xml) throw new Error("No pude leer el Word. Guárdalo como PDF e inténtalo de nuevo.");
+        const texto = xml.replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"");
+        return { texto: texto, parte: null };
+    }
+    if (nombre.endsWith(".pdf") || file.type === "application/pdf") {
+        const buf = await file.arrayBuffer();
+        let bin = "";
+        const u8 = new Uint8Array(buf);
+        for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+        return { texto: "", parte: { inlineData: { mimeType: "application/pdf", data: btoa(bin) } } };
+    }
+    throw new Error("Usa un PDF, un Word o un texto.");
+}
+
+function logTarPromptDestino_(ruta, actuales, texto) {
+    const mod = ruta.modalidad === "aerea" ? "Aérea" : String(ruta.modalidad || "").toUpperCase();
+    const nombres = actuales.map(function (f) { return f.concepto; }).filter(Boolean).join(", ") || "(ninguno)";
+    return "Eres el asistente de tarifas de SmartBudget. Extrae SOLO los costos en destino de esta cotización.\n" +
+        "País: " + ruta.pais + "\nCiudad: " + ruta.ciudad + "\nModalidad: " + mod + "\n\n" +
+        "Cargos que ya están en la tabla para esta ruta: " + nombres + "\n" +
+        "Si un cargo de la carta es el mismo, devuelve exactamente ese nombre. No inventes cargos. No repitas un concepto.\n\n" +
+        "Incluye solo cargos de destino con un número firme: delivery, transfer, combustible sobre esos cargos, handling, document turnover, THC, customs entry, messenger, harbor maintenance, merchandise processing, bond y cargos fijos parecidos.\n" +
+        "No incluyas flete aéreo o marítimo, gastos de origen, seguro, camión en origen, SAE, planilla, ni aranceles (Duties, Section 301, IVA).\n" +
+        "No incluyas líneas que digan \"al costo\", \"se confirmará\", \"en caso de requerirse\" o \"subject to change\" sin una tarifa cerrada.\n\n" +
+        "Forma de cada cargo:\n" +
+        "- Monto fijo por embarque: forma \"fijo\", sobre \"\", precio el monto.\n" +
+        "- Por kg facturable: forma \"variable\", sobre \"peso\", precio la tarifa por kg y minimo si lo hay.\n" +
+        "- Porcentaje del valor de la mercancía o de la commercial invoice: forma \"variable\", sobre \"valor\", precio el porcentaje. 0.125 significa 0,125 %, no 12,5.\n" +
+        "- Porcentaje de otros cargos de destino: forma \"variable\", sobre \"cargos\", precio el porcentaje (42 significa 42) y baseCargos con los nombres de esos cargos separados por coma.\n" +
+        "- 7 USD por cada 1000 del valor, con mínimo: forma \"variable\", sobre \"valor\", precio 0.7 y minimo el mínimo.\n" +
+        "La fecha de la carta va en fecha como AAAA-MM-DD. Si el texto dice 08/10/2026, es 8 de octubre de 2026.\n\n" +
+        "Responde solo un JSON, sin markdown:\n" +
+        "{\"fecha\":\"\",\"proveedor\":\"\",\"cargos\":[{\"concepto\":\"\",\"forma\":\"fijo\",\"sobre\":\"\",\"precio\":0,\"minimo\":\"\",\"moneda\":\"USD\",\"baseCargos\":\"\"}]}\n" +
+        (texto ? ("\nCOTIZACION:\n" + String(texto).slice(0, 80000)) : "\nLa cotización va adjunta.");
+}
+
+function logTarJsonCarta_(texto) {
+    const m = String(texto || "").match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    try { return JSON.parse(m[0]); } catch (e) { return null; }
+}
+
+function logTarCartaHtml_(cruce, fuera) {
+    const li = function (arr, vacio) {
+        if (!arr.length) return "<li class=\"text-muted\">" + vacio + "</li>";
+        return arr.map(function (t) { return "<li>" + escLogTar_(t) + "</li>"; }).join("");
+    };
+    const upd = (cruce.actualiza || []).filter(function (x) { return !x.igual; });
+    const igual = (cruce.actualiza || []).filter(function (x) { return x.igual; }).length;
+    const cambios = upd.length + (cruce.agrega || []).length + (cruce.quita || []).length;
+    const bloques = "<div class=\"log-tar-cruce\">" +
+        "<div><h6>Actualiza</h6><ul>" + li(upd.map(function (x) { return logTarTxtFilaDestino_(x.antes) + " → " + logTarTxtFilaDestino_(x.despues); }), "Ninguno") + "</ul></div>" +
+        "<div><h6>Agrega</h6><ul>" + li((cruce.agrega || []).map(logTarTxtFilaDestino_), "Ninguno") + "</ul></div>" +
+        "<div><h6>Quita</h6><ul>" + li((cruce.quita || []).map(logTarTxtFilaDestino_), "Ninguno") + "</ul></div>" +
+        "</div>";
+    const pie = igual ? ("<div class=\"text-muted mt-1\">" + igual + (igual === 1 ? " cargo sigue igual." : " cargos siguen igual.") + "</div>") : "";
+    const aviso = fuera && fuera.length ? ("<div class=\"text-muted mt-1\">Dejé fuera " + fuera.length + " línea" + (fuera.length === 1 ? "" : "s") + " que no son un costo de destino con tarifa cerrada.</div>") : "";
+    if (!cambios) return "<strong>Esta ruta ya está al día.</strong> No hay cargos nuevos, cambiados ni sobrantes." + pie + aviso;
+    return "<strong>Revisa el cruce antes de tocar la tabla.</strong> Solo cambia " + escLogTar_(cruce.ciudad || "") + ". Después pulsa Guardar para dejarlo en la nube." + bloques + pie + aviso +
+        "<div class=\"mt-2\"><button type=\"button\" class=\"btn admin-btn btn-sm\" data-carta=\"si\">Aplicar a la tabla</button> <button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-carta=\"no\">Cancelar</button></div>";
+}
+
+function logTarCartaProgreso_(out, paso, texto) {
+    if (!out) return;
+    const pct = paso === 1 ? 30 : 70;
+    out.innerHTML = "<div class=\"log-tar-leyendo\" role=\"status\"><span class=\"spinner-border spinner-border-sm\" aria-hidden=\"true\"></span><span>" + escLogTar_(texto) + "</span></div>" +
+        "<div class=\"progress log-tar-avance\"><div class=\"progress-bar progress-bar-striped progress-bar-animated\" style=\"width:" + pct + "%\"></div></div>";
+}
+
+async function logTarCartaLeer_() {
+    const out = document.getElementById("logTarCartaOut");
+    const btn = document.getElementById("logTarCartaBtn");
+    const file = (document.getElementById("logTarCarta") || {}).files;
+    const ruta = logTarRutaCarta_();
+    if (!ruta.pais || !ruta.ciudad) {
+        if (out) out.innerHTML = "<span class=\"text-danger\">Elige el país y la ciudad de arriba.</span>";
+        return;
+    }
+    if (!file || !file[0]) {
+        if (out) out.innerHTML = "<span class=\"text-danger\">Elige el archivo de la cotización.</span>";
+        return;
+    }
+    if (btn) btn.disabled = true;
+    logTarCartaProgreso_(out, 1, "Leyendo el archivo…");
+    try {
+        logTarFlush_();
+        const leido = await logTarTextoCarta_(file[0]);
+        logTarCartaProgreso_(out, 2, "Cruzando los cargos de destino…");
+        const actuales = typeof logTarDestinoDeRuta_ === "function" ? logTarDestinoDeRuta_(ruta.pais, ruta.ciudad, ruta.modalidad) : [];
+        const prompt = logTarPromptDestino_(ruta, actuales, leido.texto);
+        const parts = [{ text: prompt }];
+        if (leido.parte) parts.push(leido.parte);
+        const data = await realizarPeticionBD({ action: "gemini_analizar", forzarPro: false, parts: parts }, { timeoutMs: 120000 });
+        if (typeof pintarUsoGemini === "function") pintarUsoGemini(data && data.uso);
+        if (!data || !data.exito) throw new Error((data && data.mensaje) || "Gemini no respondió.");
+        const texto = (typeof textoGemini === "function") ? textoGemini(data) : "";
+        const json = logTarJsonCarta_(texto);
+        if (!json || !Array.isArray(json.cargos)) throw new Error("Gemini no devolvió los cargos. Prueba de nuevo o con el PDF.");
+        const norm = logTarNormalizarCarta_(json, ruta);
+        if (!norm.filas.length) throw new Error("No encontré costos de destino con tarifa cerrada. No cambié la tabla.");
+        const cruce = logTarDestinoCruzar_(ruta.pais, ruta.ciudad, ruta.modalidad, norm.filas);
+        cruce.pais = ruta.pais;
+        cruce.ciudad = ruta.ciudad;
+        cruce.modalidad = ruta.modalidad;
+        window.logTarCartaPendiente = { ruta: ruta, cruce: cruce };
+        if (out) out.innerHTML = logTarCartaHtml_(cruce, norm.fuera);
+    } catch (e) {
+        window.logTarCartaPendiente = null;
+        if (out) out.innerHTML = "<span class=\"text-danger\">" + escLogTar_(e.message || "No pude leer la cotización.") + "</span>";
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function logTarCartaAplicar_() {
+    const pend = window.logTarCartaPendiente;
+    const out = document.getElementById("logTarCartaOut");
+    if (!pend || typeof logTarDestinoAplicarCarta_ !== "function") return;
     logTarFlush_();
-    const pais = (document.getElementById("logTarCopiaPais") || {}).value || "";
-    const ciudad = String((document.getElementById("logTarCopiaCiudad") || {}).value || "").trim();
-    const avisar = function (m) { if (typeof mostrarNotificacion === "function") mostrarNotificacion(m, "warning"); };
-    if (!pais || !ciudad) { avisar("Elige el país y la ciudad de destino."); return; }
-    const lista = (window.logTarifas && window.logTarifas.destino) || [];
-    const ids = Object.keys(window.logTarSel || {});
-    if (!ids.length) { avisar("Marca las filas que quieres copiar."); return; }
-    let n = 0;
-    ids.forEach(function (id) {
-        const f = lista.find(function (r) { return r.id === id; });
-        if (!f) return;
-        const copia = JSON.parse(JSON.stringify(f));
-        copia.id = logTarId_();
-        copia.pais = pais;
-        copia.ciudad = ciudad;
-        copia.fecha = logTarHoy_();
-        copia.preferida = "S";
-        lista.push(copia);
-        logTarDejarUnaPreferida_("destino", copia);
-        n += 1;
-    });
-    window.logTarSel = {};
-    logTarPintar_();
-    if (n && typeof mostrarNotificacion === "function") mostrarNotificacion("Se copiaron " + n + " cargos a " + ciudad + ".", "success");
+    logTarDestinoAplicarCarta_(pend.ruta.pais, pend.ruta.ciudad, pend.ruta.modalidad, pend.cruce);
+    window.logTarCartaPendiente = null;
+    if (typeof logTarPintar_ === "function") logTarPintar_();
+    if (out) out.innerHTML = "<span class=\"text-success\">La tabla quedó con una sola fila por cargo. Pulsa Guardar para dejarlo en la nube.</span>";
 }
 
 function logTarSimularClick_() {
@@ -2212,7 +2612,7 @@ async function guardarConfiguracion() {
 
     const getVal = id => { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; };
     const data = {
-        gasUrl: document.getElementById('cfgGasUrl')?.value.trim() || CONFIG_GLOBAL.gasUrl,
+        gasUrl: (document.getElementById('cfgGasUrl')?.value || "").trim() || CONFIG_GLOBAL.gasUrl,
         tarifasFijas: JSON.stringify((typeof leerTarifasFijasUI === "function") ? leerTarifasFijasUI() : []),
         unidades: JSON.stringify((typeof leerUnidadesMatrizUI === "function") ? leerUnidadesMatrizUI() : []),
         promptMaestro: document.getElementById('cfgPrompt')?.value || '',
@@ -2225,6 +2625,12 @@ async function guardarConfiguracion() {
         partidas: JSON.stringify(partidasParaGuardar_()),
         logTrm: getVal('cfgLogTrm') || 0,
         logMeses: getVal('cfgLogMeses') || 6,
+        logMargenPct: (function () {
+            const el = document.getElementById('cfgLogMargen');
+            if (!el || String(el.value).trim() === "") return 30;
+            const n = parseFloat(el.value);
+            return isFinite(n) ? Math.min(200, Math.max(0, n)) : 30;
+        })(),
         logTarifas: JSON.stringify((typeof logTarParaGuardar_ === "function") ? logTarParaGuardar_() : (CONFIG_GLOBAL.logTarifas || {})),
         diasVigencia: { materiales: getVal('cfgDiasVigMat') || 180, procesos: getVal('cfgDiasVigProc') || 90 },
         operativos: { topeFab: getVal('cfgTopeOpFab'), topeCom: getVal('cfgTopeOpCom'), impFab: { max: getVal('cfgImpFabMax'), min: getVal('cfgImpFabMin') }, indFab: { max: getVal('cfgIndFabMax'), min: getVal('cfgIndFabMin') }, indCom: { max: getVal('cfgIndComMax'), min: getVal('cfgIndComMin') } },
@@ -2236,6 +2642,14 @@ async function guardarConfiguracion() {
     };
     
     if(typeof mostrarNotificacion === "function") mostrarNotificacion("Sincronizando configuración...", "info");
+    let cuerpo = "";
+    try {
+        cuerpo = JSON.stringify({ action: 'guardar_config', payload: data, email: email, authKey: token });
+    } catch (eJson) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo armar la configuración: " + (eJson.message || "dato inválido"), "danger");
+        return;
+    }
+    try { localStorage.setItem("smartbudget_tarifas_borrador", JSON.stringify({ t: Date.now(), logTarifas: data.logTarifas })); } catch (eLoc) {}
     try {
         try { await guardarArancelesConAjustes_(); }
         catch (eAr) {
@@ -2244,9 +2658,21 @@ async function guardarConfiguracion() {
                 : ("Aranceles: " + eAr.message);
             if (typeof mostrarNotificacion === "function") mostrarNotificacion(m, "danger");
         }
-        const res = await fetch(CONFIG_GLOBAL.gasUrl, { method: 'POST', body: JSON.stringify({ action: 'guardar_config', payload: data, email: email, authKey: token }) });
-        const resData = await res.json();
+        const res = await fetch(data.gasUrl || CONFIG_GLOBAL.gasUrl, { method: 'POST', body: cuerpo });
+        const txt = await res.text();
+        let resData = null;
+        try { resData = JSON.parse(txt); } catch (eParse) { resData = null; }
+        if (!resData) {
+            const kb = Math.round(cuerpo.length / 1024);
+            const corto = String(txt || "").replace(/\s+/g, " ").slice(0, 160);
+            const cabe = /50000|demasiado|too large/i.test(corto) || kb > 48;
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion(cabe
+                ? "La configuración no cabe en una sola celda (" + kb + " KB). Pega backend.gs, publícalo y pulsa Guardar otra vez sin recargar."
+                : ("La nube no respondió. " + (corto || ("HTTP " + res.status))), "danger");
+            return;
+        }
         if (resData.exito) {
+            try { localStorage.removeItem("smartbudget_tarifas_borrador"); } catch (eDel) {}
             CONFIG_GLOBAL = Object.assign({}, CONFIG_GLOBAL || {}, data);
             poblarSelectComisiones();
             if(typeof mostrarNotificacion === "function") mostrarNotificacion(resData.mensaje, "success");
@@ -2254,8 +2680,15 @@ async function guardarConfiguracion() {
             if(typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
             if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
             if (typeof logisticaActualizarVista === "function") logisticaActualizarVista();
-        } else { if(typeof mostrarNotificacion === "function") mostrarNotificacion("Error: " + resData.mensaje, "danger"); }
-    } catch(e) { if(typeof mostrarNotificacion === "function") mostrarNotificacion("Error de red guardando configuración.", "danger"); }
+        } else {
+            const msg = String(resData.mensaje || "");
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion(/50000|demasiado|too large/i.test(msg)
+                ? "La configuración no cabe en una sola celda. Pega backend.gs, publícalo y pulsa Guardar otra vez sin recargar."
+                : ("Error: " + msg), "danger");
+        }
+    } catch(e) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo enviar la configuración (" + Math.round(cuerpo.length / 1024) + " KB). " + (e.message || "Sin respuesta."), "danger");
+    }
 }
 
 function poblarSelectComisiones(lista) {

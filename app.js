@@ -951,19 +951,66 @@ function snapshotDesdeUI_(id, comentario) {
     return snap;
 }
 
+function idVersionCanon_(id) {
+    const m = String(id || "").trim().match(/^v(\d+)$/i);
+    if (m) return "V" + String(parseInt(m[1], 10));
+    return String(id || "").trim() || "V1";
+}
+
+function versionTieneTrabajo_(v) {
+    if (!v) return false;
+    if ((v.matrizItems || []).length || (v.historialChat || []).length) return true;
+    if ((v.elementos || []).some(function (e) { return (e.matrizItems || []).length || (e.historialChat || []).length; })) return true;
+    const f = v.fichaComercial || {};
+    return !!(f.titulo || f.descripcion);
+}
+
+/** V1 y v1 son la misma versión. No se crea otra por la mayúscula. */
+function canonizarVersiones_() {
+    const lista = window.versionesPresupuesto;
+    if (!Array.isArray(lista) || !lista.length) return;
+    const grupos = {};
+    const orden = [];
+    lista.forEach(function (v) {
+        const id = idVersionCanon_(v.id);
+        if (!grupos[id]) {
+            grupos[id] = [];
+            orden.push(id);
+        }
+        grupos[id].push(v);
+    });
+    const activa = idVersionCanon_(window.versionActivaId);
+    const out = orden.map(function (id) {
+        const g = grupos[id];
+        let keep = g[g.length - 1];
+        if (g.length > 1) {
+            const conTrabajo = g.filter(versionTieneTrabajo_);
+            const marcada = g.find(function (v) { return String(v.id) === String(window.versionActivaId); })
+                || g.find(function (v) { return idVersionCanon_(v.id) === activa; });
+            keep = (marcada && (versionTieneTrabajo_(marcada) || !conTrabajo.length)) ? marcada : (conTrabajo[conTrabajo.length - 1] || marcada || keep);
+        }
+        keep.id = id;
+        return keep;
+    });
+    window.versionesPresupuesto = out;
+    window.versionActivaId = out.some(function (v) { return v.id === activa; }) ? activa : out[0].id;
+}
+
 function asegurarV1_() {
     if (!Array.isArray(window.versionesPresupuesto) || !window.versionesPresupuesto.length) {
         window.versionesPresupuesto = [snapshotDesdeUI_("V1", "")];
         window.versionActivaId = "V1";
     }
     if (!window.versionActivaId) window.versionActivaId = window.versionesPresupuesto[0].id;
+    canonizarVersiones_();
 }
 
 function snapshotVersionActual() {
     asegurarV1_();
-    const id = window.versionActivaId || "V1";
+    const id = idVersionCanon_(window.versionActivaId || "V1");
+    window.versionActivaId = id;
     const snap = snapshotDesdeUI_(id);
-    const i = window.versionesPresupuesto.findIndex(function (v) { return v.id === id; });
+    const i = window.versionesPresupuesto.findIndex(function (v) { return idVersionCanon_(v.id) === id; });
     if (i >= 0) window.versionesPresupuesto[i] = snap;
     else window.versionesPresupuesto.push(snap);
     return snap;
@@ -979,9 +1026,10 @@ function siguienteIdVersion() {
 }
 
 function aplicarVersionEnUI(id, omitirSnapshot) {
+    id = idVersionCanon_(id);
     const previa = window.versionActivaId || "";
     if (!omitirSnapshot) snapshotVersionActual();
-    const ver = (window.versionesPresupuesto || []).find(function (v) { return v.id === id; });
+    const ver = (window.versionesPresupuesto || []).find(function (v) { return idVersionCanon_(v.id) === id; });
     if (!ver) return;
     window.versionActivaId = id;
     if (typeof itemsPresupuesto !== "undefined") itemsPresupuesto = clonarJson_(ver.matrizItems || []);
@@ -1046,6 +1094,7 @@ function hidratarVersionesDesdePayload(p) {
         if (!ver.fichaComercial || !Object.keys(ver.fichaComercial).length) ver.fichaComercial = clonarJson_(el.fichaComercial || {});
         if (!ver.faseIA) ver.faseIA = el.faseIA || "idle";
     });
+    canonizarVersiones_();
     const tipo = (p.cabecera && p.cabecera.tipoEstructura) ||
         ((window.versionesPresupuesto || []).some(function (v) { return v.elementos && v.elementos.length > 1; }) ? "GRUPAL" : "INDIVIDUAL");
     window.tipoEstructura = tipo === "GRUPAL" ? "GRUPAL" : "INDIVIDUAL";

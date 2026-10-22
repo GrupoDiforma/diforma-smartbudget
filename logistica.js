@@ -897,7 +897,7 @@ function logEnvDef_() {
         contenedores: { c20: 0, c40: 0, c40hc: 0 },
         contenedoresManual: false, embarques: 1,
         activo: true, modoCosto: "detalle", resumenPct: 100, mercado: "",
-        margenPct: 20,
+        margenPct: logMargenEmpresa_(),
         margenNal: { envio: 30, montaje: 30, bodega: 30, otro: 30 },
         titSubProd: "", titSubLog: "", titGran: "",
         cubM3: null, cubPeso: null, cubKgVol: null,
@@ -907,7 +907,13 @@ function logEnvDef_() {
 
 /** Catálogo vivo. null hasta que llega Odoo; mientras tanto se usa la lista corta. */
 var logPaisesCat_ = null;
+var logCiudadesOdoo_ = [];
+var logCiudadesApp_ = [];
+var logCiudadesOcultas_ = {};
+var logCiudadesAsegurando_ = {};
+var logCiudadesEstado_ = { clase: "is-info", texto: "Las ciudades quedan en la app, ligadas al país. Odoo solo completa un país la primera vez." };
 var LOG_PAISES_LOCAL_ = "smartbudget_paises_odoo";
+var LOG_CIUDADES_LOCAL_ = "smartbudget_ciudades_app";
 
 var logPaisesBaseCache_ = null;
 function logPaisesBase_() {
@@ -940,9 +946,30 @@ function logPaisDeCodigo_(cod) {
     return hit ? hit.nombre : "";
 }
 
+function logPaisNombreEs_(codigo, nombre) {
+    const cod = String(codigo || "").trim().toUpperCase();
+    if (!cod) return String(nombre || "").trim();
+    const es = logPaisesBase_().find(function (x) { return x.codigo === cod; });
+    return (es && es.nombre) || String(nombre || "").trim();
+}
+
+function logPaisesEnEspanol_(lista) {
+    const vistos = {};
+    const out = [];
+    (lista || []).forEach(function (x) {
+        const codigo = String((x && x.codigo) || "").trim().toUpperCase();
+        const nombre = logPaisNombreEs_(codigo, x && x.nombre);
+        if (!codigo || !nombre || vistos[codigo]) return;
+        vistos[codigo] = 1;
+        out.push({ nombre: nombre, codigo: codigo });
+    });
+    return out;
+}
+
 function logPaisesAplicar_(lista) {
-    if (!lista || !lista.length) return;
-    logPaisesCat_ = lista;
+    const es = logPaisesEnEspanol_(lista);
+    if (!es.length) return;
+    logPaisesCat_ = es;
     const e = logQuote && logQuote.env;
     if (!e || !e.destinoPais || e.destinoCodigo) return;
     const cod = logEnvCodigoDePais_(e.destinoPais);
@@ -968,13 +995,301 @@ async function logCargarPaises_() {
     try {
         const r = await realizarPeticionBD({ action: "odoo_paises" }, { timeoutMs: 25000 });
         if (!r || !r.exito || !Array.isArray(r.data) || r.data.length < 20) return;
-        const lista = r.data.map(function (x) {
-            return { nombre: String(x.nombre || "").trim(), codigo: String(x.codigo || "").trim().toUpperCase() };
-        }).filter(function (x) { return x.nombre && x.codigo; });
+        const lista = logPaisesEnEspanol_(r.data);
         if (lista.length < 20) return;
         logPaisesAplicar_(lista);
         try { localStorage.setItem(LOG_PAISES_LOCAL_, JSON.stringify({ t: Date.now(), data: lista })); } catch (e2) {}
     } catch (e) { /* sin el backend nuevo sigue la lista corta */ }
+}
+
+function logCiudadesEstadoPoner_(clase, texto) {
+    logCiudadesEstado_ = { clase: clase || "is-info", texto: texto || "" };
+    if (window.logTarTab === "ciudades" && typeof logCiudadesPintar_ === "function") logCiudadesPintar_();
+}
+
+function logCiudadesAppClave_(pais, nombre) {
+    return logTarNorm_(pais) + "|" + logTarNorm_(nombre);
+}
+
+function logCiudadesAppLeer_() {
+    try {
+        const o = JSON.parse(localStorage.getItem(LOG_CIUDADES_LOCAL_) || "null");
+        if (o && Array.isArray(o.data)) {
+            logCiudadesApp_ = o.data.filter(function (x) { return x && x.nombre && x.pais; });
+        }
+        logCiudadesOcultas_ = (o && o.ocultas && typeof o.ocultas === "object") ? o.ocultas : {};
+    } catch (e) {}
+    logLugaresManuales_().forEach(function (x) { logCiudadesAppMeter_(x, true); });
+}
+
+function logCiudadesAppGuardarLocal_() {
+    try {
+        localStorage.setItem(LOG_CIUDADES_LOCAL_, JSON.stringify({ t: Date.now(), data: logCiudadesApp_, ocultas: logCiudadesOcultas_ }));
+    } catch (e) {}
+}
+
+function logCiudadesAppMeter_(x, silencio) {
+    const nombre = String((x && x.nombre) || "").trim();
+    const pais = String((x && x.pais) || "").trim();
+    if (!nombre || !pais) return false;
+    const k = logCiudadesAppClave_(pais, nombre);
+    if (logCiudadesOcultas_[k]) return false;
+    const ya = logCiudadesApp_.some(function (c) { return logCiudadesAppClave_(c.pais, c.nombre) === k; });
+    if (ya) return false;
+    const uso = x.uso === "puerto" || x.uso === "ambas" ? x.uso : "ciudad";
+    logCiudadesApp_.push({ id: x.id || ("ci" + Date.now().toString(36) + logCiudadesApp_.length.toString(36)), nombre: nombre, pais: pais, uso: uso });
+    if (!silencio) logCiudadesAppGuardarLocal_();
+    return true;
+}
+
+function logCiudadesUsoNorm_(uso) {
+    return uso === "puerto" || uso === "ambas" ? uso : "ciudad";
+}
+
+function logCiudadesAppDePais_(pais) {
+    return logCiudadesApp_.filter(function (x) { return x && logTarMismoPais_(pais, x.pais); });
+}
+
+function logCiudadUsoCambiar_(pais, nombre, uso, id) {
+    const nom = String(nombre || "").trim();
+    const pa = String(pais || "").trim();
+    if (!nom || !pa) return;
+    const u = logCiudadesUsoNorm_(uso);
+    const k = logCiudadesAppClave_(pa, nom);
+    if (logCiudadesOcultas_[k]) delete logCiudadesOcultas_[k];
+    let row = logCiudadesApp_.find(function (c) { return logCiudadesAppClave_(c.pais, c.nombre) === k; });
+    if (!row) {
+        row = { id: id || ("lg" + Date.now().toString(36)), nombre: nom, pais: pa, uso: u };
+        logCiudadesApp_.push(row);
+    } else {
+        row.uso = u;
+    }
+    const manual = logLugaresManuales_().find(function (x) { return x && logCiudadesAppClave_(x.pais, x.nombre) === k; });
+    if (manual) manual.uso = u;
+    logCiudadesAppGuardarLocal_();
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+    logCiudadesPublicarPais_(pa);
+}
+
+function logCiudadesOdooAplicar_(lista) {
+    let n = 0;
+    (lista || []).forEach(function (x) {
+        if (logCiudadesAppMeter_({ nombre: x.nombre, pais: x.pais, uso: "ciudad" }, true)) n++;
+    });
+    if (n) logCiudadesAppGuardarLocal_();
+    logCiudadesOdoo_ = logCiudadesApp_;
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+    const tab = window.logTarTab;
+    if ((tab === "aereo" || tab === "destino") && typeof logTarFlush_ === "function" && typeof logTarPintar_ === "function") {
+        logTarFlush_();
+        logTarPintar_();
+    }
+    if (tab === "ciudades" && typeof logCiudadesPintar_ === "function") logCiudadesPintar_();
+}
+
+function logLugaresManuales_() {
+    const t = typeof logTarAsegurar_ === "function" ? logTarAsegurar_() : null;
+    if (!t) return [];
+    if (!Array.isArray(t.lugares)) t.lugares = [];
+    return t.lugares;
+}
+
+function logCiudadesCatalogo_(pais) {
+    const p = String(pais || "").trim();
+    const map = {};
+    const rank = { App: 4, Tarifa: 2 };
+    function put(nombre, paisItem, uso, origen, id) {
+        const nom = String(nombre || "").trim();
+        const pa = String(paisItem || "").trim();
+        if (!nom || !pa) return;
+        if (p && !logTarMismoPais_(p, pa)) return;
+        const k = logCiudadesAppClave_(pa, nom);
+        if (logCiudadesOcultas_[k]) return;
+        const item = { nombre: nom, pais: pa, uso: uso || "ciudad", origen: origen, id: id || "" };
+        const prev = map[k];
+        if (!prev || (rank[origen] || 0) > (rank[prev.origen] || 0)) map[k] = item;
+        else if (prev.origen === origen && uso === "puerto" && prev.uso === "ciudad") prev.uso = "ambas";
+        else if (prev.origen === origen && uso === "ciudad" && prev.uso === "puerto") prev.uso = "ambas";
+    }
+    (logCiudadesApp_ || []).forEach(function (x) { put(x.nombre, x.pais, x.uso || "ciudad", "App", x.id); });
+    const t = window.logTarifas;
+    if (t) {
+        (t.aereo || []).forEach(function (f) { put(f && f.ciudad, f && f.pais, "ciudad", "Tarifa", ""); });
+        (t.destino || []).forEach(function (f) { put(f && f.ciudad, f && f.pais, "ciudad", "Tarifa", ""); });
+        (t.fcl || []).forEach(function (f) { put(f && f.puerto, f && f.pais, "puerto", "Tarifa", ""); });
+        (t.lcl || []).forEach(function (f) { put(f && f.puerto, f && f.pais, "puerto", "Tarifa", ""); });
+    }
+    return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) {
+        return a.nombre.localeCompare(b.nombre, "es");
+    });
+}
+
+function logCiudadesParaPais_(pais) {
+    return logCiudadesCatalogo_(pais).filter(function (x) { return x.uso !== "puerto"; }).map(function (x) { return x.nombre; });
+}
+
+function logLugarManualAgregar_(pais, nombre, uso) {
+    const nom = String(nombre || "").trim();
+    const pa = String(pais || "").trim();
+    const u = uso === "puerto" || uso === "ambas" ? uso : "ciudad";
+    if (!pa) return { ok: false, mensaje: "Elige el país." };
+    if (!nom) return { ok: false, mensaje: "Escribe el nombre." };
+    const k = logCiudadesAppClave_(pa, nom);
+    if (logCiudadesOcultas_[k]) delete logCiudadesOcultas_[k];
+    const ya = logCiudadesCatalogo_(pa).some(function (x) { return logTarNorm_(x.nombre) === logTarNorm_(nom); });
+    if (ya) return { ok: false, mensaje: nom + " ya está en " + pa + "." };
+    const row = { id: "lg" + Date.now().toString(36), nombre: nom, pais: pa, uso: u };
+    logCiudadesAppMeter_(row, true);
+    logCiudadesAppGuardarLocal_();
+    logLugaresManuales_().push(row);
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+    logCiudadesPublicarPais_(pa);
+    return { ok: true };
+}
+
+function logLugarManualQuitar_(id) {
+    const lista = logLugaresManuales_();
+    const i = lista.findIndex(function (x) { return x && x.id === id; });
+    if (i >= 0) lista.splice(i, 1);
+    const j = logCiudadesApp_.findIndex(function (x) { return x && x.id === id; });
+    if (j >= 0) {
+        logCiudadesOcultas_[logCiudadesAppClave_(logCiudadesApp_[j].pais, logCiudadesApp_[j].nombre)] = 1;
+        logCiudadesApp_.splice(j, 1);
+        logCiudadesAppGuardarLocal_();
+    }
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+}
+
+function logCiudadesTomar_(lista, pais, desdeHoja) {
+    const filas = (lista || []).map(function (x) {
+        return { nombre: String(x.nombre || "").trim(), pais: String(x.pais || pais || "").trim(), uso: logCiudadesUsoNorm_(x.uso), id: x.id || "" };
+    }).filter(function (x) { return x.nombre && x.pais && (!pais || logTarMismoPais_(pais, x.pais)); });
+    if (!filas.length) return 0;
+    if (desdeHoja) {
+        filas.forEach(function (x) {
+            const k = logCiudadesAppClave_(x.pais, x.nombre);
+            const row = logCiudadesApp_.find(function (c) { return logCiudadesAppClave_(c.pais, c.nombre) === k; });
+            if (!row) logCiudadesAppMeter_(x, true);
+            else if (!(row.uso && row.uso !== "ciudad" && x.uso === "ciudad")) row.uso = x.uso;
+        });
+        logCiudadesAppGuardarLocal_();
+        logCiudadesOdoo_ = logCiudadesApp_;
+    } else {
+        logCiudadesOdooAplicar_(filas);
+    }
+    return logCiudadesAppDePais_(pais || filas[0].pais).length;
+}
+
+async function logCiudadesPublicarPais_(pais) {
+    if (!pais || typeof realizarPeticionBD !== "function") return null;
+    if (!localStorage.getItem("smartbudget_token")) return null;
+    if (!(typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl)) return null;
+    const filas = logCiudadesAppDePais_(pais).map(function (x) {
+        return { id: x.id, nombre: x.nombre, pais: pais, uso: x.uso || "ciudad" };
+    });
+    if (!filas.length) return null;
+    const email = localStorage.getItem("smartbudget_email") || "";
+    try {
+        return await realizarPeticionBD({ action: "ciudades_reemplazar", pais: pais, filas: filas, email: email }, { timeoutMs: 90000 });
+    } catch (e) {
+        return { exito: false, mensaje: (e && e.message) || "" };
+    }
+}
+
+var logCiudadesEmpujando_ = false;
+async function logCiudadesEmpujarLocal_() {
+    if (logCiudadesEmpujando_ || !logCiudadesApp_.length) return;
+    if (!localStorage.getItem("smartbudget_token") || typeof realizarPeticionBD !== "function") return;
+    if (!(typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl)) return;
+    logCiudadesEmpujando_ = true;
+    try {
+        const r = await realizarPeticionBD({ action: "ciudades_consultar", pais: "" }, { timeoutMs: 30000 });
+        if (!r || !r.exito || !Array.isArray(r.data)) return;
+        const enHoja = {};
+        r.data.forEach(function (x) { enHoja[logCiudadesAppClave_(x.pais, x.nombre)] = 1; });
+        const paises = {};
+        logCiudadesApp_.forEach(function (x) {
+            if (!enHoja[logCiudadesAppClave_(x.pais, x.nombre)]) paises[x.pais] = 1;
+        });
+        const lista = Object.keys(paises);
+        for (let i = 0; i < lista.length; i++) {
+            const res = await logCiudadesPublicarPais_(lista[i]);
+            if (res && /Acci[oó]n no v[aá]lida|Permisos/i.test(String(res.mensaje || ""))) break;
+        }
+    } catch (e) {}
+    finally { logCiudadesEmpujando_ = false; }
+}
+
+async function logCiudadesAsegurarPais_(pais) {
+    const p = String(pais || "").trim();
+    const k = logTarNorm_(p);
+    if (!k || logCiudadesAsegurando_[k]) return;
+    logCiudadesAsegurando_[k] = 1;
+    const ya = logCiudadesAppDePais_(p).length;
+    if (!ya) logCiudadesEstadoPoner_("is-info", "Trayendo las ciudades de " + p + " a la app…");
+    let trajo = ya;
+    try {
+        if (localStorage.getItem("smartbudget_token") && typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl && typeof realizarPeticionBD === "function") {
+            const guardadas = await realizarPeticionBD({ action: "ciudades_consultar", pais: p }, { timeoutMs: 25000 });
+            if (guardadas && /Acci[oó]n no v[aá]lida/i.test(String(guardadas.mensaje || ""))) {
+                logCiudadesEstadoPoner_("is-warn", "La dirección publicada sigue en la versión vieja. En Apps Script: Implementar, Administrar implementaciones, el lápiz de la que ya está en uso, Versión nueva, Implementar. No crees otra implementación.");
+                logCiudadesAsegurando_[k] = 0;
+                return;
+            }
+            if (guardadas && guardadas.exito && Array.isArray(guardadas.data)) {
+                if (guardadas.data.length) trajo = logCiudadesTomar_(guardadas.data, p, true);
+                const enHoja = {};
+                guardadas.data.forEach(function (x) { enHoja[logTarNorm_(x.nombre)] = 1; });
+                const faltan = logCiudadesAppDePais_(p).filter(function (x) { return !enHoja[logTarNorm_(x.nombre)]; });
+                if (faltan.length) logCiudadesPublicarPais_(p);
+            }
+            if (!logCiudadesAppDePais_(p).length) {
+                const cod = typeof logEnvCodigoDePais_ === "function" ? logEnvCodigoDePais_(p) : "";
+                const r = await realizarPeticionBD({ action: "odoo_ciudades", pais: p, codigo: cod }, { timeoutMs: 60000 });
+                const data = (r && r.exito && Array.isArray(r.data)) ? r.data : [];
+                const dePais = data.filter(function (x) { return logTarMismoPais_(p, x.pais); });
+                if (dePais.length && data.length > dePais.length + 5) {
+                    logCiudadesTomar_(data, "");
+                    trajo = logCiudadesAppDePais_(p).length;
+                } else if (dePais.length) {
+                    trajo = logCiudadesTomar_(dePais, p);
+                    logCiudadesPublicarPais_(p);
+                } else if (!trajo && r && r.mensaje && !/Indica el país/i.test(r.mensaje)) {
+                    logCiudadesEstadoPoner_("is-warn", "No pude traer " + p + " desde Odoo. Puedes agregar las ciudades aquí; quedan en la app.");
+                    logCiudadesAsegurando_[k] = 0;
+                    return;
+                }
+            }
+        }
+    } catch (e) {
+        if (!trajo) {
+            logCiudadesEstadoPoner_("is-warn", "No pude traer " + p + ". Escríbela arriba y agrégala: queda en la app, sin Odoo.");
+            logCiudadesAsegurando_[k] = 0;
+            return;
+        }
+    }
+    logCiudadesAsegurando_[k] = 2;
+    const n = logCiudadesAppDePais_(p).length;
+    logCiudadesEstadoPoner_("is-ok", n
+        ? (n + " ciudades de " + p + " quedan en la app. Si falta una, agrégala arriba. No vuelve a hacer falta Odoo para usarla.")
+        : ("Todavía no hay ciudades de " + p + " en la app. Escríbela arriba y agrégala."));
+}
+
+function logCargarCiudades_() {
+    logCiudadesAppLeer_();
+    const n = logCiudadesApp_.length;
+    if (n) {
+        logCiudadesOdoo_ = logCiudadesApp_;
+        if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+        logCiudadesEstadoPoner_("is-ok", n + " ciudades ya están en la app. Elige el país para verlas o agregar otra.");
+    } else {
+        logCiudadesEstadoPoner_("is-info", "Las ciudades quedan en la app, ligadas al país. Elige un país: si Odoo las tiene, se copian una vez. Después puedes sumar las que falten.");
+    }
+    const env = typeof logEnv_ === "function" ? logEnv_() : {};
+    const loc = (typeof localeProyecto !== "undefined" && localeProyecto && localeProyecto.pais) || "";
+    const pais = (env && env.destinoPais) || loc || "";
+    if (pais) logCiudadesAsegurarPais_(pais);
+    logCiudadesEmpujarLocal_();
 }
 
 function logContenedoresNorm_(src) {
@@ -1117,6 +1432,20 @@ function logEnv_() {
     return logQuote.env;
 }
 
+function logEnvDetalleFlete_(esEn) {
+    const e = logEnv_();
+    if (e.modalidad === "fcl") {
+        const txt = logContenedoresTexto_(logContenedoresNorm_(e.contenedores));
+        return txt ? ("FCL " + txt) : "";
+    }
+    if (e.modalidad === "lcl") {
+        const m3 = Number(logCubicajeTotal_(esEn ? "en" : "es").m3) || 0;
+        if (!(m3 > 0)) return "";
+        return "LCL " + logFmtM3_(m3, esEn ? "en" : "es");
+    }
+    return "";
+}
+
 function logEnvFilasImpresas_(lineas, esEn) {
     const out = [];
     let unificado = false;
@@ -1125,7 +1454,12 @@ function logEnvFilasImpresas_(lineas, esEn) {
     const juntos = duties.length && taxes.length;
     lineas.forEach(function (ln) {
         if (ln.tipo !== "duties" && ln.tipo !== "taxes") {
-            out.push({ label: ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn), ln: ln });
+            let label = ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn);
+            if (ln.tipo === "flete_principal") {
+                const det = logEnvDetalleFlete_(esEn);
+                if (det && label.toUpperCase().indexOf(det.toUpperCase()) < 0) label += " (" + det + ")";
+            }
+            out.push({ label: label, ln: ln });
             return;
         }
         if (juntos) {
@@ -1222,6 +1556,12 @@ function logEnvAsegurarLineas_(esEn, forzar) {
     }).concat(libres);
     e.plantilla = firma;
     return e.lineas;
+}
+
+function logMargenEmpresa_() {
+    const g = typeof CONFIG_GLOBAL !== "undefined" ? CONFIG_GLOBAL : null;
+    if (g && g.logMargenPct != null && g.logMargenPct !== "" && isFinite(Number(g.logMargenPct))) return logMargenClamp_(g.logMargenPct);
+    return 30;
 }
 
 function logMargenClamp_(v) {
@@ -1711,15 +2051,19 @@ function logCubicajeTotal_(idioma) {
 }
 
 /** Precios (COP) de todas las escalas de una versión, con el mismo motor AIU del simulador. */
+function logVerIgual_(a, b) {
+    return String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
+}
+
 function logPreciosVersion_(verId, elemId) {
     try {
         if (typeof calcularPreciosVersion_ !== "function") return null;
-        const v = logVersiones_().find(function (x) { return String(x.id) === String(verId); });
+        const v = logVersiones_().find(function (x) { return logVerIgual_(x.id, verId); });
         if (!v) return null;
         if (elemId && v.elementos && v.elementos.length) {
             const el = v.elementos.find(function (e) { return String(e.id) === String(elemId); });
             if (!el) return null;
-            const viva = String(verId) === String(window.versionActivaId) &&
+            const viva = logVerIgual_(verId, window.versionActivaId) &&
                 String(elemId) === String(window.elementoActivoId || v.elementoActivoId);
             if (viva) return calcularPreciosVersion_(v);
             return calcularPreciosVersion_(Object.assign({}, v, {
@@ -1736,12 +2080,12 @@ function logPreciosVersion_(verId, elemId) {
 
 /** Ficha comercial de una versión (la abierta se lee en vivo de la pantalla). */
 function logFichaVersion_(verId, elemId) {
-    const viva = String(verId) === String(window.versionActivaId) &&
+    const viva = logVerIgual_(verId, window.versionActivaId) &&
         (!elemId || String(elemId) === String(window.elementoActivoId || ""));
     if (viva && typeof leerFichaComercialUI === "function") {
         return leerFichaComercialUI();
     }
-    const v = logVersiones_().find(function (x) { return String(x.id) === String(verId); });
+    const v = logVersiones_().find(function (x) { return logVerIgual_(x.id, verId); });
     if (elemId && v && v.elementos) {
         const el = v.elementos.find(function (e) { return String(e.id) === String(elemId); });
         if (el) return el.fichaComercial || {};
@@ -1963,6 +2307,10 @@ function logAsegurarFilas_() {
         logQuote.filas = [logNuevaFilaItem_(p.version, p.codigo)];
     }
     logIaReiniciar_();
+    logOlvidarFirmaInsumos_();
+    logDestinoPaisTocado_ = false;
+    logDestinoCiudadTocado_ = false;
+    logAplicarPaisCliente_();
     const sel = document.getElementById("logMoneda");
     if (sel) sel.value = logQuote.moneda;
     if (!logQuote.trm) logQuote.trm = logTrmDesdeCostos_();
@@ -2017,7 +2365,7 @@ function logFilaValores_(fila, idioma, escId) {
         v.cod = fila.proy || "";
         let nomElem = "";
         if (fila.elem) {
-            const verEl = logVersiones_().find(function (x) { return String(x.id) === String(fila.ver); });
+            const verEl = logVersiones_().find(function (x) { return logVerIgual_(x.id, fila.ver); });
             const elObj = verEl && verEl.elementos ? verEl.elementos.find(function (e) { return String(e.id) === String(fila.elem); }) : null;
             nomElem = (elObj && elObj.nombre) || "";
         }
@@ -2157,7 +2505,7 @@ function logTotales_(idioma) {
 /** Fila del proyecto abierto, sin congelar. El historial (snap) no entra. */
 function logFilaSiguePresupuesto_(fila) {
     if (!fila || fila.tipo !== "item" || fila.snap || fila.demo != null) return false;
-    if (String(fila.ver || "") !== String(window.versionActivaId || "")) return false;
+    if (!logVerIgual_(fila.ver || "V1", window.versionActivaId || "V1")) return false;
     const p = typeof logisticaLeerProyecto_ === "function" ? logisticaLeerProyecto_() : { codigo: "" };
     if (p.codigo && fila.proy && String(fila.proy) !== String(p.codigo)) return false;
     return true;
@@ -2183,11 +2531,17 @@ function logAlinearPrecioVivo_(fila) {
     const firma = logFirmaPrecios_(pr);
     if (!firma) return;
     if (logPrecioEscrito_(fila) && (!fila.precioFirma || fila.precioFirma !== firma)) {
-        delete fila.over.unit;
         delete fila.over.qty;
         Object.keys(fila.over).forEach(function (k) {
-            if (/^(unit|qty):/.test(k)) delete fila.over[k];
+            if (/^qty:/.test(k)) delete fila.over[k];
         });
+        /* Un precio puesto a mano en Proyectos se queda en la cotización aunque Costos cambie. */
+        if (!fila.puFijo) {
+            delete fila.over.unit;
+            Object.keys(fila.over).forEach(function (k) {
+                if (/^unit:/.test(k)) delete fila.over[k];
+            });
+        }
     }
     fila.precioFirma = firma;
 }
@@ -2198,12 +2552,106 @@ function logAlinearPreciosVivos_() {
 
 let logPintandoHoja_ = 0;
 let logTrasPresupuestoTimer_ = 0;
+let logInsumosFirma_ = null;
+let logRecalcPendiente_ = false;
+
+function logOlvidarFirmaInsumos_() {
+    logInsumosFirma_ = null;
+    logRecalcPendiente_ = false;
+}
+
+/** Medidas, empaque y cantidades: mueven el cubicaje y los contenedores. */
+function logFirmaCargaLog_() {
+    const bits = [];
+    let sis = "metrico";
+    try { sis = localeProyectoActual().sistema; } catch (e) { /* cm */ }
+    bits.push("sis:" + sis);
+    (logQuote.filas || []).forEach(function (fila) {
+        if (!fila || fila.tipo !== "item" || fila.snap || fila.demo != null) return;
+        if (!logFilaSiguePresupuesto_(fila)) return;
+        const f = logFichaVersion_(fila.ver, fila.elem) || {};
+        const pr = logPreciosVersion_(fila.ver, fila.elem);
+        const qs = (pr && pr.escalas) ? pr.escalas.map(function (e) { return e.id + ":" + e.q; }).join(",") : "";
+        bits.push([fila.uid, f.um || sis, f.dimAncho, f.dimFondo, f.dimAlto, f.empAncho, f.empFondo, f.empAlto, f.empUnd, f.empPeso, qs].join("~"));
+    });
+    return bits.join("||");
+}
+
+/** Precio y TRM: mueven seguro, cargos en % y el valor EXW. */
+function logFirmaValorLog_() {
+    const trmEl = document.getElementById("simTRM");
+    const bits = ["trm:" + ((trmEl && trmEl.value) || "")];
+    (logQuote.filas || []).forEach(function (fila) {
+        if (!fila || fila.tipo !== "item" || fila.snap || fila.demo != null) return;
+        if (!logFilaSiguePresupuesto_(fila)) return;
+        const pr = logPreciosVersion_(fila.ver, fila.elem);
+        bits.push(fila.uid + "~" + logFirmaPrecios_(pr));
+    });
+    return bits.join("||");
+}
+
+function logHayCalculoLog_() {
+    if (logIa && (logIa.analizado || logIa.diagnostico)) return true;
+    const lineas = (logQuote && logQuote.env && logQuote.env.lineas) || [];
+    return lineas.some(function (ln) {
+        return (ln.fuente === "[Catálogo]" || ln.fuente === "[Estimado IA]") && (ln.valor != null || ln.notas);
+    });
+}
+
+function logBorrarCalculoLog_(resetCont) {
+    const e = logEnv_();
+    (e.lineas || []).forEach(function (ln) {
+        if (ln.fuente !== "[Catálogo]" && ln.fuente !== "[Estimado IA]") return;
+        ln.valor = null;
+        ln.notas = "";
+        ln.fuente = "";
+    });
+    if (resetCont && e && !e.contenedoresManual) e.contenedores = { c20: 0, c40: 0, c40hc: 0 };
+    if (logIa) {
+        if (logIa.historial && logIa.historial.length) {
+            logIa.historial.push({ role: "nota", text: "El presupuesto cambió. Este análisis ya no aplica. Pulsa Análisis costos logísticos otra vez." });
+        }
+        logIa.analizado = false;
+        logIa.diagnostico = "";
+        logIa.sugerencia = "";
+        logIa.motivo = "";
+        logIa.fase = logIa.historial && logIa.historial.length ? "entrevista" : "inicio";
+    }
+    logRecalcPendiente_ = true;
+    if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
+    if (typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("El presupuesto cambió. Borré el cálculo logístico de este borrador. Hay que analizarlo otra vez.", "warning");
+    }
+    if (typeof logIaPintar_ === "function") logIaPintar_();
+}
+
+/** Borrador sin guardar: si Costos mueve medidas, cantidad o precio, el cálculo logístico deja de servir. */
+function logRevisarInsumosLog_() {
+    if (!logQuote || !logQuote.inicializado) return;
+    const firma = logFirmaCargaLog_() + "#" + logFirmaValorLog_();
+    if (logQuote.abierta) {
+        logInsumosFirma_ = firma;
+        return;
+    }
+    if (logInsumosFirma_ == null) {
+        logInsumosFirma_ = firma;
+        return;
+    }
+    if (logInsumosFirma_ === firma) return;
+    const prevCarga = logInsumosFirma_.split("#")[0];
+    const carga = firma.split("#")[0];
+    logInsumosFirma_ = firma;
+    if (!logHayCalculoLog_()) return;
+    logBorrarCalculoLog_(carga !== prevCarga);
+}
+
 function logisticaTrasPresupuesto_() {
     if (!logQuote || !logQuote.inicializado) return;
     if (logTrasPresupuestoTimer_) clearTimeout(logTrasPresupuestoTimer_);
     logTrasPresupuestoTimer_ = setTimeout(function () {
         logTrasPresupuestoTimer_ = 0;
         try { if (typeof snapshotVersionActual === "function") snapshotVersionActual(); } catch (e) { /* sigue con la matriz en memoria */ }
+        logRevisarInsumosLog_();
         logAlinearPreciosVivos_();
         if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
     }, 40);
@@ -2399,12 +2847,15 @@ function logisticaTablaHTML_(idioma) {
         if (idx >= cols.length - 1) return "";
         return " data-rz=\"" + cols[idx].li + "\" data-rz2=\"" + cols[idx + 1].li + "\" data-pc=\"" + cols[idx].pc + "\" data-pc2=\"" + cols[idx + 1].pc + "\" data-sc=\"1\"";
     };
-    const nombreCol = function (c) {
-        if (c.k === "pu") return (esEn ? "Unit" : "Precio unit") + " · " + mon;
-        return T.cols[c.k];
+    const logThHtml_ = function (c) {
+        const b = "<br>";
+        if (c.k === "cod") return esEn ? "Project" + b + "code" : "Código de" + b + "proyecto";
+        if (c.k === "pu") return (esEn ? "Unit" + b + "price" : "Precio" + b + "unitario") + " · " + logEsc_(mon);
+        if (c.k === "sub") return esEn ? "Subtotal" + b + "price" : "Precio" + b + "subtotal";
+        return logEsc_(T.cols[c.k] || c.k);
     };
     const thead = "<thead><tr>" + cols.map(function (c, i) {
-        return "<th data-c=\"" + c.k + "\"" + rzAttr(i) + ">" + logEsc_(nombreCol(c)) + "</th>";
+        return "<th data-c=\"" + c.k + "\"" + rzAttr(i) + ">" + logThHtml_(c) + "</th>";
     }).join("") + "</tr></thead>";
     return "<table class=\"items\">" + colgroup + thead + "<tbody>" + filasHtml + totalHtml + "</tbody></table>";
 }
@@ -3513,7 +3964,7 @@ function logTextoPartida_(fila) {
     const ov = fila.over || {};
     let nom = "";
     if (fila.elem) {
-        const verEl = logVersiones_().find(function (x) { return String(x.id) === String(fila.ver); });
+        const verEl = logVersiones_().find(function (x) { return logVerIgual_(x.id, fila.ver); });
         const elObj = verEl && verEl.elementos ? verEl.elementos.find(function (e) { return String(e.id) === String(fila.elem); }) : null;
         nom = (elObj && elObj.nombre) || "";
     }
@@ -3559,7 +4010,7 @@ function logSugerirPartida_(texto) {
 
 function logElementoDeFila_(fila) {
     if (!fila || !fila.elem) return null;
-    const ver = logVersiones_().find(function (x) { return String(x.id) === String(fila.ver); });
+    const ver = logVersiones_().find(function (x) { return logVerIgual_(x.id, fila.ver); });
     if (!ver || !ver.elementos) return null;
     return ver.elementos.find(function (e) { return String(e.id) === String(fila.elem); }) || null;
 }
@@ -3670,10 +4121,92 @@ window.logPartidaFmt = logPartidaFmt_;
 window.logPaisesDelListado = logPaisesDelListado_;
 if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
 
+function logMonedaEtiqueta_() {
+    return logQuote && logQuote.moneda === "USD" ? "USD" : "COP";
+}
+
+function logQuedanPreciosFijos_(fila) {
+    if (!fila || !fila.over) return false;
+    if (fila.over.unit != null) return true;
+    return Object.keys(fila.over).some(function (k) { return /^unit:/.test(k); });
+}
+
+/** El número que se ve en la ficha vuelve a la base que guarda la fila (antes de comisión, o en COP si es envío). */
+function logPrecioMostradoABase_(fila, n) {
+    if (logEsEnvio_(fila) && !logEsCotizacionExterior_()) {
+        if (logQuote && logQuote.moneda === "USD") return n * (logTrm_() || 1);
+        return n;
+    }
+    return n / (logComisionFactor_(fila) || 1);
+}
+
+/** Escribe el precio unitario solo en la cotización. Vacío, o igual al de Costos, vuelve al precio calculado. */
+function logEscribirPrecioFila_(fila, txt, escId) {
+    if (!fila.over) fila.over = {};
+    const idioma = logisticaLeerOpciones_().idioma;
+    const clave = escId ? "unit:" + escId : "unit";
+    const limpio = String(txt == null ? "" : txt).trim();
+    if (!limpio) {
+        delete fila.over[clave];
+        if (!logQuedanPreciosFijos_(fila)) delete fila.puFijo;
+        return true;
+    }
+    const n = logParseNum_(limpio, idioma);
+    if (n == null) return false;
+    const previo = fila.over[clave];
+    delete fila.over[clave];
+    const auto = logFilaValores_(fila, idioma, escId || "");
+    const tol = logDecimales_() === 0 ? 0.51 : 0.02;
+    if (auto.unit != null && Math.abs(n - Number(auto.unit)) <= tol) {
+        if (!logQuedanPreciosFijos_(fila)) delete fila.puFijo;
+    } else {
+        fila.over[clave] = logPrecioMostradoABase_(fila, n);
+        fila.puFijo = true;
+    }
+    if (fila.over[clave] == null && previo != null && auto.unit == null) {
+        fila.over[clave] = previo;
+        fila.puFijo = true;
+    }
+    return true;
+}
+
+let logPrecioHojaTimer_ = 0;
+function logProgramarHojaPrecio_() {
+    clearTimeout(logPrecioHojaTimer_);
+    logPrecioHojaTimer_ = setTimeout(function () {
+        logPrecioHojaTimer_ = 0;
+        logisticaActualizarVista({ sinFilas: true });
+    }, 180);
+}
+
+function logHtmlCampo_(etiq, control) {
+    return "<label class=\"log-campo\"><span>" + etiq + "</span>" + control + "</label>";
+}
+
+function logHtmlPrecioCampo_(fila, idioma, escId) {
+    const v = logFilaValores_(fila, idioma, escId || "");
+    const txt = v.unit == null ? "" : logFmtNum_(v.unit, idioma, logDecimales_());
+    const fijo = fila.puFijo ? " log-pu-fijo" : "";
+    return "<label class=\"log-campo log-campo-pu\"><span>Precio unitario <em>" + logMonedaEtiqueta_() + "</em></span>" +
+        "<span class=\"log-pu" + fijo + "\"><em>$</em><input type=\"text\" inputmode=\"decimal\" autocomplete=\"off\" class=\"form-control form-control-sm\" data-acc=\"unit\" data-e=\"" + logEsc_(escId || "") + "\" value=\"" + logEsc_(txt) + "\" title=\"Este precio es solo de la cotización. Costos no cambia.\"></span></label>";
+}
+
+function logHtmlSelectCantidad_(fila, escalas, acc, extra) {
+    const ops = (escalas || []).map(function (e) {
+        return "<option value=\"" + logEsc_(e.id) + "\"" + (e.id === fila.lote ? " selected" : "") + ">Q " + logFmtNum_(e.q, "es", 0) + "</option>";
+    }).join("") || "<option value=\"\">sin precios</option>";
+    return "<select class=\"form-select form-select-sm\" data-acc=\"" + acc + "\"" + (extra || "") + ">" + ops + "</select>";
+}
+
 function logisticaPintarFilas_() {
     const box = document.getElementById("logFilasLista");
     if (!box) return;
     logAsegurarFilas_();
+    const activo = document.activeElement;
+    if (activo && activo.getAttribute && activo.getAttribute("data-acc") === "unit" && box.contains(activo)) {
+        logisticaPintarBadge_();
+        return;
+    }
     logisticaPintarBadge_();
     logisticaPintarMenuAgregar_();
     logisticaPintarColumnas_();
@@ -3691,48 +4224,50 @@ function logisticaPintarFilas_() {
     box.innerHTML = logQuote.filas.map(function (fila) {
         const v = logFilaValores_(fila, idioma);
         const grip = "<span class=\"log-fila-grip\" title=\"Arrastra para reordenar\"><i class=\"bi bi-grip-vertical\"></i></span>";
-        let cuerpo;
+        const acc = "<span class=\"log-fila-acc\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"dup\" title=\"Duplicar\"><i class=\"bi bi-files\"></i></button>" +
+            "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-acc=\"del\" title=\"Quitar de la cotización\"><i class=\"bi bi-trash\"></i></button></span>";
         if (fila.tipo === "seccion") {
-            cuerpo = "<span class=\"badge text-bg-secondary\">Sección</span><span class=\"log-fila-tit\">" + logEsc_(v.titulo || "(sin título)") + "</span>";
-        } else if (logEsEnvio_(fila)) {
-            cuerpo = "<span class=\"badge text-bg-warning\">Envío</span><span class=\"log-fila-tit\">" + logEsc_(v.titulo || "(flete / envío)") + "</span>" +
-                (v.unit != null ? "<span class=\"text-muted\">" + logFmtMoneda_(v.unit, idioma, logDecimales_()) + "</span>" : "");
+            return "<div class=\"log-fila log-fila-simple\" data-r=\"" + fila.uid + "\">" + grip +
+                "<span class=\"badge text-bg-secondary\">Sección</span><span class=\"log-fila-tit\">" + logEsc_(v.titulo || "(sin título)") + "</span>" + acc + "</div>";
+        }
+        let marca = "";
+        let campos = "";
+        let identidad;
+        if (logEsEnvio_(fila)) {
+            identidad = "<span class=\"badge text-bg-warning\">Envío</span><span class=\"log-fila-tit\">" + logEsc_(v.titulo || "(flete / envío)") + "</span>";
+            if (!escs.length) campos = logHtmlPrecioCampo_(fila, idioma, "");
         } else {
             const img = "<button type=\"button\" class=\"log-fila-img\" data-acc=\"img\" title=\"Editar imagen: acercar, recortar o girar\">" +
                 (v.img ? "<img src=\"" + logEsc_(v.img) + "\" alt=\"\">" : "<i class=\"bi bi-image\"></i>") + "</button>";
-            let sels = "";
             if (fila.tipo === "item" && fila.snap) {
-                /* viene del historial: valores congelados; la cantidad se elige entre las escalas guardadas */
                 const escalasSnap = logEscalasFila_(fila);
-                const optQ = !escs.length && escalasSnap.length
-                    ? "<select class=\"form-select form-select-sm log-fila-sel\" data-acc=\"lote\" title=\"Escala (cantidad) de la que sale el precio\">" + escalasSnap.map(function (e) {
-                        return "<option value=\"" + logEsc_(e.id) + "\"" + (e.id === fila.lote ? " selected" : "") + ">Q " + logFmtNum_(e.q, "es", 0) + "</option>";
-                    }).join("") + "</select>"
-                    : "";
-                sels = optQ + "<span class=\"badge text-bg-light border\" title=\"Precio y ficha tal como se guardaron\"><i class=\"bi bi-snow2 me-1\"></i>" + logEsc_(fila.ver || "") + " · congelada</span>" +
+                marca = "<span class=\"badge text-bg-light border\" title=\"Precio y ficha tal como se guardaron\"><i class=\"bi bi-snow2 me-1\"></i>" + logEsc_(fila.ver || "") + "</span>" +
                     (p.hayProyecto && p.codigo === fila.proy
                         ? "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"refrescar\" title=\"Vuelve a leer ficha y precio del proyecto abierto\"><i class=\"bi bi-arrow-repeat\"></i></button>"
                         : "");
+                if (!escs.length && escalasSnap.length) campos += logHtmlCampo_("Cantidad", logHtmlSelectCantidad_(fila, escalasSnap, "lote", ""));
             } else if (fila.tipo === "item") {
                 const pr = logPreciosVersion_(fila.ver, fila.elem);
                 const optV = vers.map(function (x) {
-                    return "<option value=\"" + logEsc_(x.id) + "\"" + (String(x.id) === String(fila.ver) ? " selected" : "") + ">" + logEsc_(x.id) + "</option>";
+                    return "<option value=\"" + logEsc_(x.id) + "\"" + (logVerIgual_(x.id, fila.ver) ? " selected" : "") + ">" + logEsc_(x.id) + "</option>";
                 }).join("");
-                const optQ = pr && pr.escalas.length
-                    ? pr.escalas.map(function (e) {
-                        return "<option value=\"" + logEsc_(e.id) + "\"" + (e.id === fila.lote ? " selected" : "") + ">Q " + logFmtNum_(e.q, "es", 0) + "</option>";
-                    }).join("")
-                    : "<option value=\"\">sin precios</option>";
-                sels = "<select class=\"form-select form-select-sm log-fila-sel\" data-acc=\"ver\" title=\"Versión del proyecto\">" + optV + "</select>" +
-                    (escs.length ? "" : "<select class=\"form-select form-select-sm log-fila-sel\" data-acc=\"lote\" title=\"Escala (cantidad) de la que sale el precio\">" + optQ + "</select>");
+                campos += logHtmlCampo_("Versión", "<select class=\"form-select form-select-sm\" data-acc=\"ver\">" + optV + "</select>");
+                if (!escs.length) {
+                    const escalas = pr && pr.escalas.length ? pr.escalas : [];
+                    campos += logHtmlCampo_("Cantidad", logHtmlSelectCantidad_(fila, escalas, "lote", ""));
+                }
             }
-            cuerpo = img + "<span class=\"badge " + (fila.tipo === "item" ? "text-bg-primary" : "text-bg-light border") + "\">" + (fila.tipo === "item" ? "Proyecto" : "Libre") + "</span>" +
-                "<span class=\"log-fila-tit\"><b>" + logEsc_(v.cod) + "</b> " + logEsc_(v.titulo) + (v.aviso ? " <span class=\"text-danger\" title=\"" + logEsc_(v.aviso) + "\"><i class=\"bi bi-exclamation-triangle\"></i></span>" : "") + "</span>" + sels +
-                (fila.img ? "<button type=\"button\" class=\"btn btn-sm btn-link text-muted p-0\" data-acc=\"noimg\" title=\"Quitar la imagen subida (vuelve la de Odoo)\"><i class=\"bi bi-x-circle\"></i></button>" : "");
+            if (!escs.length) campos += logHtmlPrecioCampo_(fila, idioma, "");
+            identidad = img + "<span class=\"log-fila-id\"><span class=\"badge " + (fila.tipo === "item" ? "text-bg-primary" : "text-bg-light border") + "\">" +
+                (fila.tipo === "item" ? "Proyecto" : "Libre") + "</span>" +
+                "<span class=\"log-fila-tit\"><b>" + logEsc_(v.cod) + "</b> " + logEsc_(v.titulo) +
+                (v.aviso ? " <span class=\"text-danger\" title=\"" + logEsc_(v.aviso) + "\"><i class=\"bi bi-exclamation-triangle\"></i></span>" : "") +
+                "</span></span>" +
+                (fila.img ? "<button type=\"button\" class=\"btn btn-sm btn-link text-muted p-0\" data-acc=\"noimg\" title=\"Quitar la imagen subida (vuelve la de Odoo)\"><i class=\"bi bi-x-circle\"></i></button>" : "") +
+                marca;
         }
-        /* con escenarios: por cada opción, qué escala (cantidad) usa esta fila o si no entra en ella */
         let porOpcion = "";
-        if (escs.length && fila.tipo !== "seccion") {
+        if (escs.length) {
             const escalas = fila.tipo === "item" ? logEscalasFila_(fila) : [];
             porOpcion = "<div class=\"log-fila-esc\">" + escs.map(function (e, i) {
                 const fuera = !!(fila.excl && fila.excl[e.id]);
@@ -3745,13 +4280,14 @@ function logisticaPintarFilas_() {
                 } else {
                     ops = "<option value=\"1\"" + (fuera ? "" : " selected") + ">Incluida</option><option value=\"\"" + (fuera ? " selected" : "") + ">— no incluir</option>";
                 }
-                return "<label class=\"log-esc-sel\"><span>" + logEsc_(logEscNombre_(e, i, idioma)) + "</span>" +
-                    "<select class=\"form-select form-select-sm\" data-acc=\"lote-e\" data-e=\"" + logEsc_(e.id) + "\">" + ops + "</select></label>";
+                const precio = fuera ? "" : logHtmlPrecioCampo_(fila, idioma, e.id);
+                return "<div class=\"log-esc-linea\"><span class=\"log-esc-nom\">" + logEsc_(logEscNombre_(e, i, idioma)) + "</span>" +
+                    logHtmlCampo_(fila.tipo === "item" ? "Cantidad" : "En la opción", "<select class=\"form-select form-select-sm\" data-acc=\"lote-e\" data-e=\"" + logEsc_(e.id) + "\">" + ops + "</select>") +
+                    precio + "</div>";
             }).join("") + "</div>";
         }
-        return "<div class=\"log-fila\" data-r=\"" + fila.uid + "\">" + grip + cuerpo +
-            "<span class=\"log-fila-acc\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"dup\" title=\"Duplicar\"><i class=\"bi bi-files\"></i></button>" +
-            "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-acc=\"del\" title=\"Quitar de la cotización\"><i class=\"bi bi-trash\"></i></button></span>" +
+        return "<div class=\"log-fila\" data-r=\"" + fila.uid + "\"><div class=\"log-fila-top\">" + grip + identidad + acc + "</div>" +
+            (campos ? "<div class=\"log-fila-campos\">" + campos + "</div>" : "") +
             logHtmlPartida_(fila) + porOpcion + "</div>";
     }).join("") || "<div class=\"text-muted small p-2\">Sin filas todavía.</div>";
     logisticaPintarComision_();
@@ -3786,13 +4322,15 @@ function logisticaAccionFila_(ev) {
                 delete fila.excl[e];
                 if (fila.tipo === "item") fila.opc[e] = t.value;
             }
-            delete fila.over["qty:" + e]; /* al cambiar de escala vuelve el precio automático */
+            delete fila.over["qty:" + e]; /* al cambiar de escala vuelve el precio automático de esa opción */
             delete fila.over["unit:" + e];
+            if (!logQuedanPreciosFijos_(fila)) delete fila.puFijo;
         } else if (acc === "ver") {
             fila.ver = t.value;
             const pr = logPreciosVersion_(fila.ver, fila.elem);
             fila.lote = pr && pr.escalas.length ? pr.escalas[0].id : "";
             fila.over = {};
+            delete fila.puFijo;
             fila.opc = {};
             fila.excl = {};
             logOpcCompletar_(fila);
@@ -3800,6 +4338,7 @@ function logisticaAccionFila_(ev) {
             fila.lote = t.value;
             delete fila.over.qty;
             delete fila.over.unit;
+            if (!logQuedanPreciosFijos_(fila)) delete fila.puFijo;
         } else { return; }
         logisticaRefrescarTabla_();
         return;
@@ -3811,6 +4350,7 @@ function logisticaAccionFila_(ev) {
         const pr = logPreciosVersion_(fila.ver, fila.elem);
         if (pr && pr.escalas.length && !pr.escalas.some(function (e) { return e.id === fila.lote; })) fila.lote = pr.escalas[0].id;
         fila.over = {};
+        delete fila.puFijo;
         fila.opc = {};
         fila.excl = {};
         logOpcCompletar_(fila);
@@ -4090,7 +4630,7 @@ function logisticaAgregarFila_(ev) {
     if (tipo === "otro") { logisticaAbrirOtroProyecto_(); return; }
     if (tipo === "item") {
         const verId = b.getAttribute("data-ver");
-        const ver = logVersiones_().find(function (x) { return String(x.id) === String(verId); });
+        const ver = logVersiones_().find(function (x) { return logVerIgual_(x.id, verId); });
         if (ver && ver.elementos && ver.elementos.length) {
             ver.elementos.forEach(function (el) {
                 logQuote.filas.push(logNuevaFilaItem_(verId, p.codigo, el.id));
@@ -4278,6 +4818,7 @@ function logisticaSerializar_(idioma) {
     const filas = logQuote.filas.map(function (fila) {
         const v = logFilaValores_(fila, idioma);
         const c = { uid: fila.uid, tipo: fila.tipo, proy: fila.proy || "", ver: fila.ver || "", lote: fila.lote || "", over: clon(fila.over || {}) };
+        if (fila.puFijo) c.puFijo = true;
         if (fila.opc && Object.keys(fila.opc).length) c.opc = clon(fila.opc);
         if (fila.excl && Object.keys(fila.excl).length) c.excl = clon(fila.excl);
         if (fila.demo != null) c.demo = fila.demo;
@@ -4383,16 +4924,15 @@ function logisticaAbrirGuardar_() {
     const num = document.getElementById("logGuardarNumero");
     if (num) num.textContent = logNombreArchivoPdf_(idioma);
     const com = document.getElementById("logGuardarCom");
-    if (com) com.value = "";
+    if (com) com.value = (a && a.comentario) || "";
+    const sub = document.getElementById("logGuardarSub");
+    if (sub) sub.textContent = a
+        ? ("Guardar reescribe la Rev " + a.rev + " de " + a.id + ". La otra opción deja esta y crea la siguiente.")
+        : "Se guarda con los precios y textos de ahora. Las imágenes que ya están en Drive no se vuelven a subir.";
     const bRev = document.getElementById("btnLogGuardarRev");
     if (bRev) {
         bRev.classList.toggle("d-none", !a);
         if (a) bRev.innerHTML = "<i class=\"bi bi-layers me-1\"></i>Guardar como Rev " + (a.rev + 1) + " de " + logEsc_(a.id);
-    }
-    const bNueva = document.getElementById("btnLogGuardarNueva");
-    if (bNueva) {
-        bNueva.className = a ? "btn btn-outline-secondary" : "btn btn-diforma-blue";
-        bNueva.innerHTML = "<i class=\"bi bi-save me-1\"></i>" + (a ? "Guardar como cotización nueva" : "Guardar");
     }
     bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogGuardar")).show();
 }
@@ -4421,24 +4961,37 @@ async function logisticaReusarRendersPresupuesto_() {
 async function logisticaGuardar_(modo) {
     const idioma = logisticaLeerOpciones_().idioma;
     const info = document.getElementById("logGuardarEstado");
-    if (info) info.innerHTML = "<span class=\"spinner-border spinner-border-sm me-1\"></span>Revisando renders del presupuesto…";
-    await logisticaReusarRendersPresupuesto_();
-    const S = logisticaSerializar_(idioma);
-    const comentario = ((document.getElementById("logGuardarCom") || {}).value || "").trim();
+    const paso = function (msg) {
+        if (info) info.innerHTML = "<span class=\"spinner-border spinner-border-sm me-1\"></span>" + msg;
+        if (typeof mostrarEsperaNube === "function" && !_logGuardarEspera) {
+            mostrarEsperaNube(msg);
+            _logGuardarEspera = true;
+        } else if (typeof textoEsperaNube === "function") textoEsperaNube(msg);
+    };
     const botones = document.querySelectorAll("#modalLogGuardar button[data-sv]");
     botones.forEach(function (b) { b.disabled = true; });
-    if (info) info.innerHTML = "<span class=\"spinner-border spinner-border-sm me-1\"></span>Guardando" + (S.imagenes.length ? " (subiendo " + S.imagenes.length + " imagen" + (S.imagenes.length === 1 ? "" : "es") + " a Drive)" : "") + "…";
+    _logGuardarEspera = false;
     try {
+        paso("Revisando las imágenes…");
+        await logisticaReusarRendersPresupuesto_();
+        const S = logisticaSerializar_(idioma);
+        const comentario = ((document.getElementById("logGuardarCom") || {}).value || "").trim();
+        const abiertaAntes = logQuote.abierta;
+        const nImg = S.imagenes.length;
+        paso(nImg ? ("Subiendo " + nImg + " imagen" + (nImg === 1 ? "" : "es") + " a Drive…") : (modo === "misma" ? "Reescribiendo esta revisión…" : "Guardando la cotización…"));
         const resp = await realizarPeticionBD({
             action: "guardar_cotizacion",
             email: localStorage.getItem("smartbudget_email") || "",
-            id: modo === "rev" && logQuote.abierta ? logQuote.abierta.id : "",
+            modo: modo,
+            id: (modo === "rev" || modo === "misma") && abiertaAntes ? abiertaAntes.id : "",
+            rev: modo === "misma" && abiertaAntes ? abiertaAntes.rev : "",
             numero: S.numero, tipo: S.tipo, proyecto: S.proyecto, proyectos: S.proyectos,
             cliente: S.datos.cab.cliente, idioma: idioma, moneda: logQuote.moneda,
             total: S.total, comentario: comentario,
             datos: JSON.stringify(S.datos), imagenes: S.imagenes
         }, { timeoutMs: 180000 });
         if (!resp || !resp.exito) throw new Error((resp && resp.mensaje) || "Sin respuesta.");
+        paso("Listo. Actualizando la lista…");
         const d = resp.data || {};
         const refs = d.refs || {};
         Object.keys(refs).forEach(function (k) {
@@ -4454,20 +5007,108 @@ async function logisticaGuardar_(modo) {
                 fila.srcRef = refs[k];
             }
         });
-        logQuote.abierta = { id: d.id, rev: d.rev, numero: d.numero || S.numero };
+        logQuote.abierta = { id: d.id, rev: d.rev, numero: d.numero || S.numero, comentario: comentario };
         logQuote.sucio = false;
         logisticaPintarBadge_();
         logisticaPintarEstado_();
         logisticaActualizarVista();
+        logisticaAnunciarGuardada_({
+            id: d.id, rev: d.rev, numero: d.numero || S.numero, tipo: S.tipo,
+            proyecto: S.proyecto, proyectos: S.proyectos, nombre: (S.datos && S.datos.nombre) || "",
+            cliente: S.datos.cab.cliente, idioma: idioma, moneda: logQuote.moneda,
+            total: S.total, creado: logFechaAhora_(),
+            usuario: localStorage.getItem("smartbudget_email") || "", comentario: comentario
+        });
         bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogGuardar")).hide();
-        logisticaInvalidarHist_();
-        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Cotización guardada: " + d.id + " Rev " + d.rev + ".", "success");
         if (info) info.textContent = "";
+        let aviso = "Cotización guardada: " + d.id + " Rev " + d.rev + ".";
+        let tipoAviso = "success";
+        if (modo === "misma" && abiertaAntes && Number(d.rev) !== Number(abiertaAntes.rev)) {
+            aviso = "Se creó la Rev " + d.rev + " en lugar de reescribir la " + abiertaAntes.rev + ". Publica el backend.gs de esta misma implementación.";
+            tipoAviso = "warning";
+        } else if (modo === "misma") {
+            aviso = "Reescrita " + d.id + " Rev " + d.rev + ".";
+        }
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(aviso, tipoAviso);
     } catch (e) {
         const m = String((e && e.message) || e);
         if (info) info.innerHTML = "<span class=\"text-danger\"><i class=\"bi bi-x-circle me-1\"></i>" + logEsc_(/Acción no válida/i.test(m) ? "falta pegar el backend.gs actualizado en Apps Script." : m) + "</span>";
     } finally {
+        _logGuardarEspera = false;
+        if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
         botones.forEach(function (b) { b.disabled = false; });
+    }
+}
+
+var _logGuardarEspera = false;
+
+function logFechaAhora_() {
+    const d = new Date();
+    const p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+function logisticaAnunciarGuardada_(fila) {
+    let prev = logHistCache.data;
+    if (!prev) {
+        const local = logisticaLeerHistLocal_();
+        prev = local && local.data;
+    }
+    if (!prev) prev = Array.isArray(logHist) ? logHist : [];
+    const data = [fila].concat(prev.filter(function (h) {
+        return !(String(h.id) === String(fila.id) && Number(h.rev) === Number(fila.rev));
+    }));
+    logHist = data;
+    logHistCache = { t: Date.now(), data: data };
+    logisticaGuardarHistLocal_(data);
+}
+
+function logisticaQuitarGuardada_(id, rev) {
+    const prev = logHistCache.data || (Array.isArray(logHist) ? logHist : []);
+    const data = prev.filter(function (h) {
+        return !(String(h.id) === String(id) && Number(h.rev) === Number(rev));
+    });
+    logHist = data;
+    logHistCache = { t: Date.now(), data: data };
+    logisticaGuardarHistLocal_(data);
+}
+
+async function logisticaEliminarGuardada_(id, rev, btn) {
+    if (!btn) return;
+    if (btn.getAttribute("data-ok") !== "1") {
+        btn.setAttribute("data-ok", "1");
+        btn.textContent = "¿Borrar?";
+        btn.classList.remove("btn-outline-danger");
+        btn.classList.add("btn-danger");
+        window.setTimeout(function () {
+            if (!btn.isConnected || btn.getAttribute("data-ok") !== "1") return;
+            btn.removeAttribute("data-ok");
+            btn.classList.remove("btn-danger");
+            btn.classList.add("btn-outline-danger");
+            btn.innerHTML = "<i class=\"bi bi-trash\"></i>";
+        }, 4000);
+        return;
+    }
+    btn.disabled = true;
+    try {
+        const r = await realizarPeticionBD({ action: "eliminar_cotizacion", id: id, rev: rev }, { timeoutMs: 90000 });
+        if (!r || !r.exito) throw new Error((r && r.mensaje) || "Sin respuesta.");
+        logisticaQuitarGuardada_(id, rev);
+        if (logQuote.abierta && String(logQuote.abierta.id) === String(id) && Number(logQuote.abierta.rev) === Number(rev)) {
+            logQuote.abierta = null;
+            logQuote.sucio = true;
+            logisticaPintarBadge_();
+            logisticaPintarEstado_();
+        }
+        logisticaPintarHistorial_();
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Se borró " + id + " Rev " + rev + ".", "success");
+    } catch (e) {
+        btn.disabled = false;
+        btn.removeAttribute("data-ok");
+        const m = String((e && e.message) || e);
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion(/Acción no válida/i.test(m) ? "Para borrar hay que publicar el backend.gs actualizado." : ("No se pudo borrar: " + m), "danger");
+        }
     }
 }
 
@@ -4594,7 +5235,8 @@ function logisticaPintarHistorial_() {
             "<td class=\"text-end text-nowrap\">" + logFmtMoneda_(h.total, "es", nd) + " " + logEsc_(h.moneda) + "</td>" +
             "<td class=\"small text-nowrap\">" + logEsc_(h.creado) + "<div class=\"text-muted\">" + logEsc_(h.usuario.split("@")[0]) + "</div></td>" +
             "<td class=\"small\">" + logEsc_(h.comentario) + "</td>" +
-            "<td class=\"text-end\"><button type=\"button\" class=\"btn btn-sm btn-diforma-blue\" data-hid=\"" + logEsc_(h.id) + "\" data-hrev=\"" + h.rev + "\">Abrir</button></td></tr>";
+            "<td class=\"text-end text-nowrap\"><button type=\"button\" class=\"btn btn-sm btn-diforma-blue\" data-hid=\"" + logEsc_(h.id) + "\" data-hrev=\"" + h.rev + "\">Abrir</button>" +
+            "<button type=\"button\" class=\"btn btn-sm btn-outline-danger ms-1\" data-hdel=\"" + logEsc_(h.id) + "\" data-hrevdel=\"" + h.rev + "\" title=\"Borrar esta revisión\"><i class=\"bi bi-trash\"></i></button></td></tr>";
     }).join("") || "<tr><td colspan=\"8\" class=\"text-center text-muted py-4\">No hay cotizaciones guardadas" + (q ? " con ese filtro" : "") + ".</td></tr>";
 }
 
@@ -4626,7 +5268,7 @@ async function logisticaAbrirGuardada_(id, rev) {
         totales: g.totales !== false,
         uid: maxUid,
         filas: g.filas || [],
-        abierta: { id: d.id, rev: d.rev, numero: d.numero },
+        abierta: { id: d.id, rev: d.rev, numero: d.numero, comentario: String(d.comentario || "") },
         sucio: false,
         texto: (function () {
             const d = logTextoDef_();
@@ -4661,6 +5303,10 @@ async function logisticaAbrirGuardada_(id, rev) {
         decimales: Number(g.decimales) === 1 || Number(g.decimales) === 2 ? Number(g.decimales) : 0
     };
     logIaReiniciar_();
+    logOlvidarFirmaInsumos_();
+    logDestinoPaisTocado_ = !!(logQuote.env && String(logQuote.env.destinoPais || "").trim());
+    logDestinoCiudadTocado_ = !!(logQuote.env && String(logQuote.env.destinoCiudad || "").trim());
+    if (!logDestinoPaisTocado_) logAplicarPaisCliente_();
     logQuote.escenarios.forEach(function (e) { logQuote.escUid = Math.max(logQuote.escUid, parseInt(String(e.id).replace(/\D/g, ""), 10) || 0); });
     logLayout = {
         cols: (g.layout && g.layout.cols && g.layout.cols.length ? g.layout.cols : LOG_COLUMNAS_DEMO).map(function (c) { return { k: c.k, w: c.w }; }),
@@ -4703,12 +5349,18 @@ function logisticaInitHistorial_() {
     on("btnLogGuardar", logisticaAbrirGuardar_);
     on("btnLogHistorial", logisticaAbrirHistorial_);
     on("btnLogGuardarRev", function () { logisticaGuardar_("rev"); });
-    on("btnLogGuardarNueva", function () { logisticaGuardar_("nueva"); });
+    on("btnLogGuardarMisma", function () { logisticaGuardar_(logQuote.abierta ? "misma" : "nueva"); });
     const buscar = document.getElementById("logHistBuscar");
     if (buscar) buscar.addEventListener("input", logisticaPintarHistorial_);
     const lista = document.getElementById("logHistLista");
     if (lista) {
         lista.addEventListener("click", function (ev) {
+            const del = ev.target.closest("[data-hdel]");
+            if (del) {
+                ev.preventDefault();
+                logisticaEliminarGuardada_(del.getAttribute("data-hdel"), parseInt(del.getAttribute("data-hrevdel"), 10), del);
+                return;
+            }
             const b = ev.target.closest("[data-hid]");
             if (!b) return;
             bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogHist")).hide();
@@ -4808,7 +5460,7 @@ function logisticaConstruirHTML(opts, imprimir) {
         /* tabla ítems */
         ".items{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.6pt}" +
         ".items thead{display:table-header-group}" +
-        ".items thead th{background:var(--gris-tabla);color:#fff;height:.28in;line-height:.28in;padding:0 5px;font-size:7.6pt;text-transform:uppercase;text-align:center;font-weight:700;border-right:1px solid #7b8088;position:relative;vertical-align:middle;white-space:nowrap;overflow:hidden}" +
+        ".items thead th{background:var(--gris-tabla);color:#fff;height:auto;min-height:.46in;line-height:1.15;padding:5px 3px;font-size:7pt;text-transform:uppercase;text-align:center;font-weight:700;border-right:1px solid #7b8088;position:relative;vertical-align:middle;white-space:normal}" +
         ".items thead th:last-child{border-right:0}" +
         ".items td{padding:5px 6px;border-bottom:1px solid #d9d9d9;vertical-align:middle;position:relative}" +
         ".items tr{break-inside:avoid;page-break-inside:avoid}" +
@@ -4848,9 +5500,9 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".tyc-p{margin:0 0 2px;font-size:7.3pt;line-height:1.27;text-align:justify;break-inside:avoid}" +
         ".tyc-n{display:inline-block;min-width:11px}" +
         ".cierre{margin:.08in 0 .05in;font-size:8.4pt;break-inside:avoid}" +
-        ".firma{break-inside:avoid;margin-top:.03in;font-size:8.4pt;line-height:1.28}" +
-        ".firma-img{display:block;height:.7in;width:auto;max-width:2.4in;object-fit:contain;margin:.1in 0 .02in}" +
-        ".firma .nom{font-weight:700;margin-top:.2in}" +
+        ".firma{break-inside:avoid;margin-top:.08in;font-size:11pt;line-height:1.35}" +
+        ".firma-img{display:block;height:1.05in;width:auto;max-width:3.1in;object-fit:contain;margin:.12in 0 .04in}" +
+        ".firma .nom{font-weight:700;font-size:12.5pt;margin-top:.28in}" +
         ".firma.has-img .nom{margin-top:.04in}" +
         /* pantalla */
         "@media screen{" +
@@ -5109,6 +5761,294 @@ function logisticaLeerEnvUi_() {
     logQuote.env = logEnvNormalizar_(prev);
 }
 
+function logLugaresDestino_() {
+    const t = typeof logTarAsegurar_ === "function" ? logTarAsegurar_() : null;
+    if (!t) return [];
+    const out = [];
+    function add(lugar, pais) {
+        const nombre = String(lugar || "").trim();
+        if (!nombre) return;
+        out.push({ lugar: nombre, pais: String(pais || "").trim() });
+    }
+    (t.aereo || []).forEach(function (f) { add(f && f.ciudad, f && f.pais); });
+    (t.destino || []).forEach(function (f) { add(f && f.ciudad, f && f.pais); });
+    (t.fcl || []).forEach(function (f) { add(f && f.puerto, f && f.pais); });
+    (t.lcl || []).forEach(function (f) { add(f && f.puerto, f && f.pais); });
+    (logCiudadesOdoo_ || []).forEach(function (c) { add(c && c.nombre, c && c.pais); });
+    (logCiudadesApp_ || []).forEach(function (c) {
+        if (!c || c.uso === "puerto") return;
+        add(c.nombre, c.pais);
+    });
+    logLugaresManuales_().forEach(function (x) {
+        if (!x || x.uso === "puerto") return;
+        add(x.nombre, x.pais);
+    });
+    const body = document.getElementById("logTarBody");
+    const tab = window.logTarTab;
+    if (body && (tab === "aereo" || tab === "destino" || tab === "fcl" || tab === "lcl")) {
+        const kLugar = (tab === "fcl" || tab === "lcl") ? "puerto" : "ciudad";
+        body.querySelectorAll("tr[data-id]").forEach(function (tr) {
+            const lugar = (tr.querySelector("[data-k='" + kLugar + "']") || {}).value;
+            const pais = (tr.querySelector("[data-k='pais']") || {}).value;
+            add(lugar, pais);
+        });
+    }
+    return out;
+}
+
+function logNombresLugar_(pais, soloPuerto) {
+    logTarAsegurar_();
+    let todos = logLugaresDestino_();
+    if (soloPuerto) {
+        const t = logTarAsegurar_();
+        todos = [];
+        (t.fcl || []).forEach(function (f) { if (f && String(f.puerto || "").trim()) todos.push({ lugar: String(f.puerto).trim(), pais: String(f.pais || "").trim() }); });
+        (t.lcl || []).forEach(function (f) { if (f && String(f.puerto || "").trim()) todos.push({ lugar: String(f.puerto).trim(), pais: String(f.pais || "").trim() }); });
+        logLugaresManuales_().forEach(function (x) {
+            if (x && (x.uso === "puerto" || x.uso === "ambas") && String(x.nombre || "").trim()) {
+                todos.push({ lugar: String(x.nombre).trim(), pais: String(x.pais || "").trim() });
+            }
+        });
+        (logCiudadesApp_ || []).forEach(function (x) {
+            if (x && (x.uso === "puerto" || x.uso === "ambas") && String(x.nombre || "").trim()) {
+                todos.push({ lugar: String(x.nombre).trim(), pais: String(x.pais || "").trim() });
+            }
+        });
+    }
+    const p = String(pais || "").trim();
+    const fuente = p ? todos.filter(function (x) { return x.pais && logTarMismoPais_(p, x.pais); }) : todos;
+    const vistos = {};
+    const out = [];
+    fuente.forEach(function (x) {
+        const k = logTarNorm_(x.lugar);
+        if (!k || vistos[k]) return;
+        vistos[k] = 1;
+        out.push(x.lugar);
+    });
+    out.sort(function (a, b) { return a.localeCompare(b, "es"); });
+    return out;
+}
+
+function logTarCodigoPais_(s) {
+    const t = String(s || "").trim();
+    if (!t) return "";
+    const porNombre = typeof logEnvCodigoDePais_ === "function" ? logEnvCodigoDePais_(t) : "";
+    if (porNombre) return porNombre;
+    if (/^[a-z]{2}$/i.test(t)) return t.toUpperCase();
+    return "";
+}
+
+function logTarMismoPais_(a, b) {
+    const ca = logTarCodigoPais_(a);
+    const cb = logTarCodigoPais_(b);
+    if (ca && cb && ca === cb) return true;
+    const na = (ca && typeof logPaisDeCodigo_ === "function" && logPaisDeCodigo_(ca)) || a;
+    const nb = (cb && typeof logPaisDeCodigo_ === "function" && logPaisDeCodigo_(cb)) || b;
+    return logTarSi_(na, nb);
+}
+
+function logCiudadesDePais_(pais) {
+    const deCat = logCiudadesParaPais_(pais);
+    if (deCat.length) return deCat;
+    return logCiudadesTarifa_(pais);
+}
+
+function logPintarSelectPuerto_(actual, pais) {
+    const el = document.getElementById("logDestPuerto");
+    if (!el || el.tagName !== "SELECT") {
+        logPintarPuertosLista_(pais);
+        return String(actual || "").trim();
+    }
+    const lista = typeof logPuertosTarifa_ === "function" ? logPuertosTarifa_(pais) : [];
+    const ahora = String(actual || "").trim();
+    const norm = logTarNorm_(ahora);
+    let html = "<option value=\"\">Puerto</option>";
+    let visto = !ahora;
+    lista.forEach(function (c) {
+        const sel = logTarNorm_(c) === norm;
+        if (sel) visto = true;
+        html += "<option value=\"" + logEsc_(c) + "\"" + (sel ? " selected" : "") + ">" + logEsc_(c) + "</option>";
+    });
+    if (ahora && !visto) html += "<option value=\"" + logEsc_(ahora) + "\" selected>" + logEsc_(ahora) + "</option>";
+    if (el.getAttribute("data-opts") !== html) {
+        el.innerHTML = html;
+        el.setAttribute("data-opts", html);
+    }
+    if (el.value !== ahora) el.value = ahora;
+    return ahora;
+}
+function logCiudadesTarifa_(pais) { return logNombresLugar_(pais, false); }
+function logPuertosTarifa_(pais) { return logNombresLugar_(pais, true); }
+
+/** Una sola ciudad que sí corresponde al país. No elige Miami si el cliente es otro. */
+function logCiudadPorDefecto_(pais) {
+    const lista = logCiudadesDePais_(pais);
+    return lista.length === 1 ? lista[0] : "";
+}
+
+function logPaisUnicoDeLugar_(lugar) {
+    const n = logTarNorm_(lugar);
+    if (!n) return "";
+    const vistos = {};
+    logLugaresDestino_().forEach(function (x) {
+        if (logTarNorm_(x.lugar) !== n || !x.pais) return;
+        vistos[x.pais] = 1;
+    });
+    const keys = Object.keys(vistos);
+    return keys.length === 1 ? keys[0] : "";
+}
+
+function logRefrescarCiudadesEnv_(leerPantalla) {
+    if (leerPantalla && typeof logTarFlush_ === "function") logTarFlush_();
+    const e = typeof logEnv_ === "function" ? logEnv_() : {};
+    const pais = ((document.getElementById("logDestPais") || {}).value || e.destinoPais || "").trim();
+    const sel = document.getElementById("logDestCiudad");
+    const ciudad = ((sel || {}).value || e.destinoCiudad || "").trim();
+    const puerto = ((document.getElementById("logDestPuerto") || {}).value || e.destinoPuerto || "").trim();
+    logPintarSelectCiudad_(ciudad, pais);
+    logPintarSelectPuerto_(puerto, pais);
+    if (typeof logAplicarFaltasAnalisis_ === "function") logAplicarFaltasAnalisis_();
+}
+
+function logPintarSelectCiudad_(actual, pais) {
+    const el = document.getElementById("logDestCiudad");
+    if (!el || el.tagName !== "SELECT") return;
+    const lista = logCiudadesDePais_(pais);
+    let ahora = String(actual || "").trim();
+    if (!ahora && !logDestinoCiudadTocado_) {
+        const def = logCiudadPorDefecto_(pais);
+        if (def) {
+            ahora = def;
+            if (logQuote && logQuote.env) logQuote.env.destinoCiudad = def;
+        }
+    }
+    const norm = logTarNorm_(ahora);
+    let html = "<option value=\"\">Elige</option>";
+    let visto = !ahora;
+    lista.forEach(function (c) {
+        const sel = logTarNorm_(c) === norm;
+        if (sel) visto = true;
+        html += "<option value=\"" + logEsc_(c) + "\"" + (sel ? " selected" : "") + ">" + logEsc_(c) + "</option>";
+    });
+    if (ahora && !visto) html += "<option value=\"" + logEsc_(ahora) + "\" selected>" + logEsc_(ahora) + "</option>";
+    if (el.getAttribute("data-opts") !== html) {
+        el.innerHTML = html;
+        el.setAttribute("data-opts", html);
+    }
+    if (el.value !== ahora) el.value = ahora;
+    return ahora;
+}
+
+function logPintarPuertosLista_(pais) {
+    const dl = document.getElementById("logPuertosLista");
+    if (!dl) return;
+    const html = logPuertosTarifa_(pais).map(function (p) { return "<option value=\"" + logEsc_(p) + "\"></option>"; }).join("");
+    if (dl.getAttribute("data-opts") !== html) {
+        dl.innerHTML = html;
+        dl.setAttribute("data-opts", html);
+    }
+}
+
+function logEnListaTarifa_(nombre, lista) {
+    const n = logTarNorm_(nombre);
+    if (!n) return false;
+    return (lista || []).some(function (x) { return logTarNorm_(x) === n; });
+}
+
+function logFaltasAnalisis_() {
+    const faltas = [];
+    const e = typeof logEnv_ === "function" ? logEnv_() : {};
+    const exterior = typeof logEsCotizacionExterior_ === "function" && logEsCotizacionExterior_();
+    const inc = String(e.incoterm || "EXW").toUpperCase();
+    const tipos = typeof logEnvTiposActivos_ === "function" ? logEnvTiposActivos_(e.modalidad, inc, exterior) : [];
+    if (exterior && inc !== "EXW") {
+        const ciudad = String(e.destinoCiudad || "").trim();
+        const ciudades = logCiudadesDePais_(e.destinoPais);
+        if (!ciudades.length) faltas.push({ id: "logDestCiudad", msg: "No hay ciudades en Ajustes → Logística para este país. Agrega la tarifa y elige la ciudad." });
+        else if (!ciudad) faltas.push({ id: "logDestCiudad", msg: "Elige la ciudad de destino. La lista sale de Ajustes → Logística." });
+        else if (!logEnListaTarifa_(ciudad, ciudades)) faltas.push({ id: "logDestCiudad", msg: "Esa ciudad no está en las tarifas de este país. Elige una de la lista." });
+        if (!String(e.destinoPais || "").trim()) faltas.push({ id: "logDestPais", msg: "Falta el país de destino." });
+    }
+    const mar = e.modalidad === "fcl" || e.modalidad === "lcl";
+    if (mar && exterior && inc !== "EXW" && (tipos.indexOf("flete_principal") >= 0 || tipos.indexOf("flete_interno") >= 0)) {
+        const puertos = logPuertosTarifa_(e.destinoPais);
+        if (puertos.length) {
+            const puerto = String(e.destinoPuerto || "").trim();
+            const okPuerto = logEnListaTarifa_(puerto, puertos);
+            const okCiudad = !puerto && puertos.some(function (p) { return logTarSi_(e.destinoCiudad, p); });
+            if (!okPuerto && !okCiudad) faltas.push({ id: "logDestPuerto", msg: "El puerto tiene que coincidir con una tarifa marítima. Si lo dejas vacío, la ciudad debe ser ese puerto." });
+        }
+    }
+    const cub = typeof logCubicajeTotal_ === "function" ? logCubicajeTotal_("es") : { m3: 0, pesoKg: 0, kgVol: 0 };
+    const kg = Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0);
+    const m3 = Number(cub.m3) || 0;
+    const cont = e.contenedores || {};
+    const nCont = (Number(cont.c20) || 0) + (Number(cont.c40) || 0) + (Number(cont.c40hc) || 0);
+    if (tipos.indexOf("flete_principal") >= 0 && e.modalidad === "aerea" && !(kg > 0)) {
+        faltas.push({ id: "logCubPeso", msg: "Falta el peso real o el volumétrico. Complétalo en el cubicaje o en el empaque de la ficha." });
+        faltas.push({ id: "logCubKgVol" });
+    }
+    if (tipos.indexOf("flete_principal") >= 0 && e.modalidad === "lcl" && !(m3 > 0) && !(Number(cub.pesoKg) > 0)) {
+        faltas.push({ id: "logCubM3", msg: "Falta el volumen o el peso para el flete LCL." });
+        faltas.push({ id: "logCubPeso" });
+    }
+    if (e.modalidad === "fcl" && (tipos.indexOf("flete_principal") >= 0 || tipos.indexOf("flete_interno") >= 0) && !(nCont > 0) && !(m3 > 0) && !(kg > 0)) {
+        faltas.push({ id: "logCubM3", msg: "Falta el volumen, el peso o la cantidad de contenedores." });
+        faltas.push({ id: "logCubPeso" });
+        faltas.push({ id: "logC20" });
+        faltas.push({ id: "logC40" });
+        faltas.push({ id: "logC40hc" });
+    }
+    if (tipos.indexOf("seguro") >= 0 && !(typeof logTarValorMercancia_ === "function" && logTarValorMercancia_() > 0)) {
+        faltas.push({ id: "", msg: "Falta el precio de los proyectos para calcular el seguro." });
+    }
+    return faltas;
+}
+
+function logMsgsFaltas_(faltas) {
+    const out = [];
+    (faltas || []).forEach(function (f) {
+        if (f && f.msg && out.indexOf(f.msg) < 0) out.push(f.msg);
+    });
+    return out;
+}
+
+function logAplicarFaltasAnalisis_() {
+    let faltas = [];
+    try { faltas = logFaltasAnalisis_(); } catch (e) { faltas = []; }
+    const ids = {};
+    faltas.forEach(function (f) { if (f && f.id) ids[f.id] = 1; });
+    ["logDestCiudad", "logDestPais", "logDestPuerto", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc"].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle("log-req", !!ids[id]);
+    });
+    const box = document.getElementById("logIaFaltan");
+    const msgs = logMsgsFaltas_(faltas);
+    if (box) {
+        box.textContent = msgs.join(" ");
+        box.classList.toggle("d-none", !msgs.length);
+    }
+    const btnA = document.getElementById("btnLogIaAnalisis");
+    if (btnA) {
+        const ocupado = !!(logIa && logIa.ocupado);
+        btnA.disabled = ocupado || msgs.length > 0;
+        btnA.title = msgs.join(" ");
+    }
+    return faltas;
+}
+
+function logPintarRecalcAviso_() {
+    const el = document.getElementById("logRecalcAviso");
+    if (!el) return;
+    if (!logRecalcPendiente_) {
+        el.textContent = "";
+        el.classList.add("d-none");
+        return;
+    }
+    el.textContent = "Cambió un dato de Costos que mueve esta logística (medidas, empaque, cantidad o precio). Borré el cálculo de este borrador. Pulsa Análisis costos logísticos para calcularlo de nuevo.";
+    el.classList.remove("d-none");
+}
+
 function logisticaPintarCubicaje_() {
     const nota = document.getElementById("logCubNota");
     const idioma = logisticaLeerOpciones_().idioma;
@@ -5138,21 +6078,121 @@ function logisticaPintarCubicaje_() {
 }
 
 let logEnvPintando_ = 0;
+let logDestinoPaisTocado_ = false;
+let logDestinoCiudadTocado_ = false;
+let logPaisClientePedido_ = "";
+
+/** Si el proyecto abierto no trae país, lo pide a Odoo una vez (country_id del lead). */
+function logPedirPaisCliente_() {
+    if (logDestinoPaisTocado_) return;
+    if (logQuote && logQuote.abierta && String((logQuote.env || {}).destinoPais || "").trim()) return;
+    let ya = "";
+    try { ya = String((typeof localeProyectoActual === "function" ? localeProyectoActual() : {}).pais || "").trim(); } catch (err) { ya = ""; }
+    if (ya) return;
+    const cod = typeof logisticaLeerProyecto_ === "function" ? String((logisticaLeerProyecto_().codigo || "")).trim() : "";
+    if (!cod || logPaisClientePedido_ === cod || typeof realizarPeticionBD !== "function") return;
+    logPaisClientePedido_ = cod;
+    realizarPeticionBD({ action: "odoo_buscar", codigo: cod }, { timeoutMs: 75000 }).then(function (data) {
+        if (logPaisClientePedido_ !== cod) return;
+        if (!data || !data.exito || !data.data || typeof mapearLocaleOdoo !== "function") return;
+        const pais = String((mapearLocaleOdoo(data.data) || {}).pais || "").trim();
+        if (!pais || typeof aplicarLocaleProyecto !== "function") return;
+        if (typeof localeProyectoActual === "function" && localeProyectoActual().pais) return;
+        aplicarLocaleProyecto({ pais: pais }, { silencio: true });
+        if (!logEnvPintando_ && typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_();
+    }).catch(function () { /* sin país de Odoo: el campo sigue vacío */ });
+}
+
+/** País y código del envío: el del cliente, mientras el usuario no lo cambie y la cotización no traiga otro. */
+function logAplicarPaisCliente_() {
+    if (logDestinoPaisTocado_) return;
+    if (!logQuote || !logQuote.env) return;
+    if (logQuote.abierta && String(logQuote.env.destinoPais || "").trim()) return;
+    if (String(logQuote.env.destinoPais || "").trim()) return;
+    let pais = "";
+    try {
+        pais = String((typeof localeProyectoActual === "function" ? localeProyectoActual() : {}).pais || "").trim();
+    } catch (err) { pais = ""; }
+    if (!pais) { logPedirPaisCliente_(); return; }
+    logQuote.env.destinoPais = pais;
+    const cod = typeof logEnvCodigoDePais_ === "function" ? logEnvCodigoDePais_(pais) : "";
+    if (cod && !String(logQuote.env.destinoCodigo || "").trim()) logQuote.env.destinoCodigo = cod;
+    if (!logDestinoCiudadTocado_ && !String(logQuote.env.destinoCiudad || "").trim()) {
+        const unica = logCiudadPorDefecto_(pais);
+        if (unica) logQuote.env.destinoCiudad = unica;
+    }
+    if (logEnvPintando_) return;
+    const paisEl = document.getElementById("logDestPais");
+    const codEl = document.getElementById("logDestCodigo");
+    const ciuEl = document.getElementById("logDestCiudad");
+    if (paisEl && document.activeElement !== paisEl) paisEl.value = pais;
+    if (codEl && cod && document.activeElement !== codEl && !String(codEl.value || "").trim()) codEl.value = cod;
+    if (ciuEl && logQuote.env.destinoCiudad && document.activeElement !== ciuEl && !ciuEl.value) ciuEl.value = logQuote.env.destinoCiudad;
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(true);
+}
+
+function logEnvSumaValor_() {
+    const e = logEnv_();
+    if (!e || e.activo === false) return null;
+    const idioma = (typeof logisticaLeerOpciones_ === "function" ? logisticaLeerOpciones_().idioma : "es");
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    const k = escs.length ? escs[0].id : "";
+    let s = 0;
+    let alguna = false;
+    (e.lineas || []).forEach(function (ln) {
+        if (ln.valor != null && isFinite(Number(ln.valor))) {
+            s += Number(ln.valor);
+            alguna = true;
+            return;
+        }
+        if ((ln.tipo === "duties" || ln.tipo === "taxes") && ln.pct != null && isFinite(Number(ln.pct))) {
+            const b = logEnvBasePct_(ln, logBaseLogistica_(idioma, k));
+            if (b == null) return;
+            s += b * Number(ln.pct) / 100;
+            alguna = true;
+        }
+    });
+    return alguna ? s : null;
+}
+
+function logPintarEnvSuma_() {
+    const el = document.getElementById("logEnvSuma");
+    if (!el) return;
+    const suma = logEnvSumaValor_();
+    if (suma == null) {
+        el.hidden = true;
+        el.textContent = "";
+        return;
+    }
+    const idioma = logisticaLeerOpciones_().idioma;
+    const mon = (logQuote && logQuote.moneda) || "USD";
+    const nd = mon === "COP" ? 0 : 2;
+    const partes = logTotalesPartes_(idioma);
+    const pcts = Object.keys(partes.gran || {}).map(function (k) {
+        const g = Number(partes.gran[k]) || 0;
+        if (!(g > 0)) return null;
+        return Math.round(suma / g * 1000) / 10;
+    }).filter(function (n) { return n != null; });
+    const fmtPct = function (n) {
+        const s = n.toFixed(1);
+        return idioma === "en" ? s : s.replace(".", ",");
+    };
+    let pctTxt = "";
+    if (pcts.length === 1) pctTxt = fmtPct(pcts[0]) + "% del gran total";
+    else if (pcts.length > 1) pctTxt = pcts.map(fmtPct).join(" / ") + "% del gran total";
+    el.hidden = false;
+    el.innerHTML = "<span class=\"log-env-suma-lab\">Total</span>" +
+        "<span class=\"log-env-suma-val\">" + logFmtMoneda_(suma, idioma, nd) + " " + logEsc_(mon) + "</span>" +
+        "<span class=\"log-env-suma-pct\">" + logEsc_(pctTxt.replace(/^ · /, "")) + "</span>";
+}
+
 function logisticaPintarEnv_(forzar) {
     logEnvPintando_++;
     try {
     const idioma = logisticaLeerOpciones_().idioma;
     const esEn = idioma === "en";
     const exterior = logEsCotizacionExterior_();
-    if (!logQuote.env || !logQuote.env.destinoPais) {
-        try {
-            const loc = typeof localeProyectoActual === "function" ? localeProyectoActual() : {};
-            if (loc && loc.pais && logQuote.env) {
-                logQuote.env.destinoPais = logQuote.env.destinoPais || loc.pais;
-                logQuote.env.destinoCodigo = logQuote.env.destinoCodigo || logEnvCodigoDePais_(loc.pais);
-            }
-        } catch (err) { /* sin locale */ }
-    }
+    logAplicarPaisCliente_();
     logEnvAsegurarLineas_(esEn);
     logAplicarAranceles_();
     const e = logEnv_();
@@ -5182,10 +6222,12 @@ function logisticaPintarEnv_(forzar) {
         if (tienen !== incs.join(",")) incSel.innerHTML = html;
         logSetSiNoFoco_("logIncoterm", e.incoterm);
     }
-    logSetSiNoFoco_("logDestCiudad", e.destinoCiudad);
+    const ciudadElegida = logPintarSelectCiudad_(e.destinoCiudad, e.destinoPais);
+    const puertoElegido = logPintarSelectPuerto_(e.destinoPuerto, e.destinoPais);
+    logSetSiNoFoco_("logDestCiudad", ciudadElegida || e.destinoCiudad);
     logSetSiNoFoco_("logDestPais", e.destinoPais);
     logSetSiNoFoco_("logDestCodigo", e.destinoCodigo);
-    logSetSiNoFoco_("logDestPuerto", e.destinoPuerto);
+    logSetSiNoFoco_("logDestPuerto", puertoElegido || e.destinoPuerto);
     logSetSiNoFoco_("logResumenPct", e.resumenPct);
     const swOn = document.getElementById("logCostosOn");
     if (swOn && document.activeElement !== swOn) swOn.checked = e.activo !== false;
@@ -5228,6 +6270,7 @@ function logisticaPintarEnv_(forzar) {
     const box = document.getElementById("logEnvLineas");
     if (!forzar && box && document.activeElement && box.contains(document.activeElement)) {
         logisticaPintarCubicaje_();
+        logPintarEnvSuma_();
         return;
     }
     if (box) {
@@ -5254,8 +6297,10 @@ function logisticaPintarEnv_(forzar) {
         logisticaOrdenEnv_();
     }
     logisticaPintarCubicaje_();
+    logPintarEnvSuma_();
     } finally {
         logEnvPintando_--;
+        logAplicarFaltasAnalisis_();
     }
 }
 
@@ -5367,6 +6412,16 @@ function logisticaOnEnvUi_(ev) {
     const antes = modAntes + "|" + (logQuote.env && logQuote.env.incoterm) + "|" + (logQuote.env && logQuote.env.mercado);
     const incAntes = logQuote.env && logQuote.env.incoterm;
     logisticaLeerEnvUi_();
+    if (t && t.id === "logDestPais") logDestinoPaisTocado_ = true;
+    if (t && t.id === "logDestCiudad") logDestinoCiudadTocado_ = true;
+    if (t && t.id === "logDestCiudad" && logQuote.env && !logQuote.env.destinoPais) {
+        const paisCiudad = logPaisUnicoDeLugar_(logQuote.env.destinoCiudad);
+        if (paisCiudad) {
+            logQuote.env.destinoPais = paisCiudad;
+            const codCiudad = logEnvCodigoDePais_(paisCiudad);
+            if (codCiudad) logQuote.env.destinoCodigo = codCiudad;
+        }
+    }
     if (t && (t.id === "logC20" || t.id === "logC40" || t.id === "logC40hc")) logQuote.env.contenedoresManual = true;
     if (logQuote.env.modalidad !== modAntes || logQuote.env.incoterm !== incAntes || (t && t.id === "logMercado")) {
         logQuote.env.lineas.forEach(function (ln) {
@@ -5668,7 +6723,7 @@ function logisticaRestablecerDiseno() {
     if (typeof mostrarNotificacion === "function") mostrarNotificacion("Anchos y altos restablecidos.", "success");
 }
 
-function logisticaActualizarVista() {
+function logisticaActualizarVista(opts) {
     const f = document.getElementById("logFrame");
     if (!f) return;
     const stage = document.querySelector(".log-stage");
@@ -5690,7 +6745,7 @@ function logisticaActualizarVista() {
     logPintandoHoja_++;
     try {
         f.srcdoc = logisticaConstruirHTML(logisticaLeerOpciones_());
-        logisticaPintarFilas_();
+        if (!(opts && opts.sinFilas)) logisticaPintarFilas_();
     } finally {
         logPintandoHoja_ = Math.max(0, logPintandoHoja_ - 1);
     }
@@ -5816,6 +6871,8 @@ function logIaPintar_() {
     const btnE = document.getElementById("btnLogIaEnviar");
     const inp = document.getElementById("logIaInput");
     if (btnA) btnA.disabled = !!logIa.ocupado;
+    logAplicarFaltasAnalisis_();
+    logPintarRecalcAviso_();
     if (btnE) btnE.disabled = !!logIa.ocupado;
     if (inp) inp.disabled = !!logIa.ocupado;
     if (btnG) {
@@ -6013,6 +7070,7 @@ function logTarAsegurar_() {
         });
     }
     base.conceptos = (raw && raw.conceptos && typeof raw.conceptos === "object") ? raw.conceptos : { origen: [], destino: [] };
+    base.lugares = (raw && Array.isArray(raw.lugares)) ? raw.lugares : [];
     window.logTarConceptos = base.conceptos;
     window.logTarifas = base;
     logTarSemillaSiVacio_();
@@ -6033,6 +7091,7 @@ function logTarSemillaSiVacio_() {
     if (!t.destino.length) t.destino = logTarSemillaMiami_();
     if (!t.interno.length) t.interno = logTarSemillaInterno_();
     if (!t.seguro.length) t.seguro = logTarSemillaSeguro_();
+    logTarCompletarDestino_();
 }
 
 function logTarSemillaInterno_() {
@@ -6111,10 +7170,230 @@ function logTarSemillaMiami_() {
     ];
 }
 
+function logTarSemillaSanJuan_() {
+    const fecha = "2026-10-08";
+    const base = { modalidad: "aerea", pais: "Puerto Rico", ciudad: "San Juan", fecha: fecha };
+    const sobre = "Delivery, Warehouse Transfer";
+    return [
+        logTarFila_(Object.assign({ id: "ifs-sj-delivery", concepto: "Delivery", forma: "variable", baseVar: "peso", precio: 0.35, minimo: 150 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-transfer", concepto: "Warehouse Transfer", forma: "variable", baseVar: "peso", precio: 0.2, minimo: 70 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-fuel", concepto: "Fuel surcharge", forma: "variable", baseVar: "cargos", baseCargos: sobre, precio: 42 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-fuel2", concepto: "Emergency inland fuel", forma: "variable", baseVar: "cargos", baseCargos: sobre, precio: 29 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-handling", concepto: "Handling", precio: 125 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-tax", concepto: "Tax clearance", precio: 95 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-messenger", concepto: "Messenger fee", precio: 65 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-doc", concepto: "Doc turnover", precio: 50 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-thc", concepto: "Airline THC", precio: 175 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-oper", concepto: "Operational charges", precio: 60 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-entry", concepto: "Customs entry", precio: 175 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-cmsg", concepto: "Customs messenger", precio: 35 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-hmf", concepto: "Harbor maintenance fee", forma: "variable", baseVar: "valor", precio: 0.125 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-mpf", concepto: "Merchandise processing fee", forma: "variable", baseVar: "valor", precio: 0.3464, minimo: 31.67 }, base)),
+        logTarFila_(Object.assign({ id: "ifs-sj-bond", concepto: "Single entry bond", forma: "variable", baseVar: "valor", precio: 0.7, minimo: 70 }, base))
+    ];
+}
+
+function logTarCompletarDestino_() {
+    const t = window.logTarifas;
+    if (!t) return;
+    if (!Array.isArray(t.destino)) t.destino = [];
+    const hay = t.destino.some(function (f) {
+        return logTarNorm_(f.pais) === "puerto rico" && logTarNorm_(f.ciudad) === "san juan" && f.modalidad === "aerea";
+    });
+    if (hay) return;
+    logTarSemillaSanJuan_().forEach(function (f) { t.destino.push(f); });
+}
+
+function logTarConceptoClave_(s) {
+    const n = logTarNorm_(s);
+    const alias = {
+        "door delivery": "delivery",
+        "local handling": "handling",
+        "customs entry services fee": "customs entry",
+        "us customs messenger fee": "customs messenger",
+        "customs messenger fee": "customs messenger",
+        "single transaction bond": "single entry bond",
+        "document turnover": "doc turnover",
+        "harbour maintenance fee": "harbor maintenance fee"
+    };
+    return alias[n] || n;
+}
+
+function logTarConceptoIgual_(a, b) {
+    const x = logTarConceptoClave_(a);
+    const y = logTarConceptoClave_(b);
+    return !!x && x === y;
+}
+
+function logTarNumCarta_(v) {
+    if (v == null || v === "") return null;
+    if (typeof v === "number") return isFinite(v) ? v : null;
+    let s = String(v).trim().replace(/\s/g, "");
+    if (!s) return null;
+    if (s.indexOf(",") >= 0 && s.indexOf(".") >= 0) s = s.replace(/,/g, "");
+    else if (s.indexOf(",") >= 0) s = s.replace(",", ".");
+    const n = Number(s);
+    return isFinite(n) ? n : null;
+}
+
+function logTarCartaFuera_(concepto) {
+    const n = logTarNorm_(concepto);
+    return /section 301|\bduties\b|\barancel\b|flete aereo|air freight|due carrier|due agent|airport charge|seguro internacional|\bsae\b|planilla de traslado|camion urbano|gastos en origen|al costo/.test(n);
+}
+
+function logTarFechaCarta_(v) {
+    const s = String(v || "").trim();
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return iso[1] + "-" + iso[2] + "-" + iso[3];
+    const dma = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+    if (dma) return dma[3] + "-" + ("0" + dma[2]).slice(-2) + "-" + ("0" + dma[1]).slice(-2);
+    return (typeof logTarHoy_ === "function") ? logTarHoy_() : "";
+}
+
+function logTarFilaDesdeCarta_(item, meta) {
+    const concepto = String(item && item.concepto || "").replace(/\s+/g, " ").trim();
+    if (!concepto || logTarCartaFuera_(concepto)) return null;
+    const precio = logTarNumCarta_(item.precio);
+    if (!(precio > 0)) return null;
+    const sobre = String(item.sobre || item.baseVar || "").toLowerCase();
+    const formas = { peso: 1, volumen: 1, wm: 1, valor: 1, cargos: 1 };
+    if (item.forma === "variable" && !formas[sobre]) return null;
+    const variable = item.forma === "variable" || (!item.forma && !!formas[sobre]);
+    const baseVar = variable ? sobre : "valor";
+    const minimo = logTarNumCarta_(item.minimo);
+    const fila = logTarFila_({
+        concepto: concepto,
+        modalidad: meta.modalidad,
+        pais: meta.pais,
+        ciudad: meta.ciudad,
+        forma: variable ? "variable" : "fijo",
+        baseVar: baseVar,
+        precio: precio,
+        minimo: minimo != null && minimo > 0 ? minimo : "",
+        moneda: String(item.moneda || "USD").toUpperCase() === "COP" ? "COP" : "USD",
+        proveedor: String(meta.proveedor || item.proveedor || "IFS").slice(0, 40),
+        fecha: logTarFechaCarta_(item.fecha || meta.fecha),
+        preferida: "S",
+        aplica: "embarque"
+    });
+    if (fila.forma === "variable" && fila.baseVar === "cargos") {
+        fila.baseCargos = String(item.baseCargos || "").split(/[,;]+/).map(function (x) { return x.trim(); }).filter(Boolean).join(", ");
+        if (!fila.baseCargos) return null;
+    }
+    return fila;
+}
+
+function logTarNormalizarCarta_(raw, meta) {
+    const lista = raw && Array.isArray(raw.cargos) ? raw.cargos : [];
+    const vistos = [];
+    const fuera = [];
+    const filas = [];
+    lista.forEach(function (item) {
+        const concepto = String(item && item.concepto || "").trim();
+        if (concepto && logTarCartaFuera_(concepto)) { fuera.push(concepto); return; }
+        const fila = logTarFilaDesdeCarta_(item, {
+            pais: meta.pais,
+            ciudad: meta.ciudad,
+            modalidad: meta.modalidad,
+            proveedor: raw.proveedor || meta.proveedor,
+            fecha: raw.fecha || meta.fecha
+        });
+        if (!fila) {
+            if (concepto) fuera.push(concepto);
+            return;
+        }
+        const prev = vistos.findIndex(function (f) { return logTarConceptoIgual_(f.concepto, fila.concepto); });
+        if (prev >= 0) {
+            filas[prev] = fila;
+            vistos[prev] = fila;
+            return;
+        }
+        vistos.push(fila);
+        filas.push(fila);
+    });
+    return { filas: filas, fuera: fuera };
+}
+
+function logTarDestinoDeRuta_(pais, ciudad, mod) {
+    return ((window.logTarifas && window.logTarifas.destino) || []).filter(function (f) {
+        return String(f.modalidad || "") === mod && logTarNorm_(f.pais) === logTarNorm_(pais) && logTarNorm_(f.ciudad) === logTarNorm_(ciudad);
+    });
+}
+
+function logTarTxtFilaDestino_(f) {
+    if (!f) return "";
+    const forma = f.forma === "variable" ? (f.baseVar === "cargos" ? (f.precio + " % sobre " + (f.baseCargos || "")) : (f.baseVar === "peso" ? (f.precio + " / kg") : (f.baseVar === "valor" ? (f.precio + " %") : (f.precio + " / " + f.baseVar)))) : String(f.precio);
+    const min = f.minimo !== "" && f.minimo != null ? (", mín. " + f.minimo) : "";
+    return f.concepto + " · " + forma + " " + (f.moneda || "USD") + min;
+}
+
+function logTarDestinoCruzar_(pais, ciudad, mod, filasNuevas) {
+    const actuales = logTarDestinoDeRuta_(pais, ciudad, mod);
+    const usados = {};
+    const actualiza = [];
+    const agrega = [];
+    filasNuevas.forEach(function (nuevo) {
+        const prev = actuales.filter(function (f) { return !usados[f.id] && logTarConceptoIgual_(f.concepto, nuevo.concepto); });
+        if (!prev.length) { agrega.push(nuevo); return; }
+        usados[prev[0].id] = 1;
+        prev.slice(1).forEach(function (extra) { usados[extra.id] = "dup"; });
+        const igual = Number(prev[0].precio) === Number(nuevo.precio)
+            && String(prev[0].forma || "fijo") === nuevo.forma
+            && String(prev[0].baseVar || "") === String(nuevo.baseVar || "")
+            && String(prev[0].minimo == null ? "" : prev[0].minimo) === String(nuevo.minimo == null ? "" : nuevo.minimo)
+            && String(prev[0].moneda || "USD") === nuevo.moneda
+            && logTarNorm_(prev[0].baseCargos || "") === logTarNorm_(nuevo.baseCargos || "");
+        actualiza.push({ antes: prev[0], despues: nuevo, igual: igual, duplicados: prev.slice(1) });
+    });
+    const quita = actuales.filter(function (f) { return !usados[f.id] || usados[f.id] === "dup"; });
+    return { actualiza: actualiza, agrega: agrega, quita: quita };
+}
+
+function logTarDestinoAplicarCarta_(pais, ciudad, mod, cruce) {
+    const t = window.logTarifas;
+    if (!t || !Array.isArray(t.destino) || !cruce) return { n: 0 };
+    const quitar = {};
+    (cruce.quita || []).forEach(function (f) { if (f && f.id) quitar[f.id] = 1; });
+    (cruce.actualiza || []).forEach(function (x) {
+        (x.duplicados || []).forEach(function (d) { if (d && d.id) quitar[d.id] = 1; });
+        const row = t.destino.find(function (f) { return f.id === x.antes.id; });
+        if (!row) return;
+        ["concepto", "forma", "baseVar", "baseCargos", "precio", "minimo", "moneda", "proveedor", "fecha", "aplica"].forEach(function (k) {
+            if (x.despues[k] != null) row[k] = x.despues[k];
+        });
+        if (row.forma !== "variable" || row.baseVar !== "cargos") row.baseCargos = "";
+        row.preferida = "S";
+        row.pais = pais;
+        row.ciudad = ciudad;
+        row.modalidad = mod;
+    });
+    (cruce.agrega || []).forEach(function (f) {
+        f.id = (typeof logTarId_ === "function") ? logTarId_() : ("lt" + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36));
+        f.pais = pais;
+        f.ciudad = ciudad;
+        f.modalidad = mod;
+        f.preferida = "S";
+        t.destino.push(f);
+    });
+    t.destino = t.destino.filter(function (f) { return !quitar[f.id]; });
+    const vistos = {};
+    t.destino = t.destino.filter(function (f) {
+        if (logTarNorm_(f.pais) !== logTarNorm_(pais) || logTarNorm_(f.ciudad) !== logTarNorm_(ciudad) || String(f.modalidad || "") !== mod) return true;
+        const clave = logTarConceptoClave_(f.concepto);
+        if (vistos[clave]) return false;
+        vistos[clave] = 1;
+        return true;
+    });
+    return { n: (cruce.agrega || []).length + (cruce.actualiza || []).length };
+}
+
 function logTarGrupo_(tab, f) {
     const n = logTarNorm_;
     if (tab === "origen") return String(f.modalidad || "") + "|" + n(f.concepto);
-    if (tab === "interno") return String(f.modalidad || "") + "|" + String(f.equipo || "");
+    if (tab === "interno") {
+        if (f.modalidad === "lcl" && f.cobro === "escala") return "lcl|escala|" + n(f.salida) + "|" + String(f.desde == null ? "" : f.desde) + "|" + String(f.hasta == null ? "" : f.hasta);
+        return String(f.modalidad || "") + "|" + String(f.equipo || "");
+    }
     if (tab === "aereo") return n(f.pais) + "|" + n(f.ciudad);
     if (tab === "fcl") return n(f.pais) + "|" + n(f.puerto) + "|" + String(f.equipo || "");
     if (tab === "lcl") return n(f.pais) + "|" + n(f.puerto);
@@ -6188,7 +7467,7 @@ function logTarCtx_(e, cub, valor) {
     const c40hc = Number(c.c40hc) || 0;
     const emb = parseInt(e && e.embarques, 10);
     return {
-        kg: kg, m3: m3, ton: kg / 1000, valor: Number(valor) || 0,
+        kg: kg, pesoReal: Number(cub && cub.pesoKg) || 0, m3: m3, ton: kg / 1000, valor: Number(valor) || 0,
         c20: c20, c40: c40, c40hc: c40hc, contN: c20 + c40 + c40hc,
         embarques: isFinite(emb) && emb > 0 ? emb : 1
     };
@@ -6213,6 +7492,7 @@ function logTarValorMercancia_() {
 }
 
 function logTarCargoVariable_(f, ctx) {
+    if (f.baseVar === "cargos") return { falta: "El porcentaje sobre otros cargos se liquida en Destino." };
     const pct = Number(f.precio);
     if (f.baseVar === "peso") {
         const usd = logTarUsd_(f.precio, f.moneda);
@@ -6260,22 +7540,30 @@ function logTarConMinimo_(usd, f) {
     return usd < min ? min : usd;
 }
 
+function logTarLiquidarFila_(f, ctx) {
+    if (f.forma === "variable" && f.baseVar === "cargos") return { falta: "El porcentaje sobre otros cargos se liquida en Destino." };
+    const r = (f.forma === "variable") ? logTarCargoVariable_(f, ctx) : logTarCargoFijo_(f, ctx);
+    if (r.skip || r.faltaTrm || r.falta) return r;
+    let usd = logTarConMinimo_(r.usd, f);
+    if (usd == null) return { falta: "Falta la TRM en Ajustes para el mínimo de " + (f.concepto || "este cargo") + "." };
+    if (f.maximo !== "" && f.maximo != null) {
+        const max = logTarUsd_(f.maximo, f.moneda);
+        if (max == null) return { falta: "Falta la TRM en Ajustes para el máximo de " + (f.concepto || "este cargo") + "." };
+        if (usd > max) usd = max;
+    }
+    return { usd: usd };
+}
+
 function logTarSumarConceptos_(filas, ctx, notas) {
     let suma = 0;
     let uso = 0;
     let trm = false;
     filas.forEach(function (f) {
-        const r = (f.forma === "variable") ? logTarCargoVariable_(f, ctx) : logTarCargoFijo_(f, ctx);
+        const r = logTarLiquidarFila_(f, ctx);
         if (r.skip) return;
         if (r.faltaTrm) { trm = true; return; }
         if (r.falta) { notas.push(r.falta); return; }
-        let usd = logTarConMinimo_(r.usd, f);
-        if (usd == null) { notas.push("Falta la TRM en Ajustes para el mínimo de " + (f.concepto || "este cargo") + "."); return; }
-        if (f.maximo !== "" && f.maximo != null) {
-            const max = logTarUsd_(f.maximo, f.moneda);
-            if (max == null) { notas.push("Falta la TRM en Ajustes para el máximo de " + (f.concepto || "este cargo") + "."); return; }
-            if (usd > max) usd = max;
-        }
+        const usd = r.usd;
         suma += usd;
         uso += 1;
         const av = logTarAvisoFecha_(f);
@@ -6304,11 +7592,108 @@ function logTarAplicarOrigen_(e, ctx, notas) {
     return logTarSumarConceptos_(filas, ctx, notas);
 }
 
+function logTarKgInternoLcl_(f, ctx) {
+    const factor = Number(f.factor);
+    const kgM3 = isFinite(factor) && factor > 0 ? factor : 400;
+    const real = Number(ctx.pesoReal) || 0;
+    const vol = (Number(ctx.m3) || 0) * kgM3;
+    return { kgM3: kgM3, real: real, vol: vol, fact: Math.max(real, vol), porVol: vol > 0 && vol >= real };
+}
+
+function logTarInternoLclUnitario_(f) {
+    return f.cobro === "kg";
+}
+
+function logTarNotaKgInterno_(k, ctx) {
+    return k.porVol
+        ? ("volumen " + (Math.round((Number(ctx.m3) || 0) * 100) / 100) + " m³ × " + k.kgM3 + " kg")
+        : ("peso real " + (Math.round(k.real * 100) / 100) + " kg");
+}
+
+function logTarAplicarInternoLclEscala_(filas, ctx, notas) {
+    const muestra = logTarKgInternoLcl_(filas[0], ctx);
+    if (!(muestra.fact > 0)) {
+        notas.push("Falta el volumen o el peso para el flete interno LCL.");
+        return { suma: 0, uso: 0 };
+    }
+    const hits = [];
+    filas.forEach(function (f) {
+        const k = logTarKgInternoLcl_(f, ctx);
+        const desde = f.desde === "" || f.desde == null ? 0 : Number(f.desde);
+        const hasta = f.hasta === "" || f.hasta == null ? Infinity : Number(f.hasta);
+        if (!isFinite(desde) || !isFinite(hasta) || hasta < desde) return;
+        if (k.fact >= desde && k.fact <= hasta) hits.push({ f: f, k: k, desde: desde });
+    });
+    if (!hits.length) {
+        notas.push("No hay escala de flete interno LCL para " + (Math.round(muestra.fact * 100) / 100) + " kg facturables (" + logTarNotaKgInterno_(muestra, ctx) + ").");
+        return { suma: 0, uso: 0 };
+    }
+    hits.sort(function (a, b) { return a.desde - b.desde; });
+    const hit = hits[hits.length - 1];
+    const f = hit.f;
+    const precio = Number(f.precio);
+    if (!(precio > 0)) {
+        notas.push("Falta el precio de la escala " + (f.desde || 0) + "–" + (f.hasta || "") + " kg.");
+        return { suma: 0, uso: 0 };
+    }
+    const usd = logTarUsd_(precio, f.moneda);
+    if (usd == null) {
+        notas.push("Falta la TRM en Ajustes para pasar COP a USD.");
+        return { suma: 0, uso: 0 };
+    }
+    const av = logTarAvisoFecha_(f);
+    notas.push((f.salida || "Puerto") + " · escala " + (f.desde || 0) + "–" + (f.hasta === "" || f.hasta == null ? "…" : f.hasta) + " kg · " + logTarNotaKgInterno_(hit.k, ctx) + (f.proveedor ? " · " + f.proveedor : "") + (av ? ". " + av : ""));
+    return { suma: usd, uso: 1 };
+}
+
+function logTarAplicarInternoLcl_(filas, ctx, notas) {
+    const escalas = filas.filter(function (f) { return f.cobro === "escala"; });
+    if (escalas.length) return logTarAplicarInternoLclEscala_(escalas, ctx, notas);
+    const unit = filas.filter(logTarInternoLclUnitario_);
+    if (!unit.length) {
+        return logTarSumarConceptos_(filas.map(function (f) { return Object.assign({}, f, { forma: "fijo", aplica: "embarque", concepto: f.salida || "Flete interno" }); }), ctx, notas);
+    }
+    const f = unit[0];
+    const precio = Number(f.precio);
+    const tope = String(f.moneda || "USD").toUpperCase() === "COP" ? 100000 : 30;
+    if (isFinite(precio) && precio >= tope) {
+        notas.push("El precio del flete interno LCL parece un viaje completo, no una tarifa por kg. Escribe la tarifa por kg o déjalo en Cobro Viaje.");
+        return { suma: 0, uso: 0 };
+    }
+    const k = logTarKgInternoLcl_(f, ctx);
+    if (!(k.fact > 0)) {
+        notas.push("Falta el volumen o el peso para el flete interno LCL.");
+        return { suma: 0, uso: 0 };
+    }
+    if (!(precio > 0)) {
+        notas.push("Falta la tarifa por kg del flete interno LCL.");
+        return { suma: 0, uso: 0 };
+    }
+    const rate = logTarUsd_(precio, f.moneda);
+    if (rate == null) {
+        notas.push("Falta la TRM en Ajustes para pasar COP a USD.");
+        return { suma: 0, uso: 0 };
+    }
+    const calculado = rate * k.fact;
+    const usd = logTarConMinimo_(calculado, f);
+    if (usd == null) {
+        notas.push("Falta la TRM en Ajustes para el mínimo del flete interno LCL.");
+        return { suma: 0, uso: 0 };
+    }
+    const av = logTarAvisoFecha_(f);
+    const baseTxt = logTarNotaKgInterno_(k, ctx);
+    const minTxt = usd > calculado + 0.0001 ? " · mínimo" : "";
+    notas.push((f.salida || "Puerto") + " · " + baseTxt + minTxt + (f.proveedor ? " · " + f.proveedor : "") + (av ? ". " + av : ""));
+    if (unit.length > 1) notas.push("Hay otro flete interno LCL preferido. Entré el primero.");
+    return { suma: usd, uso: 1 };
+}
+
 function logTarAplicarInterno_(e, ctx, notas) {
     const filas = logTarPreferidas_(logTarAsegurar_().interno).filter(function (f) {
         return f.modalidad === e.modalidad;
     });
     if (!filas.length) return { suma: 0, uso: 0 };
+    if (e.modalidad === "lcl") return logTarAplicarInternoLcl_(filas, ctx, notas);
     if (e.modalidad !== "fcl") {
         return logTarSumarConceptos_(filas.map(function (f) { return Object.assign({}, f, { forma: "fijo", aplica: "embarque", concepto: f.salida || "Flete interno" }); }), ctx, notas);
     }
@@ -6494,12 +7879,74 @@ function logTarAplicarSeguro_(e, ctx, notas) {
     return { suma: usd, uso: 1 };
 }
 
+function logTarCargosBase_(f, montos) {
+    const tokens = String(f.baseCargos || "").split(/[,;]+/).map(function (s) { return logTarNorm_(s); }).filter(Boolean);
+    if (!tokens.length) return { falta: "Indica sobre qué cargos va el porcentaje de " + (f.concepto || "este cargo") + "." };
+    let base = 0;
+    let n = 0;
+    Object.keys(montos).forEach(function (nom) {
+        const ok = tokens.some(function (t) { return nom === t || (t.length >= 4 && nom.indexOf(t) >= 0); });
+        if (!ok || montos[nom] == null) return;
+        base += montos[nom];
+        n += 1;
+    });
+    if (!n) return { falta: "No encontré " + f.baseCargos + " para calcular " + (f.concepto || "este cargo") + "." };
+    return { base: base };
+}
+
+function logTarNotaDestino_(f, extra) {
+    const av = logTarAvisoFecha_(f);
+    const cita = (f.concepto || "Cargo") + (extra ? " · " + extra : "") + (f.proveedor ? " · " + f.proveedor : "");
+    return av ? cita + ". " + av : cita;
+}
+
+function logTarDetalleDestino_(f) {
+    if (f.forma !== "variable") return "";
+    if (f.baseVar === "peso") return f.precio + " / kg";
+    if (f.baseVar === "volumen") return f.precio + " / m³";
+    if (f.baseVar === "wm") return f.precio + " / ton o m³";
+    if (f.baseVar === "cargos") return f.precio + " % sobre " + (f.baseCargos || "otros cargos");
+    return f.precio + " %";
+}
+
 function logTarAplicarDestino_(e, ctx, notas) {
     const filas = logTarFilasMod_(logTarAsegurar_().destino, e.modalidad).filter(function (f) {
         return logTarSi_(e.destinoPais, f.pais) && logTarSi_(e.destinoCiudad, f.ciudad);
     });
     if (!filas.length) return { suma: 0, uso: 0 };
-    return logTarSumarConceptos_(filas, ctx, notas);
+    const montos = {};
+    const listos = {};
+    let suma = 0;
+    let uso = 0;
+    filas.forEach(function (f) {
+        if (f.forma === "variable" && f.baseVar === "cargos") return;
+        const r = logTarLiquidarFila_(f, ctx);
+        if (r.skip) return;
+        if (r.faltaTrm || r.falta) { notas.push(r.falta || "Falta la TRM en Ajustes para pasar COP a USD."); return; }
+        const key = logTarNorm_(f.concepto);
+        montos[key] = (montos[key] || 0) + r.usd;
+        listos[f.id] = r.usd;
+        suma += r.usd;
+        uso += 1;
+    });
+    const sobre = {};
+    filas.forEach(function (f) {
+        if (!(f.forma === "variable" && f.baseVar === "cargos")) return;
+        const b = logTarCargosBase_(f, montos);
+        if (b.falta) { notas.push(b.falta); return; }
+        const pct = Number(f.precio);
+        if (!isFinite(pct)) { notas.push("Falta el porcentaje de " + (f.concepto || "este cargo") + "."); return; }
+        let usd = logTarConMinimo_(b.base * pct / 100, f);
+        if (usd == null) { notas.push("Falta la TRM en Ajustes para el mínimo de " + (f.concepto || "este cargo") + "."); return; }
+        sobre[f.id] = usd;
+        suma += usd;
+        uso += 1;
+    });
+    filas.forEach(function (f) {
+        if (listos[f.id] == null && sobre[f.id] == null) return;
+        notas.push(logTarNotaDestino_(f, logTarDetalleDestino_(f)));
+    });
+    return { suma: suma, uso: uso };
 }
 
 function logTarAplicarTipo_(tipo, e, ctx, notas) {
@@ -6699,6 +8146,12 @@ async function logIaConsultar_(modo, textoUsuario) {
     if (modo === "generar" && !logIa.analizado) return;
     if (modo === "entrevista" && !String(textoUsuario || "").trim()) return;
     if (modo === "analisis") {
+        const faltas = logFaltasAnalisis_();
+        if (faltas.some(function (f) { return f.msg; })) {
+            logAplicarFaltasAnalisis_();
+            return;
+        }
+        logRecalcPendiente_ = false;
         logIa.historial.push({ role: "model", text: logIaDiagnostico_() });
         logIa.analizado = true;
         logIa.fase = "entrevista";
@@ -6803,6 +8256,8 @@ function logisticaInit() {
     if (sis) sis.addEventListener("change", function () { logCab.sistemaManual = true; logisticaActualizarVista(); });
     const margen = document.getElementById("logMargen");
     if (margen) margen.addEventListener("change", logisticaActualizarVista);
+    const selCiudad = document.getElementById("logDestCiudad");
+    if (selCiudad) selCiudad.addEventListener("focus", function () { logRefrescarCiudadesEnv_(true); });
     logCombo_("logDestPais", "logPaisMenu", logListaPaises_, function (pais) {
         const cod = logEnvCodigoDePais_(pais);
         const c = document.getElementById("logDestCodigo");
@@ -6814,6 +8269,7 @@ function logisticaInit() {
         if (pais && p) p.value = pais;
     });
     logCargarPaises_();
+    logCargarCiudades_();
     logCargarAranceles_();
     if (document.getElementById("fichaPartida")) logPintarSelectPartida_("");
     logisticaInitIa_();
@@ -6972,6 +8428,36 @@ function logisticaInit() {
     if (lista) {
         lista.addEventListener("click", logisticaAccionFila_);
         lista.addEventListener("change", logisticaAccionFila_);
+        lista.addEventListener("input", function (ev) {
+            const t = ev.target;
+            if (!t || t.getAttribute("data-acc") !== "unit") return;
+            const row = t.closest(".log-fila");
+            const fila = row && logFilaPorUid_(row.getAttribute("data-r"));
+            if (!fila) return;
+            if (!logEscribirPrecioFila_(fila, t.value, t.getAttribute("data-e") || "")) return;
+            const caja = t.closest(".log-pu");
+            if (caja) caja.classList.toggle("log-pu-fijo", !!fila.puFijo);
+            logMarcarSucio_();
+            logProgramarHojaPrecio_();
+        });
+        lista.addEventListener("focusout", function (ev) {
+            const t = ev.target;
+            if (!t || t.getAttribute("data-acc") !== "unit") return;
+            const row = t.closest(".log-fila");
+            const fila = row && logFilaPorUid_(row.getAttribute("data-r"));
+            if (!fila) return;
+            logEscribirPrecioFila_(fila, t.value, t.getAttribute("data-e") || "");
+            const idioma = logisticaLeerOpciones_().idioma;
+            const v = logFilaValores_(fila, idioma, t.getAttribute("data-e") || "");
+            t.value = v.unit == null ? "" : logFmtNum_(v.unit, idioma, logDecimales_());
+            const caja = t.closest(".log-pu");
+            if (caja) caja.classList.toggle("log-pu-fijo", !!fila.puFijo);
+            if (logPrecioHojaTimer_) {
+                clearTimeout(logPrecioHojaTimer_);
+                logPrecioHojaTimer_ = 0;
+                logisticaActualizarVista({ sinFilas: true });
+            }
+        });
         if (typeof Sortable !== "undefined") {
             new Sortable(lista, {
                 handle: ".log-fila-grip",
