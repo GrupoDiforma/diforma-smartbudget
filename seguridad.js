@@ -61,6 +61,7 @@ async function ui_verificarOTP() {
             if(typeof mostrarNotificacion === "function") mostrarNotificacion(`Acceso corporativo validado (${data.rol}).`, "success");
             aplicarControlDeRoles();
             if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
+            if (typeof ajustesNubeTrasSesion_ === "function") ajustesNubeTrasSesion_();
         } else { alert(data.mensaje); }
     } catch(e) { alert("Error validando el código."); }
     document.getElementById('btnVerificar').innerHTML = '2. Validar y Entrar';

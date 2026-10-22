@@ -2,6 +2,13 @@
 var CONFIG_GLOBAL = null;
 var _configHojaOk = false;
 var _configHojaFallo = false;
+var _configCargando = false;
+var _tarifasHojaLista = false;
+var _tarifasHojaCargando = false;
+var _tarifasHojaFallo = false;
+var _arancelesHojaLista = false;
+var _arancelesHojaCargando = false;
+var _arancelesHojaFallo = false;
 var _umsDesdeMaestro = [];
 var UMS_MATRIZ_MIN = ["UND", "m2", "Juego"];
 var UMS_CATALOGO_BASE = ["Unidades", "UND", "Metros", "kg", "Hojas", "m2", "Litros", "Juego", "LAMINA", "ROLLO", "Rollox50mts", "—"];
@@ -417,7 +424,11 @@ function fusionarPartidasDesdeArancel_() {
 async function cargarConfiguracionGlobal() {
     _configHojaOk = false;
     _configHojaFallo = false;
+    _configCargando = true;
+    _tarifasHojaLista = false;
+    _tarifasHojaFallo = false;
     _configHojaMensaje = "";
+    if (typeof ajustesNubeBotonGuardar_ === "function") ajustesNubeBotonGuardar_();
     try {
         const resBase = await fetch('config.json');
         let baseConfig = resBase.ok ? await resBase.json() : {};
@@ -467,38 +478,106 @@ async function cargarConfiguracionGlobal() {
     } catch (err) {
         _configHojaFallo = true;
         console.error("Error cargando config:", err);
+    } finally {
+        _configCargando = false;
+        pintarAvisoConfigRemota_();
     }
+}
+
+function ajustesNubeCiudadesCargando_() {
+    return typeof logCiudadesHayCarga_ === "function" && logCiudadesHayCarga_();
+}
+
+function ajustesNubeEspera_() {
+    const que = [];
+    if (_configCargando || (!_configHojaOk && !_configHojaFallo)) que.push("configuración");
+    if (_tarifasHojaCargando || (!_tarifasHojaLista && !_tarifasHojaFallo)) que.push("tarifas");
+    if (_arancelesHojaCargando || (!_arancelesHojaLista && !_arancelesHojaFallo)) que.push("aranceles");
+    if (ajustesNubeCiudadesCargando_()) que.push("ciudades");
+    return que;
+}
+
+function ajustesNubeFalloMensaje_() {
+    if (_configHojaFallo) {
+        const partida = /45000|40000|partida|Unterminated/i.test(_configHojaMensaje || "");
+        return partida
+            ? "La configuración de la nube quedó partida al guardarla. Lo de esta ventana puede ser la copia del sitio, no la hoja. No pulses Guardar: la reemplazaría. Pega backend.gs, publica la misma implementación y pulsa Reintentar."
+            : "No se pudo leer la configuración de la empresa. Lo que aparece aquí puede ser la copia del sitio, no la hoja global. Guardar está apagado para no reemplazarla.";
+    }
+    if (_tarifasHojaFallo) return "No se pudieron leer las tarifas logísticas. Guardar está apagado para no reemplazar esa hoja con lo que hay en pantalla.";
+    if (_arancelesHojaFallo) return "No se pudieron leer los aranceles. Guardar está apagado para no reemplazar esa hoja con una lista vacía o a medias.";
+    return "";
+}
+
+function ajustesNubeListo_() {
+    return _configHojaOk && !_configHojaFallo && !_configCargando
+        && _tarifasHojaLista && !_tarifasHojaCargando && !_tarifasHojaFallo
+        && _arancelesHojaLista && !_arancelesHojaCargando && !_arancelesHojaFallo
+        && !ajustesNubeCiudadesCargando_();
+}
+
+function ajustesNubeBotonGuardar_() {
+    const btn = document.getElementById("btnGuardarAjustes");
+    const nota = document.getElementById("notaAjustesGlobal");
+    const fallo = ajustesNubeFalloMensaje_();
+    const listo = ajustesNubeListo_();
+    const espera = ajustesNubeEspera_();
+    if (btn) {
+        btn.disabled = !listo;
+        btn.title = listo
+            ? "Guarda estos ajustes para toda la empresa."
+            : (fallo
+                ? "Se activa cuando la hoja responda. Guardar ahora reemplazaría datos que no se pudieron leer."
+                : (espera.length
+                    ? "Espera a que termine de cargar: " + espera.join(", ") + ". Guardar antes reemplazaría la nube con una copia a medias."
+                    : "Se activa cuando la hoja responda."));
+    }
+    if (nota && !fallo) {
+        nota.textContent = espera.length
+            ? "Guardar se activa cuando terminen de cargar: " + espera.join(", ") + "."
+            : "Los cambios aplican a toda la empresa.";
+    }
+}
+
+function ajustesNubeTrasSesion_() {
+    if (!_tarifasHojaLista && !_tarifasHojaCargando && typeof logTarTraerHoja_ === "function") logTarTraerHoja_();
+    if (typeof logCiudadesEmpujarLocal_ === "function") logCiudadesEmpujarLocal_();
 }
 
 function pintarAvisoConfigRemota_() {
     const aviso = document.getElementById("avisoConfigRemota");
-    const btn = document.getElementById("btnGuardarAjustes");
     const nota = document.getElementById("notaAjustesGlobal");
-    if (!_configHojaFallo) {
+    const fallo = ajustesNubeFalloMensaje_();
+    if (!fallo) {
         if (aviso) { aviso.classList.add("d-none"); aviso.innerHTML = ""; }
-        if (btn) { btn.disabled = false; btn.title = "Guarda estos ajustes para toda la empresa."; }
-        if (nota) nota.textContent = "Los cambios aplican a toda la empresa.";
+        if (nota) {
+            const espera = ajustesNubeEspera_();
+            nota.textContent = espera.length
+                ? "Guardar se activa cuando terminen de cargar: " + espera.join(", ") + "."
+                : "Los cambios aplican a toda la empresa.";
+        }
+        ajustesNubeBotonGuardar_();
         return;
     }
     if (aviso) {
         aviso.classList.remove("d-none");
-        const partida = /45000|40000|partida|Unterminated/i.test(_configHojaMensaje || "");
-        const texto = partida
-            ? "La configuración de la nube quedó partida al guardarla. Lo de esta ventana puede ser la copia del sitio, no la hoja. No pulses Guardar: la reemplazaría. Pega backend.gs, publica la misma implementación y pulsa Reintentar."
-            : "No se pudo leer la configuración de la empresa. Lo que aparece aquí puede ser la copia del sitio, no la hoja global. Guardar está apagado para no reemplazarla.";
-        aviso.innerHTML = texto + " <button type=\"button\" class=\"btn admin-btn btn-sm ms-1\" onclick=\"reintentarConfigAjustes()\">Reintentar</button>";
+        aviso.innerHTML = fallo + " <button type=\"button\" class=\"btn admin-btn btn-sm ms-1\" onclick=\"reintentarConfigAjustes()\">Reintentar</button>";
     }
-    if (btn) { btn.disabled = true; btn.title = "Se activa cuando la hoja responda."; }
     if (nota) nota.textContent = "Sin lectura de la hoja no se puede guardar.";
+    ajustesNubeBotonGuardar_();
 }
 
 async function reintentarConfigAjustes() {
     const aviso = document.getElementById("avisoConfigRemota");
     const btn = document.getElementById("btnGuardarAjustes");
+    _arancelesHojaLista = false;
+    _arancelesHojaFallo = false;
+    _arancelesHojaCargando = true;
     if (aviso) aviso.textContent = "Leyendo la configuración de la empresa…";
     if (btn) btn.disabled = true;
     await cargarConfiguracionGlobal();
     pintarFormularioAjustes_();
+    if (typeof refrescarEstadoAranceles === "function") await refrescarEstadoAranceles();
     pintarAvisoConfigRemota_();
     if (!_configHojaFallo && typeof mostrarNotificacion === "function") {
         mostrarNotificacion("Configuración de la empresa cargada.", "success");
@@ -551,6 +630,7 @@ function adminNavCostosInit_() {
 function abrirModalAdmin() {
     if(!CONFIG_GLOBAL) return;
     adminNavCostosInit_();
+    if (!_arancelesHojaLista && !_arancelesHojaCargando) _arancelesHojaCargando = true;
     pintarFormularioAjustes_();
     pintarAvisoConfigRemota_();
     if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
@@ -718,7 +798,16 @@ async function sincronizarCatalogoMaestroUI() {
 
 async function refrescarEstadoAranceles() {
     const box = document.getElementById("arancelesEstadoBox");
-    if (!box || typeof realizarPeticionBD !== "function") return;
+    _arancelesHojaCargando = true;
+    _arancelesHojaLista = false;
+    _arancelesHojaFallo = false;
+    if (typeof ajustesNubeBotonGuardar_ === "function") ajustesNubeBotonGuardar_();
+    if (!box || typeof realizarPeticionBD !== "function") {
+        _arancelesHojaCargando = false;
+        _arancelesHojaFallo = true;
+        if (typeof pintarAvisoConfigRemota_ === "function") pintarAvisoConfigRemota_();
+        return;
+    }
     try {
         const data = await realizarPeticionBD({ action: "aranceles_estado" });
         if (!data.exito) throw new Error(data.mensaje || "Sin respuesta");
@@ -732,10 +821,15 @@ async function refrescarEstadoAranceles() {
         }
         await pintarTablaAranceles();
     } catch (e) {
+        _arancelesHojaFallo = true;
+        _arancelesHojaLista = false;
         box.className = "admin-banner is-warn mb-3";
         box.innerText = /Acci[oó]n no v[aá]lida/i.test(e.message || "")
             ? "El web app publicado todavía no tiene esta sync. Pega backend.gs y publica una versión nueva."
             : ("No se pudo leer aranceles. " + (e.message || ""));
+    } finally {
+        _arancelesHojaCargando = false;
+        if (typeof pintarAvisoConfigRemota_ === "function") pintarAvisoConfigRemota_();
     }
 }
 
@@ -796,7 +890,12 @@ function arancelesMemoriaDesdeUi_() {
 function pintarTablaAranceles() {
     const body = document.getElementById("arancelesBody");
     if (!body || typeof realizarPeticionBD !== "function") return;
-    if (body.getAttribute("data-cargada") === "1" && document.activeElement && body.contains(document.activeElement)) return;
+    if (body.getAttribute("data-cargada") === "1" && document.activeElement && body.contains(document.activeElement)) {
+        _arancelesHojaLista = true;
+        _arancelesHojaFallo = false;
+        return;
+    }
+    body.removeAttribute("data-cargada");
     if (!body._arClick) {
         body._arClick = true;
         body.addEventListener("click", function (ev) {
@@ -812,7 +911,15 @@ function pintarTablaAranceles() {
         body.addEventListener("change", arancelesMemoriaDesdeUi_);
     }
     return realizarPeticionBD({ action: "aranceles_consultar" }).then(function (data) {
-        const filas = (data && data.exito && data.data && data.data.filas) || [];
+        if (!data || !data.exito || !data.data || !Array.isArray(data.data.filas)) {
+            _arancelesHojaLista = false;
+            _arancelesHojaFallo = true;
+            body.innerHTML = "<tr><td colspan=\"8\">No se pudo leer la hoja Aranceles.</td></tr>";
+            return;
+        }
+        const filas = data.data.filas;
+        _arancelesHojaLista = true;
+        _arancelesHojaFallo = false;
         body.setAttribute("data-cargada", "1");
         body.innerHTML = filas.length
             ? filas.map(htmlFilaArancel_).join("")
@@ -823,6 +930,8 @@ function pintarTablaAranceles() {
         }
         if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
     }).catch(function () {
+        _arancelesHojaLista = false;
+        _arancelesHojaFallo = true;
         body.innerHTML = "<tr><td colspan=\"8\">No se pudo leer la hoja Aranceles.</td></tr>";
     });
 }
@@ -830,6 +939,10 @@ function pintarTablaAranceles() {
 function agregarFilaArancelUI() {
     const body = document.getElementById("arancelesBody");
     if (!body) return;
+    if (!_arancelesHojaLista) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Espera a que los aranceles terminen de cargar. Agregar antes reemplazaría la hoja.", "info");
+        return;
+    }
     body.setAttribute("data-cargada", "1");
     const vacio = body.querySelector("td[colspan]");
     if (vacio) body.innerHTML = "";
@@ -839,6 +952,7 @@ function agregarFilaArancelUI() {
 }
 
 async function guardarArancelesConAjustes_() {
+    if (!_arancelesHojaLista) return true;
     const filas = leerArancelesUI();
     if (!filas) return true;
     const email = localStorage.getItem("smartbudget_email");
@@ -952,12 +1066,29 @@ function logTarHayFilas_(o) {
 }
 
 async function logTarTraerHoja_() {
-    if (!localStorage.getItem("smartbudget_token") || typeof realizarPeticionBD !== "function") return;
+    _tarifasHojaLista = false;
+    _tarifasHojaFallo = false;
+    if (!localStorage.getItem("smartbudget_token") || typeof realizarPeticionBD !== "function") {
+        _tarifasHojaCargando = false;
+        if (typeof ajustesNubeBotonGuardar_ === "function") ajustesNubeBotonGuardar_();
+        return;
+    }
+    _tarifasHojaCargando = true;
+    if (typeof ajustesNubeBotonGuardar_ === "function") ajustesNubeBotonGuardar_();
     try {
         const r = await realizarPeticionBD({ action: "tarifas_consultar" }, { timeoutMs: 30000 });
-        if (!r || !r.exito || !logTarHayFilas_(r.data)) return;
-        logTarCargar_(r.data);
-    } catch (e) {}
+        if (!r || !r.exito || !r.data) {
+            _tarifasHojaFallo = true;
+            return;
+        }
+        _tarifasHojaLista = true;
+        if (logTarHayFilas_(r.data) || (Array.isArray(r.data.lugares) && r.data.lugares.length)) logTarCargar_(r.data);
+    } catch (e) {
+        _tarifasHojaFallo = true;
+    } finally {
+        _tarifasHojaCargando = false;
+        if (typeof pintarAvisoConfigRemota_ === "function") pintarAvisoConfigRemota_();
+    }
 }
 
 function logTarCargar_(raw) {
@@ -2614,9 +2745,14 @@ function tycInsertarVar(k) {
 }
 
 async function guardarConfiguracion() {
-    if (_configHojaFallo) {
+    if (typeof ajustesNubeListo_ === "function" && !ajustesNubeListo_()) {
         pintarAvisoConfigRemota_();
-        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se guardó: no se pudo leer la configuración de la empresa.", "danger");
+        if (typeof mostrarNotificacion === "function") {
+            const espera = ajustesNubeEspera_();
+            mostrarNotificacion(espera.length
+                ? "No se guardó. Todavía cargan: " + espera.join(", ") + "."
+                : "No se guardó: no se pudo leer la configuración de la empresa.", "danger");
+        }
         return;
     }
     const email = localStorage.getItem('smartbudget_email');

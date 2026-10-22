@@ -1007,6 +1007,7 @@ async function logCargarPaises_() {
 function logCiudadesEstadoPoner_(clase, texto) {
     logCiudadesEstado_ = { clase: clase || "is-info", texto: texto || "" };
     if (window.logTarTab === "ciudades" && typeof logCiudadesPintar_ === "function") logCiudadesPintar_();
+    else if (typeof logCiudadesBotonGuardar_ === "function") logCiudadesBotonGuardar_();
 }
 
 function logCiudadesAppClave_(pais, nombre) {
@@ -1187,16 +1188,13 @@ function logCiudadesCargandoPais_(pais) {
     return !!(k && logCiudadesAsegurando_[k] === 1);
 }
 
-/** Guardar queda apagado mientras el país elegido todavía no llegó de la hoja. */
+function logCiudadesHayCarga_() {
+    return Object.keys(logCiudadesAsegurando_).some(function (k) { return logCiudadesAsegurando_[k] === 1; });
+}
+
+/** Guardar lo decide el conjunto de ajustes en la nube, no solo esta pestaña. */
 function logCiudadesBotonGuardar_() {
-    const btn = document.getElementById("btnGuardarAjustes");
-    if (!btn || (typeof _configHojaFallo !== "undefined" && _configHojaFallo)) return;
-    const pais = (document.getElementById("logCiudadesPais") || {}).value || "";
-    const cargando = window.logTarTab === "ciudades" && !!pais && logCiudadesCargandoPais_(pais);
-    btn.disabled = !!cargando;
-    btn.title = cargando
-        ? "Espera a que termine el listado de este país. Guardar o editar antes reemplazaría sus ciudades con la lista a medias."
-        : "Guarda estos ajustes para toda la empresa.";
+    if (typeof ajustesNubeBotonGuardar_ === "function") ajustesNubeBotonGuardar_();
 }
 
 async function logCiudadesPublicarPais_(pais) {

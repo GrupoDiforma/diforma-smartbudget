@@ -27,7 +27,7 @@
         <div class="d-flex align-items-center gap-2">
           <button type="button" class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirCatalogoConsulta()"><i class="bi bi-book me-1"></i>Catálogo</button>
           <button class="btn btn-outline-secondary btn-sm bg-white" onclick="abrirModalAdmin()"><i class="bi bi-gear me-1"></i>Ajustes</button>
-          <span class="app-version" id="appVersionBadge" title="Versión de la app: V2.0, V2.1 … V2.9, V3.0">V2.2</span>
+          <span class="app-version" id="appVersionBadge" title="Versión de la app: V2.0, V2.1 … V2.9, V3.0">V2.3</span>
         </div>
       </div>
       
@@ -1421,7 +1421,7 @@
         <div class="modal-footer sb-modal-footer">
           <span class="small text-muted me-auto" id="notaAjustesGlobal">Los cambios aplican a toda la empresa.</span>
           <button type="button" class="btn admin-btn" data-bs-dismiss="modal">Cerrar</button>
-          <button type="button" class="btn admin-btn admin-btn-primary" id="btnGuardarAjustes" onclick="guardarConfiguracion()">Guardar</button>
+          <button type="button" class="btn admin-btn admin-btn-primary" id="btnGuardarAjustes" onclick="guardarConfiguracion()" disabled title="Espera a que terminen de cargar los ajustes de la nube.">Guardar</button>
         </div>
       </div>
     </div>
@@ -1440,13 +1440,13 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.69"></script>
-    <script src="seguridad.js?v=1.0.25"></script>
+  <script src="admin.js?v=1.0.71"></script>
+    <script src="seguridad.js?v=1.0.26"></script>
     <script src="app.js?v=1.0.53"></script>
   <script src="engine.js?v=1.0.39"></script>
   <script src="connectors.js?v=1.0.41"></script>
   <script src="ia-core.js?v=1.0.42"></script>
   <script src="export-excel.js?v=1.0.32"></script>
-  <script src="logistica.js?v=1.0.136"></script>
+  <script src="logistica.js?v=1.0.138"></script>
 </body>
 </html>
