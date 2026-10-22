@@ -631,6 +631,11 @@ function odooPaisId_(pais, codigo) {
   if (codigo) rows = odooSearchRead_("res.country", [["code", "=", codigo]], ["id", "name", "code"], 1, 0, "") || [];
   if (!rows.length && pais) rows = odooSearchRead_("res.country", [["name", "=", pais]], ["id", "name", "code"], 1, 0, "") || [];
   if (!rows.length && pais) rows = odooSearchRead_("res.country", [["name", "ilike", pais]], ["id", "name", "code"], 5, 0, "") || [];
+  if (!rows.length && pais) {
+    /* El nombre puede venir en el otro idioma: se resuelve el ISO y se busca por código. */
+    var codResuelto = paisCodigo_(pais);
+    if (codResuelto) rows = odooSearchRead_("res.country", [["code", "=", codResuelto]], ["id", "name", "code"], 1, 0, "") || [];
+  }
   return rows.length ? rows[0].id : 0;
 }
 
@@ -655,6 +660,60 @@ function ciudadesNorm_(s) {
   return String(s || "").toLowerCase()
     .replace(/á/g, "a").replace(/é/g, "e").replace(/í/g, "i").replace(/ó/g, "o").replace(/ú/g, "u").replace(/ñ/g, "n")
     .replace(/\s+/g, " ").trim();
+}
+
+/** País (ES o EN) → ISO, solo donde los nombres no coinciden ya normalizados.
+ * Sin esto, la hoja Ciudades comparaba el texto exacto: «United States» no
+ * encontraba las ciudades guardadas como «Estados Unidos», y al reemplazar
+ * quedaban las dos grafías como países distintos. */
+function paisCodigo_(s) {
+  var t = ciudadesNorm_(s);
+  if (!t) return "";
+  if (/^[a-z]{2}$/.test(t)) return t.toUpperCase();
+  var map = {
+    "estados unidos": "US", "united states": "US", "united states of america": "US", "usa": "US", "eeuu": "US",
+    "espana": "ES", "spain": "ES", "alemania": "DE", "germany": "DE", "francia": "FR", "france": "FR",
+    "italia": "IT", "italy": "IT", "paises bajos": "NL", "netherlands": "NL", "holland": "NL",
+    "reino unido": "GB", "united kingdom": "GB", "great britain": "GB", "uk": "GB",
+    "belgica": "BE", "belgium": "BE", "suiza": "CH", "switzerland": "CH",
+    "irlanda": "IE", "ireland": "IE", "islandia": "IS", "iceland": "IS",
+    "dinamarca": "DK", "denmark": "DK", "noruega": "NO", "norway": "NO",
+    "suecia": "SE", "sweden": "SE", "finlandia": "FI", "finland": "FI",
+    "grecia": "GR", "greece": "GR", "polonia": "PL", "poland": "PL",
+    "chequia": "CZ", "czechia": "CZ", "czech republic": "CZ",
+    "eslovaquia": "SK", "slovakia": "SK", "eslovenia": "SI", "slovenia": "SI",
+    "croacia": "HR", "croatia": "HR", "hungria": "HU", "hungary": "HU",
+    "rumania": "RO", "romania": "RO", "bulgaria": "BG",
+    "lituania": "LT", "lithuania": "LT", "letonia": "LV", "latvia": "LV",
+    "estonia": "EE", "bielorrusia": "BY", "belarus": "BY",
+    "ucrania": "UA", "ukraine": "UA", "rusia": "RU", "russia": "RU",
+    "turquia": "TR", "turkey": "TR", "chipre": "CY", "cyprus": "CY",
+    "brasil": "BR", "brazil": "BR", "belice": "BZ", "belize": "BZ",
+    "granada": "GD", "grenada": "GD", "antigua y barbuda": "AG", "antigua and barbuda": "AG",
+    "santa lucia": "LC", "saint lucia": "LC", "guayana francesa": "GF", "french guiana": "GF",
+    "martinica": "MQ", "martinique": "MQ", "curazao": "CW",
+    "japon": "JP", "japan": "JP", "corea del sur": "KR", "south korea": "KR",
+    "corea del norte": "KP", "north korea": "KP", "tailandia": "TH", "thailand": "TH",
+    "singapur": "SG", "singapore": "SG", "malasia": "MY", "malaysia": "MY",
+    "filipinas": "PH", "philippines": "PH", "camboya": "KH", "cambodia": "KH",
+    "banglades": "BD", "bangladesh": "BD", "arabia saudi": "SA", "saudi arabia": "SA",
+    "emiratos arabes unidos": "AE", "united arab emirates": "AE",
+    "jordania": "JO", "jordan": "JO", "libano": "LB", "lebanon": "LB",
+    "irak": "IQ", "iraq": "IQ", "kazajistan": "KZ", "kazakhstan": "KZ",
+    "marruecos": "MA", "morocco": "MA", "argelia": "DZ", "algeria": "DZ",
+    "tunez": "TN", "tunisia": "TN", "libia": "LY", "libya": "LY",
+    "egipto": "EG", "egypt": "EG", "sudafrica": "ZA", "south africa": "ZA",
+    "kenia": "KE", "kenya": "KE", "etiopia": "ET", "ethiopia": "ET",
+    "nueva zelanda": "NZ", "new zealand": "NZ", "fiyi": "FJ", "fiji": "FJ"
+  };
+  return map[t] || "";
+}
+
+function mismoPais_(a, b) {
+  var ca = paisCodigo_(a);
+  var cb = paisCodigo_(b);
+  if (ca && cb) return ca === cb;
+  return ciudadesNorm_(a) === ciudadesNorm_(b);
 }
 
 function obtenerHojaCiudades_() {
@@ -688,8 +747,7 @@ function ciudadesConsultar(params) {
     var pais = String((params && params.pais) || "").trim();
     var todas = ciudadesLeerHoja_();
     if (!pais) return { exito: true, data: todas };
-    var n = ciudadesNorm_(pais);
-    return { exito: true, data: todas.filter(function (x) { return ciudadesNorm_(x.pais) === n; }) };
+    return { exito: true, data: todas.filter(function (x) { return mismoPais_(x.pais, pais); }) };
   } catch (e) {
     return { exito: false, mensaje: String(e.message || e) };
   }
@@ -704,10 +762,9 @@ function ciudadesReemplazar(params, email) {
     if (!filas.length) return { exito: false, mensaje: "No hay ciudades para guardar." };
     var sheet = obtenerHojaCiudades_();
     var data = sheet.getDataRange().getValues();
-    var n = ciudadesNorm_(pais);
     var quedan = [["id", "nombre", "pais", "uso"]];
     for (var i = 1; i < data.length; i++) {
-      if (ciudadesNorm_(data[i][2]) === n) continue;
+      if (mismoPais_(data[i][2], pais)) continue;
       if (!String(data[i][1] || "").trim()) continue;
       quedan.push([data[i][0], data[i][1], data[i][2], data[i][3]]);
     }
@@ -3523,6 +3580,8 @@ function colTextoArancel_(line, re) {
 }
 
 function codigoPaisArancel_(pais) {
+  var resuelto = paisCodigo_(pais);
+  if (resuelto) return resuelto;
   var t = txtArancel_(pais);
   var map = {
     "usa": "US", "eeuu": "US", "estados unidos": "US", "united states": "US",

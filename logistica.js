@@ -887,6 +887,41 @@ const LOG_PAISES_ = [
     ["Costa Rica", "CR"], ["Guatemala", "GT"], ["República Dominicana", "DO"], ["Dominican Republic", "DO"],
     ["Trinidad y Tobago", "TT"], ["Trinidad and Tobago", "TT"]
 ];
+/** Nombre en inglés → ISO, solo donde el inglés no coincide con el español ya
+ * normalizado (sin tildes). Odoo, una cotización vieja o una tarifa escrita a
+ * mano pueden traer el país en inglés; sin esto, Alemania/Francia/Brasil y
+ * otros no resolvían código y las tarifas, ciudades y aranceles no casaban. */
+const LOG_PAISES_EN_ = {
+    "united states": "US", "united states of america": "US", "america": "US",
+    "united kingdom": "GB", "great britain": "GB",
+    "spain": "ES", "germany": "DE", "france": "FR", "italy": "IT",
+    "portuguese republic": "PT", "netherlands": "NL", "holland": "NL", "the netherlands": "NL",
+    "belgium": "BE", "switzerland": "CH", "luxembourg": "LU",
+    "ireland": "IE", "iceland": "IS", "denmark": "DK", "norway": "NO",
+    "sweden": "SE", "finland": "FI", "greece": "GR", "poland": "PL",
+    "czechia": "CZ", "czech republic": "CZ", "slovakia": "SK", "slovenia": "SI",
+    "croatia": "HR", "hungary": "HU", "romania": "RO", "bulgaria": "BG",
+    "lithuania": "LT", "latvia": "LV", "estonia": "EE", "belarus": "BY",
+    "ukraine": "UA", "russia": "RU", "russian federation": "RU",
+    "turkey": "TR", "turkiye": "TR", "cyprus": "CY",
+    "brazil": "BR", "belize": "BZ", "grenada": "GD",
+    "antigua and barbuda": "AG", "saint lucia": "LC", "st lucia": "LC",
+    "saint vincent and the grenadines": "VC", "french guiana": "GF",
+    "martinique": "MQ", "curacao": "CW",
+    "japan": "JP", "south korea": "KR", "korea": "KR", "north korea": "KP",
+    "taiwan": "TW", "thailand": "TH", "singapore": "SG", "malaysia": "MY",
+    "philippines": "PH", "cambodia": "KH", "myanmar": "MM", "burma": "MM",
+    "bangladesh": "BD", "pakistan": "PK", "saudi arabia": "SA",
+    "united arab emirates": "AE", "uae": "AE", "qatar": "QA", "oman": "OM",
+    "jordan": "JO", "lebanon": "LB", "iraq": "IQ",
+    "kazakhstan": "KZ", "uzbekistan": "UZ", "kyrgyzstan": "KG",
+    "tajikistan": "TJ", "turkmenistan": "TM",
+    "morocco": "MA", "algeria": "DZ", "tunisia": "TN", "libya": "LY",
+    "egypt": "EG", "south africa": "ZA", "kenya": "KE", "ethiopia": "ET",
+    "ivory coast": "CI", "cote d ivoire": "CI", "cape verde": "CV",
+    "mauritius": "MU", "mozambique": "MZ",
+    "new zealand": "NZ", "fiji": "FJ", "papua new guinea": "PG"
+};
 /** Catálogo completo (nombre en español y código ISO). Odoo lo reemplaza cuando el backend ya tiene odoo_paises. */
 const LOG_PAISES_ISO_ = "AF:Afganistán|AL:Albania|DE:Alemania|AD:Andorra|AO:Angola|AI:Anguila|AG:Antigua y Barbuda|SA:Arabia Saudí|DZ:Argelia|AR:Argentina|AM:Armenia|AW:Aruba|AU:Australia|AT:Austria|AZ:Azerbaiyán|BS:Bahamas|BD:Bangladés|BB:Barbados|BH:Baréin|BE:Bélgica|BZ:Belice|BJ:Benín|BM:Bermudas|BY:Bielorrusia|BO:Bolivia|BQ:Bonaire, San Eustaquio y Saba|BA:Bosnia y Herzegovina|BW:Botsuana|BR:Brasil|BN:Brunéi|BG:Bulgaria|BF:Burkina Faso|BI:Burundi|BT:Bután|CV:Cabo Verde|KH:Camboya|CM:Camerún|CA:Canadá|QA:Catar|TD:Chad|CZ:Chequia|CL:Chile|CN:China|CY:Chipre|VA:Ciudad del Vaticano|CO:Colombia|KM:Comoras|CG:Congo|KP:Corea del Norte|KR:Corea del Sur|CR:Costa Rica|CI:Costa de Marfil|HR:Croacia|CU:Cuba|CW:Curazao|DK:Dinamarca|DM:Dominica|EC:Ecuador|EG:Egipto|SV:El Salvador|AE:Emiratos Árabes Unidos|ER:Eritrea|SK:Eslovaquia|SI:Eslovenia|ES:España|US:Estados Unidos|EE:Estonia|SZ:Esuatini|ET:Etiopía|PH:Filipinas|FI:Finlandia|FJ:Fiyi|FR:Francia|GA:Gabón|GM:Gambia|GE:Georgia|GH:Ghana|GI:Gibraltar|GD:Granada|GR:Grecia|GL:Groenlandia|GP:Guadalupe|GU:Guam|GT:Guatemala|GF:Guayana Francesa|GG:Guernsey|GN:Guinea|GQ:Guinea Ecuatorial|GW:Guinea-Bisáu|GY:Guyana|HT:Haití|HN:Honduras|HK:Hong Kong|HU:Hungría|IN:India|ID:Indonesia|IQ:Irak|IR:Irán|IE:Irlanda|IS:Islandia|KY:Islas Caimán|CC:Islas Cocos|CK:Islas Cook|FO:Islas Feroe|FK:Islas Malvinas|MP:Islas Marianas del Norte|MH:Islas Marshall|PN:Islas Pitcairn|SB:Islas Salomón|TC:Islas Turcas y Caicos|VG:Islas Vírgenes Británicas|VI:Islas Vírgenes de los Estados Unidos|AX:Islas Åland|IL:Israel|IT:Italia|JM:Jamaica|JP:Japón|JE:Jersey|JO:Jordania|KZ:Kazajistán|KE:Kenia|KG:Kirguistán|KI:Kiribati|XK:Kosovo|KW:Kuwait|LA:Laos|LS:Lesoto|LV:Letonia|LB:Líbano|LR:Liberia|LY:Libia|LI:Liechtenstein|LT:Lituania|LU:Luxemburgo|MO:Macao|MK:Macedonia del Norte|MG:Madagascar|MY:Malasia|MW:Malaui|MV:Maldivas|ML:Malí|MT:Malta|MA:Marruecos|MQ:Martinica|MU:Mauricio|MR:Mauritania|YT:Mayotte|MX:México|FM:Micronesia|MD:Moldavia|MC:Mónaco|MN:Mongolia|ME:Montenegro|MS:Montserrat|MZ:Mozambique|MM:Myanmar|NA:Namibia|NR:Nauru|NP:Nepal|NI:Nicaragua|NE:Níger|NG:Nigeria|NU:Niue|NO:Noruega|NC:Nueva Caledonia|NZ:Nueva Zelanda|OM:Omán|NL:Países Bajos|PK:Pakistán|PW:Palaos|PS:Palestina|PA:Panamá|PG:Papúa Nueva Guinea|PY:Paraguay|PE:Perú|PF:Polinesia Francesa|PL:Polonia|PT:Portugal|PR:Puerto Rico|GB:Reino Unido|CF:República Centroafricana|CD:República Democrática del Congo|DO:República Dominicana|RE:Reunión|RW:Ruanda|RO:Rumanía|RU:Rusia|EH:Sáhara Occidental|WS:Samoa|AS:Samoa Americana|BL:San Bartolomé|KN:San Cristóbal y Nieves|SM:San Marino|MF:San Martín|SX:Sint Maarten|PM:San Pedro y Miquelón|VC:San Vicente y las Granadinas|SH:Santa Elena|LC:Santa Lucía|ST:Santo Tomé y Príncipe|SN:Senegal|RS:Serbia|SC:Seychelles|SL:Sierra Leona|SG:Singapur|SY:Siria|SO:Somalia|LK:Sri Lanka|ZA:Sudáfrica|SD:Sudán|SS:Sudán del Sur|SE:Suecia|CH:Suiza|SR:Surinam|SJ:Svalbard y Jan Mayen|TH:Tailandia|TW:Taiwán|TZ:Tanzania|TJ:Tayikistán|IO:Territorio Británico del Océano Índico|TL:Timor Oriental|TG:Togo|TK:Tokelau|TO:Tonga|TT:Trinidad y Tobago|TN:Túnez|TM:Turkmenistán|TR:Turquía|TV:Tuvalu|UA:Ucrania|UG:Uganda|UY:Uruguay|UZ:Uzbekistán|VU:Vanuatu|VE:Venezuela|VN:Vietnam|WF:Wallis y Futuna|YE:Yemen|DJ:Yibuti|ZM:Zambia|ZW:Zimbabue";
 
@@ -1008,12 +1043,23 @@ function logPaisesFuente_() {
 }
 
 function logEnvCodigoDePais_(pais) {
-    const p = String(pais || "").trim().toLowerCase();
+    const p = logTarNorm_(pais);
     if (!p) return "";
-    const hit = logPaisesFuente_().find(function (x) { return String(x.nombre).toLowerCase() === p; });
+    if (/^[a-z]{2}$/.test(p)) {
+        const porCod = logPaisesFuente_().find(function (x) { return x.codigo === p.toUpperCase(); });
+        if (porCod) return porCod.codigo;
+    }
+    const hit = logPaisesFuente_().find(function (x) { return logTarNorm_(x.nombre) === p; });
     if (hit) return hit.codigo;
-    const alias = LOG_PAISES_.find(function (x) { return x[0].toLowerCase() === p; });
+    if (LOG_PAISES_EN_[p]) return LOG_PAISES_EN_[p];
+    const alias = LOG_PAISES_.find(function (x) { return logTarNorm_(x[0]) === p; });
     return alias ? alias[1] : "";
+}
+
+/** Clave de país para diccionarios: el ISO si se resuelve (el idioma del
+ * nombre deja de importar), si no el nombre normalizado. */
+function logPaisClave_(pais) {
+    return logTarCodigoPais_(pais) || logTarNorm_(pais);
 }
 
 function logPaisDeCodigo_(cod) {
@@ -1086,7 +1132,9 @@ function logCiudadesEstadoPoner_(clase, texto) {
 }
 
 function logCiudadesAppClave_(pais, nombre) {
-    return logTarNorm_(pais) + "|" + logTarNorm_(nombre);
+    /* Por ISO: la misma ciudad bajo «Estados Unidos» y «United States»
+       es una sola, no dos entradas en la lista local. */
+    return logPaisClave_(pais) + "|" + logTarNorm_(nombre);
 }
 
 function logCiudadesAppLeer_() {
@@ -1259,7 +1307,7 @@ function logCiudadesTomar_(lista, pais, desdeHoja) {
 }
 
 function logCiudadesCargandoPais_(pais) {
-    const k = logTarNorm_(String(pais || "").trim());
+    const k = logPaisClave_(String(pais || "").trim());
     return !!(k && logCiudadesAsegurando_[k] === 1);
 }
 
@@ -1276,7 +1324,7 @@ async function logCiudadesPublicarPais_(pais) {
     if (!pais || typeof realizarPeticionBD !== "function") return null;
     if (!localStorage.getItem("smartbudget_token")) return null;
     if (!(typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl)) return null;
-    const k = logTarNorm_(pais);
+    const k = logPaisClave_(pais);
     /* Reemplazar el país en la hoja con una lista a medias borra las ciudades que todavía no llegaron. */
     if (!k || !logCiudadesHojaLista_[k]) {
         if (k) logCiudadesPublicarPend_[k] = pais;
@@ -1305,11 +1353,11 @@ async function logCiudadesEmpujarLocal_() {
         if (!r || !r.exito || !Array.isArray(r.data)) return;
         logCiudadesTomar_(r.data, "", true);
         r.data.forEach(function (x) {
-            const kk = logTarNorm_(x.pais);
+            const kk = logPaisClave_(x.pais);
             if (kk) logCiudadesHojaLista_[kk] = true;
         });
         logCiudadesApp_.forEach(function (x) {
-            const kk = logTarNorm_(x.pais);
+            const kk = logPaisClave_(x.pais);
             if (kk) logCiudadesHojaLista_[kk] = true;
         });
         const enHoja = {};
@@ -1329,7 +1377,7 @@ async function logCiudadesEmpujarLocal_() {
 
 async function logCiudadesAsegurarPais_(pais) {
     const p = String(pais || "").trim();
-    const k = logTarNorm_(p);
+    const k = logPaisClave_(p);
     if (!k || logCiudadesAsegurando_[k]) return;
     logCiudadesAsegurando_[k] = 1;
     logCiudadesBotonGuardar_();
@@ -1940,6 +1988,8 @@ function logAplicarAranceles_() {
     const alias = { US: ["usa", "eeuu", "estados unidos", "united states"], PR: ["puerto rico"], MX: ["mexico"], GB: ["reino unido", "uk"] };
     const filasPais = logAranceles.filas.filter(function (r) {
         if (cod && String(r.codigo || "").toUpperCase() === cod) return true;
+        /* La fila puede no traer código y nombrar el país en el otro idioma. */
+        if (cod && logEnvCodigoDePais_(r.pais) === cod) return true;
         const n = logArancelNorm_(r.pais);
         if (pais && n === pais) return true;
         const lista = cod && alias[cod];
@@ -6196,8 +6246,25 @@ function logTarMismoPais_(a, b) {
 
 function logCiudadesDePais_(pais) {
     const deCat = logCiudadesParaPais_(pais);
-    if (deCat.length) return deCat;
-    return logCiudadesTarifa_(pais);
+    const out = deCat.length ? deCat.slice() : logCiudadesTarifa_(pais);
+    /* En marítimo el destino suele nombrarse por su puerto (Everglades = Port
+       Everglades): si ese puerto está registrado para el país, también es una
+       ciudad de destino válida. Sin esto, una cotización guardada con esa
+       ciudad se veía en el select pero el Análisis la rechazaba. */
+    let mod = "";
+    try { mod = String((logEnv_() || {}).modalidad || ""); } catch (e) { mod = ""; }
+    if (mod === "fcl" || mod === "lcl") {
+        const vistos = {};
+        out.forEach(function (c) { vistos[logTarNorm_(c)] = 1; });
+        logPuertosTarifa_(pais).forEach(function (p) {
+            const k = logTarNorm_(p);
+            if (!k || vistos[k]) return;
+            vistos[k] = 1;
+            out.push(p);
+        });
+        out.sort(function (a, b) { return a.localeCompare(b, "es"); });
+    }
+    return out;
 }
 
 function logPintarSelectPuerto_(actual, pais) {
@@ -6311,9 +6378,10 @@ function logFaltasAnalisis_() {
     if (exterior && inc !== "EXW") {
         const ciudad = String(e.destinoCiudad || "").trim();
         const ciudades = logCiudadesDePais_(e.destinoPais);
-        if (!ciudades.length) faltas.push({ id: "logDestCiudad", msg: "No hay ciudades en Ajustes → Logística para este país. Agrega la tarifa y elige la ciudad." });
+        const esMarF = e.modalidad === "fcl" || e.modalidad === "lcl";
+        if (!ciudades.length) faltas.push({ id: "logDestCiudad", msg: esMarF ? "No hay ciudades ni puertos en Ajustes → Logística para este país. Agrega la tarifa y elige la ciudad." : "No hay ciudades en Ajustes → Logística para este país. Agrega la tarifa y elige la ciudad." });
         else if (!ciudad) faltas.push({ id: "logDestCiudad", msg: "Elige la ciudad de destino. La lista sale de Ajustes → Logística." });
-        else if (!logEnListaTarifa_(ciudad, ciudades)) faltas.push({ id: "logDestCiudad", msg: "Esa ciudad no está en las tarifas de este país. Elige una de la lista." });
+        else if (!logEnListaTarifa_(ciudad, ciudades)) faltas.push({ id: "logDestCiudad", msg: esMarF ? "Esa ciudad no está en las ciudades ni en los puertos de este país. Elige una de la lista o regístrala en Ajustes → Logística → Ciudades." : "Esa ciudad no está en las tarifas de este país. Elige una de la lista." });
         if (!String(e.destinoPais || "").trim()) faltas.push({ id: "logDestPais", msg: "Falta el país de destino." });
     }
     const mar = e.modalidad === "fcl" || e.modalidad === "lcl";
@@ -7749,7 +7817,7 @@ function logTarNormalizarCarta_(raw, meta) {
 
 function logTarDestinoDeRuta_(pais, ciudad, mod) {
     return ((window.logTarifas && window.logTarifas.destino) || []).filter(function (f) {
-        return String(f.modalidad || "") === mod && logTarNorm_(f.pais) === logTarNorm_(pais) && logTarNorm_(f.ciudad) === logTarNorm_(ciudad);
+        return String(f.modalidad || "") === mod && logTarMismoPais_(pais, f.pais) && logTarNorm_(f.ciudad) === logTarNorm_(ciudad);
     });
 }
 
@@ -7811,7 +7879,7 @@ function logTarDestinoAplicarCarta_(pais, ciudad, mod, cruce) {
     t.destino = t.destino.filter(function (f) { return !quitar[f.id]; });
     const vistos = {};
     t.destino = t.destino.filter(function (f) {
-        if (logTarNorm_(f.pais) !== logTarNorm_(pais) || logTarNorm_(f.ciudad) !== logTarNorm_(ciudad) || String(f.modalidad || "") !== mod) return true;
+        if (!logTarMismoPais_(pais, f.pais) || logTarNorm_(f.ciudad) !== logTarNorm_(ciudad) || String(f.modalidad || "") !== mod) return true;
         const clave = logTarConceptoClave_(f.concepto);
         if (vistos[clave]) return false;
         vistos[clave] = 1;
