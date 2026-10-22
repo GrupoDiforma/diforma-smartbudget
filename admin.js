@@ -9,6 +9,11 @@ var _tarifasHojaFallo = false;
 var _arancelesHojaLista = false;
 var _arancelesHojaCargando = false;
 var _arancelesHojaFallo = false;
+var _usuariosAdmin = [];
+var _usuariosRescate = [];
+var _usuariosHojaLista = false;
+var _usuariosHojaCargando = false;
+var _usuariosHojaFallo = false;
 var _umsDesdeMaestro = [];
 var UMS_MATRIZ_MIN = ["UND", "m2", "Juego"];
 var UMS_CATALOGO_BASE = ["Unidades", "UND", "Metros", "kg", "Hojas", "m2", "Litros", "Juego", "LAMINA", "ROLLO", "Rollox50mts", "—"];
@@ -493,6 +498,7 @@ function ajustesNubeEspera_() {
     if (_configCargando || (!_configHojaOk && !_configHojaFallo)) que.push("configuración");
     if (_tarifasHojaCargando || (!_tarifasHojaLista && !_tarifasHojaFallo)) que.push("tarifas");
     if (_arancelesHojaCargando || (!_arancelesHojaLista && !_arancelesHojaFallo)) que.push("aranceles");
+    if (_usuariosHojaCargando || (!_usuariosHojaLista && !_usuariosHojaFallo)) que.push("usuarios");
     if (ajustesNubeCiudadesCargando_()) que.push("ciudades");
     return que;
 }
@@ -506,6 +512,7 @@ function ajustesNubeFalloMensaje_() {
     }
     if (_tarifasHojaFallo) return "No se pudieron leer las tarifas logísticas. Guardar está apagado para no reemplazar esa hoja con lo que hay en pantalla.";
     if (_arancelesHojaFallo) return "No se pudieron leer los aranceles. Guardar está apagado para no reemplazar esa hoja con una lista vacía o a medias.";
+    if (_usuariosHojaFallo) return "No se pudieron leer los usuarios administradores. Guardar está apagado para no reemplazar esa lista. Pega backend.gs, publica versión nueva de la misma implementación y pulsa Reintentar.";
     return "";
 }
 
@@ -513,6 +520,7 @@ function ajustesNubeListo_() {
     return _configHojaOk && !_configHojaFallo && !_configCargando
         && _tarifasHojaLista && !_tarifasHojaCargando && !_tarifasHojaFallo
         && _arancelesHojaLista && !_arancelesHojaCargando && !_arancelesHojaFallo
+        && _usuariosHojaLista && !_usuariosHojaCargando && !_usuariosHojaFallo
         && !ajustesNubeCiudadesCargando_();
 }
 
@@ -573,11 +581,14 @@ async function reintentarConfigAjustes() {
     _arancelesHojaLista = false;
     _arancelesHojaFallo = false;
     _arancelesHojaCargando = true;
+    _usuariosHojaLista = false;
+    _usuariosHojaFallo = false;
     if (aviso) aviso.textContent = "Leyendo la configuración de la empresa…";
     if (btn) btn.disabled = true;
     await cargarConfiguracionGlobal();
     pintarFormularioAjustes_();
     if (typeof refrescarEstadoAranceles === "function") await refrescarEstadoAranceles();
+    if (typeof cargarUsuariosAdmin_ === "function") await cargarUsuariosAdmin_();
     pintarAvisoConfigRemota_();
     if (!_configHojaFallo && typeof mostrarNotificacion === "function") {
         mostrarNotificacion("Configuración de la empresa cargada.", "success");
@@ -643,6 +654,7 @@ function abrirModalAdmin() {
     if (vistaLog === "costos") vistaLog = "origen";
     logAjustesVista(vistaLog);
     if (typeof cargarTablaCatalogo === "function") cargarTablaCatalogo();
+    if (typeof cargarUsuariosAdmin_ === "function") cargarUsuariosAdmin_();
     if (typeof window.refrescarEstadoPlantillaExcel === "function") window.refrescarEstadoPlantillaExcel();
 }
 
@@ -667,6 +679,7 @@ function pintarFormularioAjustes_() {
     setVal('cfgGeminiUsdOut', d.geminiUsdPor1MOut != null ? d.geminiUsdPor1MOut : 10);
     setVal('cfgGeminiUsdInFlash', d.geminiUsdPor1MInFlash != null ? d.geminiUsdPor1MInFlash : 0.30);
     setVal('cfgGeminiUsdOutFlash', d.geminiUsdPor1MOutFlash != null ? d.geminiUsdPor1MOutFlash : 2.50);
+    if (typeof pintarEstadoCalibracionGemini_ === "function") pintarEstadoCalibracionGemini_();
     setVal('cfgComisiones', typeof d.comisiones === 'string' ? d.comisiones : JSON.stringify(d.comisiones || []));
     
     if(d.operativos) {
@@ -966,6 +979,184 @@ async function guardarArancelesConAjustes_() {
         logAranceles.pedido = true;
     }
     return true;
+}
+
+function usuarioNorm_(v) {
+    return String(v || "").trim().toLowerCase();
+}
+
+function pintarUsuariosAdmin_() {
+    const tbody = document.getElementById("usuariosBody");
+    const estado = document.getElementById("usuariosEstadoBox");
+    const yo = usuarioNorm_(localStorage.getItem("smartbudget_email"));
+    if (estado) {
+        estado.className = "admin-banner mb-3 " + (_usuariosHojaFallo ? "is-warn" : "is-info");
+        estado.textContent = _usuariosHojaCargando
+            ? "Leyendo la hoja Usuarios…"
+            : (_usuariosHojaFallo
+                ? "No se pudo leer la hoja Usuarios. Publica backend.gs (versión nueva de la misma implementación) y pulsa Reintentar."
+                : (_usuariosAdmin.length + " administrador" + (_usuariosAdmin.length === 1 ? "" : "es") + ". Se guarda con el botón Guardar de Ajustes."));
+    }
+    if (!tbody) return;
+    if (!tbody._usClick) {
+        tbody._usClick = true;
+        tbody.addEventListener("click", function (ev) {
+            const btn = ev.target.closest("[data-us=\"quitar\"]");
+            if (btn) quitarUsuarioAdminUI(btn.getAttribute("data-email"));
+        });
+    }
+    if (_usuariosHojaFallo) {
+        tbody.innerHTML = "<tr><td colspan=\"3\" class=\"text-muted\">No se pudo leer la lista de administradores.</td></tr>";
+        return;
+    }
+    if (!_usuariosHojaLista && !_usuariosAdmin.length) {
+        tbody.innerHTML = "<tr><td colspan=\"3\" class=\"text-muted\">Cargando…</td></tr>";
+        return;
+    }
+    tbody.innerHTML = _usuariosAdmin.length ? _usuariosAdmin.map(function (u) {
+        const email = usuarioNorm_(typeof u === "string" ? u : u.email);
+        const rescate = _usuariosRescate.indexOf(email) !== -1;
+        const soyYo = email === yo;
+        const fijo = rescate || soyYo;
+        const motivo = rescate
+            ? "Administrador de rescate: no se puede quitar desde aquí."
+            : "No puedes quitarte a ti mismo.";
+        return "<tr><td>" + escHtml(email) + (soyYo ? " <span class=\"text-muted\">(tú)</span>" : "") + "</td>" +
+            "<td><span class=\"badge text-bg-danger\">Administrador</span>" + (rescate ? " <span class=\"badge text-bg-secondary\">Rescate</span>" : "") + "</td>" +
+            "<td><button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-us=\"quitar\" data-email=\"" + escHtml(email) + "\" title=\"" + (fijo ? escHtml(motivo) : "Quitar") + "\"" + (fijo ? " disabled" : "") + "><i class=\"bi bi-trash\"></i></button></td></tr>";
+    }).join("") : "<tr><td colspan=\"3\" class=\"text-muted\">Sin administradores. Agrega al menos uno.</td></tr>";
+}
+
+async function cargarUsuariosAdmin_() {
+    if (_usuariosHojaLista || _usuariosHojaCargando) return;
+    _usuariosHojaCargando = true;
+    pintarUsuariosAdmin_();
+    if (typeof ajustesNubeBotonGuardar_ === "function") ajustesNubeBotonGuardar_();
+    try {
+        const email = localStorage.getItem("smartbudget_email");
+        const data = await realizarPeticionBD({ action: "usuarios_consultar", email: email });
+        if (!data || !data.exito || !data.data || !Array.isArray(data.data.filas)) {
+            throw new Error((data && data.mensaje) || "No se pudo leer la hoja Usuarios.");
+        }
+        _usuariosAdmin = data.data.filas.map(function (f) {
+            return typeof f === "string" ? { email: usuarioNorm_(f) } : { email: usuarioNorm_(f && f.email), actualizado: (f && f.actualizado) || "", actualizadoPor: (f && f.actualizadoPor) || "" };
+        }).filter(function (f) { return f.email; });
+        _usuariosRescate = (data.data.rescate || []).map(usuarioNorm_).filter(Boolean);
+        _usuariosHojaLista = true;
+        _usuariosHojaFallo = false;
+    } catch (e) {
+        _usuariosHojaLista = false;
+        _usuariosHojaFallo = true;
+    } finally {
+        _usuariosHojaCargando = false;
+        pintarUsuariosAdmin_();
+        pintarAvisoConfigRemota_();
+    }
+}
+
+function agregarUsuarioAdminUI() {
+    if (!_usuariosHojaLista) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Espera a que la lista de usuarios termine de cargar.", "info");
+        return;
+    }
+    const input = document.getElementById("usuarioNuevoEmail");
+    const email = usuarioNorm_(input && input.value);
+    if (!/^[^\s@]+@grupodiforma\.com$/.test(email)) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Solo correos @grupodiforma.com.", "danger");
+        if (input) input.focus();
+        return;
+    }
+    if (_usuariosAdmin.some(function (u) { return usuarioNorm_(typeof u === "string" ? u : u.email) === email; })) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Ese correo ya es administrador.", "warning");
+        if (input) { input.value = ""; input.focus(); }
+        return;
+    }
+    _usuariosAdmin.push({ email: email, actualizado: "", actualizadoPor: "" });
+    if (input) { input.value = ""; input.focus(); }
+    pintarUsuariosAdmin_();
+}
+
+function quitarUsuarioAdminUI(email) {
+    email = usuarioNorm_(email);
+    const yo = usuarioNorm_(localStorage.getItem("smartbudget_email"));
+    if (_usuariosRescate.indexOf(email) !== -1) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Es un administrador de rescate: no se puede quitar desde aquí.", "warning");
+        return;
+    }
+    if (email === yo) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No puedes quitarte a ti mismo de administradores.", "warning");
+        return;
+    }
+    if (_usuariosAdmin.length <= 1) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("La lista no puede quedar vacía.", "warning");
+        return;
+    }
+    _usuariosAdmin = _usuariosAdmin.filter(function (u) { return usuarioNorm_(typeof u === "string" ? u : u.email) !== email; });
+    pintarUsuariosAdmin_();
+}
+
+async function guardarUsuariosConAjustes_() {
+    if (!_usuariosHojaLista) return true;
+    const email = localStorage.getItem("smartbudget_email");
+    const filas = _usuariosAdmin.map(function (u) { return usuarioNorm_(typeof u === "string" ? u : u.email); }).filter(Boolean);
+    const data = await realizarPeticionBD({ action: "usuarios_reemplazar", email: email, filas: filas }, { timeoutMs: 60000 });
+    if (!data || !data.exito) throw new Error((data && data.mensaje) || "No se guardaron los usuarios.");
+    return true;
+}
+
+function fmtCopAdmin_(n) {
+    return "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+}
+
+function pintarEstadoCalibracionGemini_() {
+    const el = document.getElementById("geminiCalibracionEstado");
+    if (!el) return;
+    const cal = CONFIG_GLOBAL && CONFIG_GLOBAL.geminiCalibracion;
+    const ahora = new Date();
+    const periodo = ahora.getFullYear() + "-" + String(ahora.getMonth() + 1).padStart(2, "0");
+    if (cal && String(cal.periodo || "") === periodo) {
+        el.innerHTML = "Calibrado el <strong>" + escHtml(String(cal.fecha || "")) + "</strong>: Google marcaba gasto " + fmtCopAdmin_(cal.gastoCop) + " y saldo " + fmtCopAdmin_(cal.saldoCop) + ". Desde ahí la app descuenta su consumo estimado. Si la consola de Google ya avanzó, escribe el saldo nuevo y vuelve a calibrar.";
+    } else if (cal) {
+        el.textContent = "La calibración de " + String(cal.periodo || "ese mes") + " ya venció (Google restablece el límite cada mes). Escribe el saldo actual de Google y pulsa Calibrar ahora.";
+    } else {
+        el.textContent = "Sin calibrar este mes. Escribe el saldo exacto que muestra Google (límite mensual menos lo gastado) y pulsa Calibrar ahora: desde ese instante la app descuenta su propio consumo sobre ese saldo. Calibrar actúa al momento, no espera el Guardar de Ajustes. La calibración vence al cambiar de mes.";
+    }
+}
+
+async function calibrarGeminiUI() {
+    const input = document.getElementById("cfgGeminiSaldoReal");
+    const btn = document.getElementById("btnCalibrarGemini");
+    const saldo = input ? parseFloat(input.value) : NaN;
+    if (!isFinite(saldo) || saldo < 0) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Escribe el saldo que te resta según Google (COP).", "danger");
+        if (input) input.focus();
+        return;
+    }
+    const email = localStorage.getItem("smartbudget_email");
+    const original = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = "<span class=\"spinner-border spinner-border-sm me-1\"></span>Calibrando…"; }
+    try {
+        const data = await realizarPeticionBD({ action: "gemini_calibrar", email: email, saldoCop: saldo });
+        if (!data || !data.exito) throw new Error((data && data.mensaje) || "No se pudo calibrar.");
+        if (data.data && data.data.calibracion) {
+            CONFIG_GLOBAL = CONFIG_GLOBAL || {};
+            CONFIG_GLOBAL.geminiCalibracion = Object.assign({}, data.data.calibracion, { periodo: data.data.periodo });
+        }
+        if (input) input.value = "";
+        pintarEstadoCalibracionGemini_();
+        if (typeof mostrarNotificacion === "function") {
+            const resta = data.data && data.data.saldoCop != null ? data.data.saldoCop : saldo;
+            mostrarNotificacion("Contador calibrado con Google. Te restan " + fmtCopAdmin_(resta) + " y desde ahora se descuenta el consumo de la app.", "success");
+        }
+        if (typeof window.refrescarUsoGemini === "function") await window.refrescarUsoGemini();
+    } catch (e) {
+        const m = /Acci[oó]n no v[aá]lida/i.test(e.message || "")
+            ? "No se pudo calibrar: publica backend.gs (versión nueva de la misma implementación) y vuelve a intentarlo."
+            : ("Calibración: " + (e.message || "sin respuesta."));
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(m, "danger");
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
 }
 
 async function activarCronArancelesUI() {
@@ -2811,6 +3002,13 @@ async function guardarConfiguracion() {
             const m = /Acci[oó]n no v[aá]lida/i.test(eAr.message || "")
                 ? "Los aranceles no se guardaron: publica backend.gs (versión nueva de la misma implementación) y vuelve a pulsar Guardar."
                 : ("Aranceles: " + eAr.message);
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion(m, "danger");
+        }
+        try { await guardarUsuariosConAjustes_(); }
+        catch (eUs) {
+            const m = /Acci[oó]n no v[aá]lida/i.test(eUs.message || "")
+                ? "Los usuarios no se guardaron: publica backend.gs (versión nueva de la misma implementación) y vuelve a pulsar Guardar."
+                : ("Usuarios: " + eUs.message);
             if (typeof mostrarNotificacion === "function") mostrarNotificacion(m, "danger");
         }
         const res = await fetch(data.gasUrl || CONFIG_GLOBAL.gasUrl, { method: 'POST', body: cuerpo });

@@ -863,7 +863,7 @@ function pintarUsoGemini(uso) {
     if (wrap) {
         wrap.classList.remove("ok", "warn", "crit");
         wrap.classList.add(agotado || pct >= 95 ? "crit" : (pct >= 80 ? "warn" : "ok"));
-        wrap.title = "Consumo Gemini de toda la empresa este mes: ~" + fmtCop(cop) + (cupoCop ? " de " + fmtCop(cupoCop) : "") + " (" + pct + "%), " + (uso.llamadas || 0) + " llamadas, " + fmtTokens(uso.tokensTotal) + " tokens. Clic para el detalle por día, módulo y modelo. Google no publica el saldo real.";
+        wrap.title = "Consumo Gemini de toda la empresa este mes: ~" + fmtCop(cop) + (cupoCop ? " de " + fmtCop(cupoCop) : "") + " (" + pct + "%), " + (uso.llamadas || 0) + " llamadas, " + fmtTokens(uso.tokensTotal) + " tokens." + (uso.saldoCop != null ? " Te restan " + fmtCop(uso.saldoCop) + (uso.calibrado ? " (sincronizado con Google)" : " (estimado, sin calibrar)") + "." : "") + " Clic para el detalle por día, módulo y modelo.";
     }
     if (txt) {
         if (agotado) txt.textContent = "Sin crédito";
@@ -908,6 +908,14 @@ function pintarDetalleUsoGemini_(uso) {
     h += "<div class='col-6 col-md-3'><div class='border rounded p-2'><div class='text-muted' style='font-size:0.7rem;'>LLAMADAS DEL MES</div><div class='fw-bold'>" + (uso.llamadas || 0) + "</div><div class='small text-muted'>Último modelo: " + String(uso.ultimoModelo || "—") + "</div></div></div>";
     h += "<div class='col-6 col-md-3'><div class='border rounded p-2'><div class='text-muted' style='font-size:0.7rem;'>TOKENS DEL MES</div><div class='fw-bold'>" + fmtTokens(uso.tokensTotal) + "</div><div class='small text-muted'>In " + fmtTokens(uso.tokensIn) + " · Out " + fmtTokens(uso.tokensOut) + "</div></div></div>";
     h += "</div>";
+    const saldoUso = uso.saldoCop != null ? Number(uso.saldoCop) : (cupoCop > 0 ? cupoCop - cop : null);
+    if (saldoUso != null) {
+        if (uso.calibrado && uso.calibracion) {
+            h += "<div class='border rounded p-2 mt-2 small' style='background:#f0fdf4;'>Sincronizado con Google el <strong>" + String(uso.calibracion.fecha || "") + "</strong>: al calibrar restaban <strong>" + fmtCop(uso.calibracion.saldoCop) + "</strong> · consumo de la app desde entonces: <strong>" + fmtCop(uso.costoDesdeCalibracionCop || 0) + "</strong> · <strong>te restan " + fmtCop(saldoUso) + "</strong>.</div>";
+        } else {
+            h += "<div class='border rounded p-2 mt-2 small text-muted'>Saldo estimado (sin calibrar): te restan <strong>" + fmtCop(saldoUso) + "</strong>. Para sincronizarlo con Google: Ajustes → Prompts IA → Presupuesto Gemini → Calibrar ahora.</div>";
+        }
+    }
     h += tablaUsoHtml_("Por módulo (mes)", porModulo, trm, "Sin detalle por módulo todavía: llega con la próxima llamada tras publicar el backend nuevo.");
     h += tablaUsoHtml_("Por modelo (mes)", uso.porModelo || [], trm, "Sin detalle por modelo todavía.");
     h += tablaUsoHtml_("Últimos días", dias, trm, "Sin uso registrado en los últimos días.");

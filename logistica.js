@@ -6454,9 +6454,10 @@ function logisticaPintarEscEnv_() {
     if (cubWrap) cubWrap.classList.add("d-none");
     if (tabs) {
         tabs.classList.remove("d-none");
-        tabs.innerHTML = "<span class=\"small text-muted me-1\">Editando costos de:</span>" + escs.map(function (x, i) {
-            return "<button type=\"button\" class=\"btn btn-sm " + (x.id === logEnvEscSel_ ? "btn-primary" : "btn-outline-primary") + " me-1\" data-envesc=\"" + logEsc_(x.id) + "\">" + logEsc_(logEscNombre_(x, i, idioma)) + "</button>";
-        }).join("");
+        tabs.innerHTML = "<span class=\"small text-muted d-block mb-1\">Editando costos de:</span>" +
+            "<div class=\"d-flex flex-wrap align-items-center gap-1\">" + escs.map(function (x, i) {
+                return "<button type=\"button\" class=\"btn btn-sm " + (x.id === logEnvEscSel_ ? "btn-primary" : "btn-outline-primary") + "\" data-envesc=\"" + logEsc_(x.id) + "\">" + logEsc_(logEscNombre_(x, i, idioma)) + "</button>";
+            }).join("") + "</div>";
     }
     if (!box) return;
     if (document.activeElement && box.contains(document.activeElement)) return;
@@ -6546,26 +6547,16 @@ function logAplicarPaisCliente_() {
 function logEnvSumaValor_() {
     const e = logEnv_();
     if (!e || e.activo === false) return null;
-    if (logEscList_().length) return null; /* con escenarios cada opción tiene su total en la hoja */
     const idioma = (typeof logisticaLeerOpciones_ === "function" ? logisticaLeerOpciones_().idioma : "es");
-    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
-    const k = escs.length ? escs[0].id : "";
-    let s = 0;
-    let alguna = false;
-    (e.lineas || []).forEach(function (ln) {
-        if (ln.valor != null && isFinite(Number(ln.valor))) {
-            s += Number(ln.valor);
-            alguna = true;
-            return;
-        }
-        if ((ln.tipo === "duties" || ln.tipo === "taxes") && ln.pct != null && isFinite(Number(ln.pct))) {
-            const b = logEnvBasePct_(ln, logBaseLogistica_(idioma, k));
-            if (b == null) return;
-            s += b * Number(ln.pct) / 100;
-            alguna = true;
-        }
-    });
-    return alguna ? s : null;
+    const escs = logEscList_();
+    const escId = escs.length
+        ? (escs.some(function (x) { return x.id === logEnvEscSel_; }) ? logEnvEscSel_ : escs[0].id)
+        : "";
+    /* Total con margen incluido: logEnvSuma_ aplica el margen de cada línea
+       (Duties y Taxes no llevan) y, con escenarios, usa los valores de la
+       opción que se está editando. Es el total que sale en la hoja. */
+    const total = logEnvSuma_(logBaseLogistica_(idioma, escId), escId);
+    return total > 0 ? total : null;
 }
 
 function logPintarEnvSuma_() {
@@ -6578,25 +6569,36 @@ function logPintarEnvSuma_() {
         return;
     }
     const idioma = logisticaLeerOpciones_().idioma;
+    const esEn = idioma === "en";
     const mon = (logQuote && logQuote.moneda) || "USD";
     const nd = mon === "COP" ? 0 : 2;
+    const escs = logEscList_();
+    const escId = escs.length
+        ? (escs.some(function (x) { return x.id === logEnvEscSel_; }) ? logEnvEscSel_ : escs[0].id)
+        : "";
     const partes = logTotalesPartes_(idioma);
-    const pcts = Object.keys(partes.gran || {}).map(function (k) {
-        const g = Number(partes.gran[k]) || 0;
-        if (!(g > 0)) return null;
-        return Math.round(suma / g * 1000) / 10;
-    }).filter(function (n) { return n != null; });
+    const gran = Number((partes.gran || {})[escId]) || 0;
     const fmtPct = function (n) {
         const s = n.toFixed(1);
-        return idioma === "en" ? s : s.replace(".", ",");
+        return esEn ? s : s.replace(".", ",");
     };
-    let pctTxt = "";
-    if (pcts.length === 1) pctTxt = fmtPct(pcts[0]) + "% del gran total";
-    else if (pcts.length > 1) pctTxt = pcts.map(fmtPct).join(" / ") + "% del gran total";
+    let lab = esEn ? "Logistics total" : "Total logística";
+    if (escs.length) {
+        const i = escs.findIndex(function (x) { return x.id === escId; });
+        lab += " · " + logEscNombre_(escs[i], i, idioma);
+    }
+    const e = logEnv_();
+    const margenTxt = logEsCotizacionExterior_()
+        ? (esEn ? "margin " : "margen ") + fmtPct(Number(e.margenPct) || 0) + "% " + (esEn ? "incl." : "incl.")
+        : (esEn ? "margin incl." : "margen incl.");
+    let pctTxt = margenTxt;
+    if (gran > 0) {
+        pctTxt += " · " + fmtPct(suma / gran * 100) + (esEn ? "% of grand total" : "% del gran total");
+    }
     el.hidden = false;
-    el.innerHTML = "<span class=\"log-env-suma-lab\">Total</span>" +
+    el.innerHTML = "<span class=\"log-env-suma-lab\">" + logEsc_(lab) + "</span>" +
         "<span class=\"log-env-suma-val\">" + logFmtMoneda_(suma, idioma, nd) + " " + logEsc_(mon) + "</span>" +
-        "<span class=\"log-env-suma-pct\">" + logEsc_(pctTxt.replace(/^ · /, "")) + "</span>";
+        "<span class=\"log-env-suma-pct\">" + logEsc_(pctTxt) + "</span>";
 }
 
 function logisticaPintarEnv_(forzar) {

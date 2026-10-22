@@ -878,7 +878,7 @@
         <div class="modal-header sb-modal-header">
           <div>
             <h5 class="modal-title"><i class="bi bi-stars me-1"></i>Uso de Gemini — toda la empresa</h5>
-            <p class="sb-modal-sub mb-0">Estimado interno de SmartBudget. Google no publica el saldo en vivo; el gasto real es el de Google AI Studio.</p>
+            <p class="sb-modal-sub mb-0">Estimado interno de SmartBudget. Al calibrarlo en Ajustes, el saldo arranca del dato exacto de Google y desde ahí descuenta el consumo de la app.</p>
           </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
@@ -919,6 +919,7 @@
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-membrete" type="button">Membrete</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-tyc" type="button">Términos</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-credenciales" type="button">Conexiones</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-usuarios" type="button">Usuarios</button></li>
           </ul>
           <ul class="nav admin-nav admin-nav-sub" id="adminNavCostos" role="tablist">
             <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#panel-catalogo" type="button">Catálogo maestro</button></li>
@@ -1222,6 +1223,18 @@
                     <div class="col-md-3 admin-field"><label>USD / 1M salida · Flash</label><input type="number" id="cfgGeminiUsdOutFlash" class="form-control" min="0" step="0.01" value="2.50"></div>
                     <div class="col-md-3 admin-field"><label>Tope tokens (respaldo)</label><input type="number" id="cfgGeminiCupo" class="form-control" min="100000" step="100000" value="2000000"></div>
                   </div>
+                  <div class="row g-3 mt-1 pt-3 border-top">
+                    <div class="col-md-4 admin-field">
+                      <label>Saldo que te resta según Google (COP)</label>
+                      <input type="number" id="cfgGeminiSaldoReal" class="form-control" min="0" step="0.01" placeholder="Ej: 10108.58">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                      <button type="button" class="btn admin-btn admin-btn-primary" id="btnCalibrarGemini" onclick="calibrarGeminiUI()"><i class="bi bi-crosshair me-1"></i>Calibrar ahora</button>
+                    </div>
+                    <div class="col-md-5 d-flex align-items-end">
+                      <p class="small text-muted mb-0" id="geminiCalibracionEstado">Sin calibrar este mes. Escribe el saldo exacto que muestra Google (límite mensual menos lo gastado) y pulsa Calibrar ahora: desde ese instante la app descuenta su propio consumo sobre ese saldo. Calibrar actúa al momento, no espera el Guardar de Ajustes. La calibración vence al cambiar de mes.</p>
+                    </div>
+                  </div>
                 </div>
               </section>
               <section class="admin-card">
@@ -1444,6 +1457,30 @@
                 </div>
               </section>
             </div>
+            <div class="tab-pane fade admin-stack" id="panel-usuarios">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Usuarios</h3>
+                    <p class="admin-card-desc">A la app entra todo correo @grupodiforma.com. Solo los de esta lista son administradores: ven el botón Ajustes y pueden guardar cambios para toda la empresa. Quien no está aquí entra como usuario estándar.</p>
+                  </div>
+                </header>
+                <div class="admin-card-body">
+                  <div id="usuariosEstadoBox" class="admin-banner is-info mb-3">Abre esta pestaña para ver los administradores.</div>
+                  <div class="admin-actions mb-3">
+                    <input type="email" id="usuarioNuevoEmail" class="form-control form-control-sm" placeholder="nombre@grupodiforma.com" style="max-width:320px;" onkeydown="if(event.key==='Enter'){event.preventDefault();agregarUsuarioAdminUI();}">
+                    <button type="button" class="btn admin-btn" onclick="agregarUsuarioAdminUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+                  </div>
+                  <p class="small text-muted mb-0">Agregar y quitar se aplican con el botón <strong>Guardar</strong> de Ajustes. El servidor aplica el cambio al instante; el botón Ajustes aparece o desaparece en el próximo ingreso con OTP de esa persona. No puedes quitarte a ti mismo ni dejar la lista vacía. Los administradores de rescate no se pueden quitar desde aquí.</p>
+                </div>
+                <div class="admin-card-table">
+                  <table class="table admin-table align-middle mb-0">
+                    <thead><tr><th>Correo</th><th style="width:190px;">Rol</th><th style="width:44px;"></th></tr></thead>
+                    <tbody id="usuariosBody"><tr><td colspan="3" class="text-muted">Cargando…</td></tr></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
           </div>
         </div>
         <div class="modal-footer sb-modal-footer">
@@ -1468,13 +1505,13 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.72"></script>
+  <script src="admin.js?v=1.0.75"></script>
     <script src="seguridad.js?v=1.0.26"></script>
     <script src="app.js?v=1.0.54"></script>
   <script src="engine.js?v=1.0.40"></script>
   <script src="connectors.js?v=1.0.41"></script>
-  <script src="ia-core.js?v=1.0.43"></script>
+  <script src="ia-core.js?v=1.0.44"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.144"></script>
+  <script src="logistica.js?v=1.0.146"></script>
 </body>
 </html>

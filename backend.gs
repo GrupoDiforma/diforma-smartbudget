@@ -9,9 +9,10 @@
  */
 var CORPORATE_TOKEN = "Diforma_SmartBudget_2026_Secure_Key";
 
-// ⚠️ LISTA BLANCA DE ADMINISTRADORES (correos en minúsculas)
+// Administradores de rescate: solo se usan si la hoja Usuarios está vacía o no
+// se puede leer, para que nadie quede bloqueado fuera de Ajustes. La lista que
+// manda es la hoja Usuarios (Ajustes → Usuarios en la app).
 var ADMIN_EMAILS = [
-  "tu_correo@grupodiforma.com",
   "edwin.laverde@grupodiforma.com"
 ];
 
@@ -60,6 +61,7 @@ function doPost(e) {
     else if (action === "gemini_analizar") result = proxyGeminiAnalizar(params);
     else if (action === "gemini_chat") result = proxyGeminiChat(params);
     else if (action === "gemini_uso") result = obtenerUsoGemini();
+    else if (action === "gemini_calibrar") result = calibrarUsoGemini(params, params.email);
     else if (action === "catalogo_drive") result = obtenerCatalogoMaestro();
     else if (action === "catalogo_maestro") result = obtenerCatalogoMaestro();
     else if (action === "catalogo_estado") result = estadoCatalogoMaestro();
@@ -81,6 +83,8 @@ function doPost(e) {
     else if (action === "aranceles_duplicar") result = duplicarFilaArancel(params, params.email);
     else if (action === "aranceles_activar_cron") result = asegurarTriggerAranceles(params.email);
     else if (action === "aranceles_desactivar_cron") result = desactivarTriggerAranceles(params.email);
+    else if (action === "usuarios_consultar") result = usuariosConsultar(params.email);
+    else if (action === "usuarios_reemplazar") result = usuariosReemplazar(params, params.email);
 
     return outputJSON(result);
   } catch (err) {
@@ -105,10 +109,136 @@ function verificarOTP(email, otp_ingresado) {
   var otp_guardado = CacheService.getScriptCache().get("OTP_" + email);
   if (otp_guardado && otp_guardado === String(otp_ingresado)) {
     CacheService.getScriptCache().remove("OTP_" + email);
-    var rol = ADMIN_EMAILS.indexOf(email.toLowerCase()) !== -1 ? "ADMIN" : "USER";
-    return {exito: true, token: CORPORATE_TOKEN, rol: rol, email: email.toLowerCase()};
+    var rol = esAdmin_(email) ? "ADMIN" : "USER";
+    return {exito: true, token: CORPORATE_TOKEN, rol: rol, email: String(email || "").toLowerCase()};
   }
   return {exito: false, mensaje: "Código incorrecto o ha expirado."};
+}
+
+// --- USUARIOS ADMINISTRADORES (hoja Usuarios, una fila por correo) ---
+// A la app entra todo @grupodiforma.com; estar en esta lista solo da rol ADMIN
+// (ver Ajustes). La lista se edita en Ajustes → Usuarios y se guarda con el
+// botón Guardar de Ajustes. ADMIN_EMAILS queda como rescate si la hoja está
+// vacía o no se puede leer.
+var _adminsCache_ = null;
+
+function correoNorm_(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function esCorreoDiforma_(email) {
+  return /^[^\s@]+@grupodiforma\.com$/.test(correoNorm_(email));
+}
+
+function administradoresRescate_() {
+  var out = [];
+  ADMIN_EMAILS.forEach(function (e) {
+    var n = correoNorm_(e);
+    if (esCorreoDiforma_(n) && out.indexOf(n) === -1) out.push(n);
+  });
+  return out;
+}
+
+function obtenerHojaUsuarios_(crear) {
+  var ss = libroHistorico_();
+  var sheet = ss.getSheetByName("Usuarios");
+  if (!sheet && crear) {
+    sheet = ss.insertSheet("Usuarios");
+    sheet.appendRow(["Email", "Rol", "Actualizado", "Actualizado_Por"]);
+    var fecha = ahoraBogota_();
+    administradoresRescate_().forEach(function (e) {
+      sheet.appendRow([e, "ADMIN", fecha, "sistema"]);
+    });
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function usuariosLeerFilas_() {
+  try {
+    var sheet = obtenerHojaUsuarios_(false);
+    if (!sheet || sheet.getLastRow() < 2) return [];
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+    var out = [];
+    var vistos = {};
+    for (var i = 0; i < data.length; i++) {
+      var email = correoNorm_(data[i][0]);
+      var rol = String(data[i][1] || "ADMIN").trim().toUpperCase();
+      if (!esCorreoDiforma_(email) || (rol && rol !== "ADMIN") || vistos[email]) continue;
+      vistos[email] = 1;
+      out.push({
+        email: email,
+        actualizado: data[i][2] == null ? "" : String(data[i][2]),
+        actualizadoPor: correoNorm_(data[i][3])
+      });
+    }
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+
+function administradoresLista_() {
+  if (_adminsCache_) return _adminsCache_.slice();
+  var lista = usuariosLeerFilas_().map(function (f) { return f.email; });
+  administradoresRescate_().forEach(function (e) {
+    if (lista.indexOf(e) === -1) lista.push(e);
+  });
+  _adminsCache_ = lista;
+  return lista.slice();
+}
+
+function esAdmin_(email) {
+  return administradoresLista_().indexOf(correoNorm_(email)) !== -1;
+}
+
+function usuariosConsultar(email) {
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Permisos insuficientes." };
+  try {
+    obtenerHojaUsuarios_(true);
+    var filas = usuariosLeerFilas_();
+    var tienen = {};
+    filas.forEach(function (f) { tienen[f.email] = 1; });
+    administradoresRescate_().forEach(function (e) {
+      if (!tienen[e]) filas.push({ email: e, actualizado: "", actualizadoPor: "" });
+    });
+    return { exito: true, data: { filas: filas, rescate: administradoresRescate_() } };
+  } catch (e) {
+    return { exito: false, mensaje: String(e.message || e) };
+  }
+}
+
+function usuariosReemplazar(params, email) {
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Permisos insuficientes." };
+  try {
+    var crudas = (params && params.filas) || [];
+    var filas = [];
+    var vistos = {};
+    for (var i = 0; i < crudas.length; i++) {
+      var n = correoNorm_(typeof crudas[i] === "string" ? crudas[i] : (crudas[i] && crudas[i].email));
+      if (!n) continue;
+      if (!esCorreoDiforma_(n)) return { exito: false, mensaje: "Solo correos @grupodiforma.com: " + n };
+      if (vistos[n]) continue;
+      vistos[n] = 1;
+      filas.push(n);
+    }
+    if (!filas.length) return { exito: false, mensaje: "La lista de administradores no puede quedar vacía." };
+    if (filas.indexOf(correoNorm_(email)) === -1) {
+      return { exito: false, mensaje: "No puedes quitarte a ti mismo de administradores." };
+    }
+    var sheet = obtenerHojaUsuarios_(true);
+    var fecha = ahoraBogota_();
+    var quien = correoNorm_(email);
+    var valores = [["Email", "Rol", "Actualizado", "Actualizado_Por"]];
+    filas.forEach(function (e) { valores.push([e, "ADMIN", fecha, quien]); });
+    sheet.clearContents();
+    sheet.getRange(1, 1, valores.length, 4).setValues(valores);
+    sheet.setFrozenRows(1);
+    _adminsCache_ = null;
+    return { exito: true, mensaje: "Usuarios administradores guardados.", data: { filas: filas.length } };
+  } catch (e2) {
+    return { exito: false, mensaje: String(e2.message || e2) };
+  }
 }
 
 // --- CONFIGURACIÓN GLOBAL ---
@@ -178,7 +308,7 @@ function obtenerConfiguracionGlobal() {
 }
 
 function guardarConfiguracionGlobal(configData, email) {
-  if (ADMIN_EMAILS.indexOf(email.toLowerCase()) === -1) return {exito: false, mensaje: "Permisos insuficientes."};
+  if (!esAdmin_(email)) return {exito: false, mensaje: "Permisos insuficientes."};
   configData = configData || {};
   var tarifasFilas = 0;
   if (configData.logTarifas) {
@@ -187,6 +317,14 @@ function guardarConfiguracionGlobal(configData, email) {
     delete configData.logTarifas;
   }
   var sheet = obtenerHojaConfig();
+  // La calibración de Gemini solo la escribe gemini_calibrar (guarda la foto
+  // completa, con baseCostoUsd). El Guardar de Ajustes nunca la toca: si ya hay
+  // una en la hoja, esa manda sobre cualquier dato parcial que venga en el
+  // payload (una pantalla recién calibrada solo conoce el resumen, sin base).
+  try {
+    var previa = JSON.parse((unirConfigHoja_(sheet) || {}).json || "{}");
+    if (previa.geminiCalibracion) configData.geminiCalibracion = previa.geminiCalibracion;
+  } catch (ePrev) {}
   var fechaHoy = new Date().toISOString().replace('T', ' ').substring(0, 19);
   escribirConfigHoja_(sheet, JSON.stringify(configData), fechaHoy, email);
   var avisoTarifas = tarifasFilas ? " Tarifas logísticas: " + tarifasFilas + " filas." : "";
@@ -338,7 +476,7 @@ function tarifasConsultar() {
 }
 
 function tarifasReemplazar(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Permisos insuficientes." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Permisos insuficientes." };
   var tarifas = tarifasDesdePayload_(params && (params.tarifas || params.logTarifas));
   if (!tarifas) return { exito: false, mensaje: "No hay tarifas para guardar." };
   var escrito = tarifasEscribirHoja_(tarifas);
@@ -346,7 +484,7 @@ function tarifasReemplazar(params, email) {
 }
 
 function guardarAnchosMatriz(anchos, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+  if (!esAdmin_(email)) {
     return { exito: false, mensaje: "Permisos insuficientes." };
   }
   var sheet = obtenerHojaConfig();
@@ -558,7 +696,7 @@ function ciudadesConsultar(params) {
 }
 
 function ciudadesReemplazar(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Permisos insuficientes." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Permisos insuficientes." };
   try {
     var pais = String((params && params.pais) || "").trim();
     if (!pais) return { exito: false, mensaje: "Falta el país." };
@@ -1356,7 +1494,7 @@ function autorizarDrivePlantilla() {
 }
 
 function guardarPlantillaXlsx(params) {
-  if (ADMIN_EMAILS.indexOf(String(params.email || "").toLowerCase()) === -1) {
+  if (!esAdmin_(params.email)) {
     return { exito: false, mensaje: "Solo administradores pueden publicar la plantilla." };
   }
   var b64 = String(params.base64 || "").replace(/^data:[^;]+;base64,/, "");
@@ -1995,7 +2133,7 @@ function registrarIngesta_(file, estado, filas, error) {
 }
 
 function sincronizarCatalogoMaestro(email, fromTrigger) {
-  if (!fromTrigger && ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+  if (!fromTrigger && !esAdmin_(email)) {
     return { exito: false, mensaje: "Solo administradores pueden sincronizar el catálogo." };
   }
   var quien = fromTrigger ? "auto-7d" : String(email || "");
@@ -2086,7 +2224,7 @@ function autorizarTriggersCatalogo() {
 }
 
 function asegurarTriggerCatalogoSemanal(email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+  if (!esAdmin_(email)) {
     return { exito: false, mensaje: "Solo administradores." };
   }
   try {
@@ -2104,7 +2242,7 @@ function asegurarTriggerCatalogoSemanal(email) {
 }
 
 function desactivarTriggerCatalogoSemanal(email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+  if (!esAdmin_(email)) {
     return { exito: false, mensaje: "Solo administradores." };
   }
   try {
@@ -2211,7 +2349,7 @@ function listarCatalogoMaestro(params) {
 }
 
 function guardarFilaCatalogo(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Solo administradores." };
   var f = params.fila || {};
   var row = Number(f.row);
   if (!row || row < 2) return { exito: false, mensaje: "Fila inválida." };
@@ -2226,7 +2364,7 @@ function guardarFilaCatalogo(params, email) {
 }
 
 function crearFilaCatalogo(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Solo administradores." };
   var f = params.fila || {};
   if (!String(f.nombre || "").trim()) return { exito: false, mensaje: "El nombre es obligatorio." };
   var sheet = obtenerHojaCatalogo();
@@ -2421,7 +2559,7 @@ function sincronizarCatalogoOdooIncremental_(email, props, sheet, data, totalPro
 }
 
 function sincronizarCatalogoOdoo(email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+  if (!esAdmin_(email)) {
     return { exito: false, mensaje: "Solo administradores pueden alimentar el catálogo desde Odoo." };
   }
   var props = PropertiesService.getScriptProperties();
@@ -2562,7 +2700,7 @@ function esErrorCupoGemini_(msg) {
 }
 
 function tarifasGeminiConfig_() {
-  var out = { cupoTokens: 2000000, cupoUsd: 20, cupoCop: 50000, usdIn: 1.25, usdOut: 10, usdInFlash: 0.30, usdOutFlash: 2.50, trmCop: 4150 };
+  var out = { cupoTokens: 2000000, cupoUsd: 20, cupoCop: 50000, usdIn: 1.25, usdOut: 10, usdInFlash: 0.30, usdOutFlash: 2.50, trmCop: 4150, calibracion: null };
   try {
     var cfg = obtenerConfiguracionGlobal();
     if (cfg.exito && cfg.data) {
@@ -2574,6 +2712,7 @@ function tarifasGeminiConfig_() {
       if (cfg.data.geminiUsdPor1MInFlash != null && Number(cfg.data.geminiUsdPor1MInFlash) >= 0) out.usdInFlash = Number(cfg.data.geminiUsdPor1MInFlash);
       if (cfg.data.geminiUsdPor1MOutFlash != null && Number(cfg.data.geminiUsdPor1MOutFlash) >= 0) out.usdOutFlash = Number(cfg.data.geminiUsdPor1MOutFlash);
       if (cfg.data.logTrm && Number(cfg.data.logTrm) > 0) out.trmCop = Number(cfg.data.logTrm);
+      if (cfg.data.geminiCalibracion && typeof cfg.data.geminiCalibracion === "object") out.calibracion = cfg.data.geminiCalibracion;
     }
   } catch (e) {}
   return out;
@@ -2785,22 +2924,77 @@ function registrarUsoGemini_(patch) {
   }
 }
 
-function obtenerUsoGemini() {
-  var t = tarifasGeminiConfig_();
-  var o = leerUsoGemini_();
+function costoEstimadoMesGemini_(t, o, diario) {
   var tin = Number(o.tokensIn) || 0;
   var tout = Number(o.tokensOut) || 0;
-  var diario = leerUsoDiario_(o.periodo);
   var costoUsd = (tin / 1000000) * t.usdIn + (tout / 1000000) * t.usdOut;
   var pensados = 0;
-  if (diario.length) {
+  if (diario && diario.length) {
     var dIn = 0, dOut = 0, dCosto = 0;
     diario.forEach(function (f) { dCosto += Number(f.costoUsd) || 0; pensados += Number(f.tokensPensados) || 0; dIn += Number(f.tokensIn) || 0; dOut += Number(f.tokensOut) || 0; });
     // Histórico del mes anterior al detalle diario: se estima con la tarifa general para no perderlo.
     var rIn = Math.max(0, tin - dIn), rOut = Math.max(0, tout - dOut);
     costoUsd = dCosto + (rIn / 1000000) * t.usdIn + (rOut / 1000000) * t.usdOut;
   }
+  return { costoUsd: costoUsd, pensados: pensados };
+}
+
+// Calibración contra la consola de Google: el admin escribe el saldo exacto que
+// le resta según Google y el servidor guarda la foto (saldo + cuánto marcaba el
+// contador propio en ese instante). Desde ahí el saldo real es ese saldo menos
+// el costo estimado de las llamadas posteriores. Vence al cambiar de periodo.
+function calibrarUsoGemini(params, email) {
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Permisos insuficientes." };
+  try {
+    var saldo = Number(params && params.saldoCop);
+    var t = tarifasGeminiConfig_();
+    if (!isFinite(saldo) || saldo < 0) return { exito: false, mensaje: "Escribe el saldo que te resta según Google (COP)." };
+    if (t.cupoCop > 0 && saldo > t.cupoCop) return { exito: false, mensaje: "El saldo no puede superar el límite mensual (" + t.cupoCop + " COP)." };
+    var o = leerUsoGemini_();
+    var est = costoEstimadoMesGemini_(t, o, leerUsoDiario_(o.periodo));
+    var cal = {
+      periodo: o.periodo,
+      saldoCop: Math.round(saldo * 100) / 100,
+      gastoCop: Math.round((t.cupoCop - saldo) * 100) / 100,
+      cupoCop: t.cupoCop,
+      baseCostoUsd: Math.round(est.costoUsd * 1000000) / 1000000,
+      fecha: ahoraBogota_(),
+      por: correoNorm_(email)
+    };
+    var sheet = obtenerHojaConfig();
+    var cfg = {};
+    try { cfg = JSON.parse((unirConfigHoja_(sheet) || {}).json || "{}"); } catch (eCfg) { cfg = {}; }
+    cfg.geminiCalibracion = cal;
+    var fechaHoy = new Date().toISOString().replace("T", " ").substring(0, 19);
+    escribirConfigHoja_(sheet, JSON.stringify(cfg), fechaHoy, correoNorm_(email));
+    return { exito: true, mensaje: "Contador calibrado con el saldo de Google.", data: obtenerUsoGemini().data };
+  } catch (e) {
+    return { exito: false, mensaje: String(e.message || e) };
+  }
+}
+
+function obtenerUsoGemini() {
+  var t = tarifasGeminiConfig_();
+  var o = leerUsoGemini_();
+  var tin = Number(o.tokensIn) || 0;
+  var tout = Number(o.tokensOut) || 0;
+  var diario = leerUsoDiario_(o.periodo);
+  var estMes = costoEstimadoMesGemini_(t, o, diario);
+  var costoUsd = estMes.costoUsd;
+  var pensados = estMes.pensados;
   var costoCop = costoUsd * t.trmCop;
+  // Si hay calibración vigente de este periodo, el gasto real es el de Google
+  // al calibrar más el estimado de la app desde ese instante.
+  var cal = (t.calibracion && String(t.calibracion.periodo || "") === String(o.periodo)) ? t.calibracion : null;
+  var costoDesdeCalCop = 0;
+  var saldoCop = t.cupoCop > 0 ? Math.round(t.cupoCop - costoCop) : null;
+  if (cal) {
+    var gastoCal = Number(cal.gastoCop);
+    if (!isFinite(gastoCal)) gastoCal = (Number(cal.cupoCop) || t.cupoCop) - (Number(cal.saldoCop) || 0);
+    costoDesdeCalCop = Math.max(0, costoUsd - (Number(cal.baseCostoUsd) || 0)) * t.trmCop;
+    costoCop = gastoCal + costoDesdeCalCop;
+    saldoCop = Math.round(t.cupoCop - costoCop);
+  }
   var pctCop = t.cupoCop > 0 ? Math.min(100, Math.round(costoCop * 1000 / t.cupoCop) / 10) : 0;
   var pctUsd = t.cupoUsd > 0 ? Math.min(100, Math.round(costoUsd * 1000 / t.cupoUsd) / 10) : 0;
   var pctTok = t.cupoTokens > 0 ? Math.min(100, Math.round((Number(o.tokensTotal) || 0) * 100 / t.cupoTokens)) : 0;
@@ -2838,6 +3032,10 @@ function obtenerUsoGemini() {
       trmCop: t.trmCop,
       costoUsd: Math.round(costoUsd * 10000) / 10000,
       costoCop: Math.round(costoCop),
+      saldoCop: saldoCop,
+      calibrado: !!cal,
+      calibracion: cal ? { fecha: String(cal.fecha || ""), saldoCop: Number(cal.saldoCop) || 0, gastoCop: Number(cal.gastoCop) || 0, por: String(cal.por || "") } : null,
+      costoDesdeCalibracionCop: Math.round(costoDesdeCalCop),
       tokensPensados: pensados,
       porcentaje: pctCop,
       porcentajeCop: pctCop,
@@ -3512,7 +3710,7 @@ function obtenerHojaAranceles_() {
 }
 
 function sincronizarAranceles(email, fromTrigger) {
-  if (!fromTrigger && ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+  if (!fromTrigger && !esAdmin_(email)) {
     return { exito: false, mensaje: "Solo administradores pueden sincronizar aranceles." };
   }
   var file = archivoAranceles_();
@@ -3642,7 +3840,7 @@ function filaArancelDesdeUi_(f) {
 }
 
 function reemplazarAranceles(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) {
+  if (!esAdmin_(email)) {
     return { exito: false, mensaje: "Solo administradores pueden guardar aranceles." };
   }
   var crudas = (params && params.filas) || [];
@@ -3683,7 +3881,7 @@ function reemplazarAranceles(params, email) {
 }
 
 function guardarFilaArancel(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Solo administradores." };
   var f = params.fila || {};
   var row = Number(f.row);
   var sheet = obtenerHojaAranceles_();
@@ -3694,7 +3892,7 @@ function guardarFilaArancel(params, email) {
 }
 
 function eliminarFilaArancel(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Solo administradores." };
   var row = Number(params.row);
   var sheet = obtenerHojaAranceles_();
   if (!row || row < 2 || row > sheet.getLastRow()) return { exito: false, mensaje: "La fila ya no está en la hoja." };
@@ -3704,7 +3902,7 @@ function eliminarFilaArancel(params, email) {
 }
 
 function duplicarFilaArancel(params, email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Solo administradores." };
   var f = params.fila || {};
   var row = Number(f.row);
   var sheet = obtenerHojaAranceles_();
@@ -3720,7 +3918,7 @@ function jobArancelesSemanal() {
 }
 
 function asegurarTriggerAranceles(email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Solo administradores." };
   try {
     if (cronArancelesActivo_()) return { exito: true, mensaje: "La sync de aranceles cada 7 días ya estaba activa." };
     ScriptApp.newTrigger("jobArancelesSemanal").timeBased().everyDays(7).atHour(6).create();
@@ -3731,7 +3929,7 @@ function asegurarTriggerAranceles(email) {
 }
 
 function desactivarTriggerAranceles(email) {
-  if (ADMIN_EMAILS.indexOf(String(email || "").toLowerCase()) === -1) return { exito: false, mensaje: "Solo administradores." };
+  if (!esAdmin_(email)) return { exito: false, mensaje: "Solo administradores." };
   try {
     var triggers = ScriptApp.getProjectTriggers();
     var n = 0;
