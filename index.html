@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.80">
+  <link rel="stylesheet" href="styles.css?v=1.0.84">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -58,7 +58,7 @@
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
             <div class="d-flex align-items-center gap-2 flex-wrap">
-              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">1</span><i class="bi bi-folder2-open section-icon"></i> Datos Base del Proyecto</h6>
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">1</span><i class="bi bi-folder2-open section-icon"></i> Datos Base del Proyecto<span id="badgeElemento1" class="elem-switch d-none ms-2"></span></h6>
               <div id="chipsVersiones" class="d-flex gap-1 flex-wrap"></div>
               <button type="button" class="btn btn-outline-secondary btn-sm" onclick="abrirModalNuevaVersion()"><i class="bi bi-plus-lg me-1"></i>Nueva versión</button>
               <span id="comentarioVersionActiva" class="small text-muted"></span>
@@ -176,7 +176,7 @@
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
             <div class="d-flex align-items-center gap-2 flex-wrap">
-              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente<span id="badgePrearmadoElemento" class="elem-ahora d-none ms-2"></span></h6>
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">2</span><i class="bi bi-stars section-icon"></i> Pre-Armado IA & Asistente<span id="badgePrearmadoElemento" class="elem-switch d-none ms-2"></span></h6>
               <span id="badgeVersion2" class="ver-switch d-none"></span>
             </div>
             <button type="button" id="btnCargarRenders" class="btn btn-sm btn-outline-secondary" title="Trae la imagen de Odoo (Grupo) y el render con pin de cotización de cada pieza" onclick="cargarRendersVisor()"><i class="bi bi-cloud-arrow-down me-1"></i>Cargar Renders</button>
@@ -242,7 +242,7 @@
         <div class="mb-5">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <div class="d-flex align-items-center gap-2 flex-wrap">
-              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">3</span><i class="bi bi-table section-icon"></i> Matriz de Costos Directos (Escalas)<span id="badgeMatrizElemento" class="elem-ahora d-none ms-2"></span></h6>
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">3</span><i class="bi bi-table section-icon"></i> Matriz de Costos Directos (Escalas)<span id="badgeMatrizElemento" class="elem-switch d-none ms-2"></span></h6>
               <span id="badgeVersion3" class="ver-switch d-none"></span>
             </div>
             <div>
@@ -263,7 +263,7 @@
         <div class="mb-4 border-top pt-4">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <div class="d-flex align-items-center gap-2 flex-wrap">
-              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">4</span><i class="bi bi-calculator section-icon"></i> Simulador AIU<span id="badgeSimuladorElemento" class="elem-ahora d-none ms-2"></span></h6>
+              <h6 class="fw-bold mb-0 sec-titulo"><span class="step-badge">4</span><i class="bi bi-calculator section-icon"></i> Simulador AIU<span id="badgeSimuladorElemento" class="elem-switch d-none ms-2"></span></h6>
               <span id="badgeVersion4" class="ver-switch d-none"></span>
             </div>
             <div class="input-group input-group-sm w-auto"><span class="input-group-text text-success bg-white fw-bold">TRM Hoy</span><input type="number" id="simTRM" class="form-control text-center fw-bold" style="width:100px;" value="4150"></div>
@@ -1470,11 +1470,11 @@
   
   <script src="admin.js?v=1.0.72"></script>
     <script src="seguridad.js?v=1.0.26"></script>
-    <script src="app.js?v=1.0.53"></script>
-  <script src="engine.js?v=1.0.39"></script>
+    <script src="app.js?v=1.0.54"></script>
+  <script src="engine.js?v=1.0.40"></script>
   <script src="connectors.js?v=1.0.41"></script>
   <script src="ia-core.js?v=1.0.43"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.140"></script>
+  <script src="logistica.js?v=1.0.143"></script>
 </body>
 </html>

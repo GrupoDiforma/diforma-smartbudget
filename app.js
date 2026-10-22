@@ -709,6 +709,17 @@ function pintarBarraElementos() {
     pintarEtiquetaVersion_();
 }
 
+function htmlChipsElementos_() {
+    const ver = versionActualObj_();
+    const elems = (ver && ver.elementos) || [];
+    const activa = (ver && ver.elementoActivoId) || window.elementoActivoId;
+    return elems.map(function (e) {
+        const isOn = e.id === activa ? " is-on" : "";
+        const nom = String(e.nombre || "Pieza").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+        return '<button type="button" class="elem-chip' + isOn + '" onclick="aplicarElementoEnUI(\'' + e.id + '\')">' + nom + "</button>";
+    }).join("");
+}
+
 function pintarEtiquetasElemento_(nombre, on) {
     const aviso = document.getElementById("avisoElementoActivo");
     if (aviso) {
@@ -719,13 +730,16 @@ function pintarEtiquetasElemento_(nombre, on) {
             aviso.classList.add("d-none");
         }
     }
-    ["badgePrearmadoElemento", "badgeMatrizElemento", "badgeSimuladorElemento"].forEach(function (id) {
+    /* En grupal, cada título de sección cambia de elemento (como las versiones en individual). */
+    const html = on ? htmlChipsElementos_() : "";
+    ["badgeElemento1", "badgePrearmadoElemento", "badgeMatrizElemento", "badgeSimuladorElemento"].forEach(function (id) {
         const el = document.getElementById(id);
         if (!el) return;
-        if (on && nombre) {
-            el.textContent = nombre;
+        if (on && html) {
+            el.innerHTML = html;
             el.classList.remove("d-none");
         } else {
+            el.innerHTML = "";
             el.classList.add("d-none");
         }
     });

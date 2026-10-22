@@ -238,24 +238,72 @@ function pintarResumenStand_(trm) {
             escalas: el.escalas && el.escalas.length ? el.escalas : ver.escalas
         });
         const pr = calcularPreciosVersion_(copia);
-        const esc = pr && pr.escalas && pr.escalas[0];
+        const puPorQ = {};
+        ((pr && pr.escalas) || []).forEach(function (esc) { puPorQ[Number(esc.q) || 1] = Number(esc.puCop) || 0; });
+        const cant = Number(el.cantidad);
         return {
+            id: el.id,
             nombre: el.nombre || "Pieza",
-            pu: esc ? esc.puCop : 0,
-            q: esc ? esc.q : 0
+            cantidad: isFinite(cant) && cant >= 0 ? cant : 1,
+            puPorQ: puPorQ
         };
     });
-    const tot = filas.reduce(function (s, f) { return s + (f.pu || 0); }, 0);
+    /* Rangos: unión de todos los Q que existen en el presupuesto, de menor a mayor. */
+    const qs = [];
+    filas.forEach(function (f) {
+        Object.keys(f.puPorQ).forEach(function (q) { if (qs.indexOf(Number(q)) < 0) qs.push(Number(q)); });
+    });
+    qs.sort(function (a, b) { return a - b; });
+    if (!qs.length) {
+        box.classList.add("d-none");
+        box.innerHTML = "";
+        return;
+    }
+    const usdFmt = function (cop) {
+        return "US$ " + (trm ? (cop / trm) : 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+    const totales = {};
+    qs.forEach(function (q) {
+        totales[q] = filas.reduce(function (s, f) {
+            return s + (f.puPorQ[q] != null ? f.cantidad * f.puPorQ[q] : 0);
+        }, 0);
+    });
     box.classList.remove("d-none");
     box.className = "stand-resumen mt-3";
-    box.innerHTML = "<div class=\"fw-semibold mb-2\">Total Grupal · suma de piezas (primer rango de cada una)</div>" +
-        "<table class=\"table table-sm mb-0\"><thead><tr><th>Elemento</th><th class=\"text-end\">Unitario</th><th class=\"text-end\">USD</th></tr></thead><tbody>" +
+    box.innerHTML = "<div class=\"fw-semibold\">Total Grupal · simulación por rango</div>" +
+        "<div class=\"stand-nota\">Cantidad de cada elemento en el conjunto (stand, exhibición…), por defecto 1. Cambiarla solo mueve esta simulación: no toca la matriz, el Excel ni la cotización. Si un elemento no tiene un rango, sale «—» y no suma en esa columna.</div>" +
+        "<div class=\"table-responsive\"><table class=\"table table-sm mb-0 stand-tabla\"><thead><tr><th>Elemento</th><th class=\"text-center\">Cant.</th>" +
+        qs.map(function (q) { return "<th class=\"text-end\">Rango Q " + q + "</th>"; }).join("") +
+        "</tr></thead><tbody>" +
         filas.map(function (f) {
-            const usd = trm ? (f.pu / trm) : 0;
-            return "<tr><td>" + String(f.nombre).replace(/</g, "&lt;") + "</td><td class=\"text-end\">" + copFmt(f.pu) + "</td><td class=\"text-end\">US$ " + usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "</td></tr>";
+            const celdas = qs.map(function (q) {
+                if (f.puPorQ[q] == null) return "<td class=\"text-end text-muted\" title=\"Este elemento no tiene este rango\">—</td>";
+                return "<td class=\"text-end\">" + copFmt(f.cantidad * f.puPorQ[q]) +
+                    "<div class=\"stand-pu\">" + f.cantidad + " × " + copFmt(f.puPorQ[q]) + "</div></td>";
+            }).join("");
+            return "<tr><td>" + String(f.nombre).replace(/</g, "&lt;") + "</td>" +
+                "<td class=\"text-center\"><input type=\"number\" class=\"form-control form-control-sm text-center stand-cant\" min=\"0\" step=\"1\" value=\"" + f.cantidad + "\" title=\"Cantidad de este elemento en el conjunto\" onchange=\"actualizarCantidadElementoStand_('" + f.id + "',this.value)\"></td>" +
+                celdas + "</tr>";
         }).join("") +
-        "<tr><th>Total Grupal</th><th class=\"text-end\">" + copFmt(tot) + "</th><th class=\"text-end\">US$ " + (trm ? (tot / trm).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00") + "</th></tr>" +
-        "</tbody></table>";
+        "<tr class=\"stand-total\"><th>Total Grupal</th><th></th>" +
+        qs.map(function (q) {
+            return "<th class=\"text-end\">" + copFmt(totales[q]) + "<div class=\"stand-pu\">" + usdFmt(totales[q]) + "</div></th>";
+        }).join("") +
+        "</tr></tbody></table></div>";
+}
+
+/** Cantidad de un elemento en la simulación del Total Grupal. Vive en el elemento, así se guarda con la versión. */
+function actualizarCantidadElementoStand_(elemId, val) {
+    if (typeof snapshotVersionActual !== "function") return;
+    const snap = snapshotVersionActual();
+    const elems = (snap && snap.elementos) || [];
+    const el = elems.find(function (e) { return String(e.id) === String(elemId); });
+    if (!el) return;
+    let n = parseFloat(String(val == null ? "" : val).replace(",", "."));
+    if (!isFinite(n) || n < 0) n = 1;
+    el.cantidad = Math.floor(n);
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+    if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
 }
 
 function inicializarDragAndDropMatrix() {

@@ -2360,7 +2360,7 @@ function logisticaQuitarEscenario_(id) {
 
 let logEscFirmaPintada = "";
 function logEscFirma_() {
-    return logQuote.modo + "|" + (logQuote.escenarios || []).map(function (e) { return e.id + "=" + (e.nombre || ""); }).join(",");
+    return logQuote.modo + "|" + (logQuote.escenarios || []).map(function (e) { return e.id + "=" + (e.nombre || "") + (e.hojaNueva ? "#salto" : ""); }).join(",");
 }
 
 /** Panel de escenarios (modo, nombres, agregar/quitar). Solo se repinta si cambió su estructura, para no perder el foco al escribir. */
@@ -2378,13 +2378,19 @@ function logisticaPintarEscenarios_(soloSiCambio) {
     if (logQuote.modo !== "esc") { box.innerHTML = ""; return; }
     const idioma = logisticaLeerOpciones_().idioma;
     const esc = logQuote.escenarios || [];
+    const esEn = idioma === "en";
     box.innerHTML = esc.map(function (e, i) {
-        return "<div class=\"log-esc-item\" data-e=\"" + logEsc_(e.id) + "\"><span class=\"badge text-bg-primary\">" + (i + 1) + "</span>" +
+        return "<div class=\"log-esc-item\" data-e=\"" + logEsc_(e.id) + "\">" +
+            "<span class=\"log-esc-grip\" title=\"" + (esEn ? "Drag to change the order on the sheet" : "Arrastrar para cambiar el orden en la hoja") + "\"><i class=\"bi bi-grip-vertical\"></i></span>" +
+            "<span class=\"badge text-bg-primary\">" + (i + 1) + "</span>" +
             "<input type=\"text\" class=\"form-control form-control-sm\" data-esc-nombre value=\"" + logEsc_(e.nombre || "") + "\" placeholder=\"" + logEsc_(logEscNombre_({}, i, idioma)) + "\" title=\"Nombre de la opción (se ve en la hoja)\">" +
+            "<label class=\"log-esc-salto\" title=\"" + (i === 0 ? (esEn ? "The first option always opens the document" : "La primera opción siempre abre el documento") : (esEn ? "Start this option on a new sheet in the PDF" : "Esta opción empieza en una hoja nueva del PDF")) + "\">" +
+            "<input type=\"checkbox\" class=\"form-check-input\" data-esc-salto" + (e.hojaNueva && i > 0 ? " checked" : "") + (i === 0 ? " disabled" : "") + "> " + (esEn ? "New sheet" : "Hoja nueva") + "</label>" +
             (esc.length > 2 ? "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-esc-del title=\"Quitar esta opción\"><i class=\"bi bi-x-lg\"></i></button>" : "") +
             "</div>";
     }).join("") +
-        (esc.length < 6 ? "<button type=\"button\" class=\"btn btn-sm btn-outline-primary\" data-esc-add><i class=\"bi bi-plus-lg me-1\"></i>Agregar opción</button>" : "");
+        (esc.length < 6 ? "<button type=\"button\" class=\"btn btn-sm btn-outline-primary align-self-start\" data-esc-add><i class=\"bi bi-plus-lg me-1\"></i>Agregar opción</button>" : "") +
+        "<div class=\"log-esc-ayuda\">" + (esEn ? "Drag an option by the handle to reorder it on the sheet. “New sheet” forces a page break before that option; numbering follows the new order." : "Arrastra cada opción por el jalador para reordenarla en la hoja. «Hoja nueva» fuerza un salto de página antes de esa opción; la numeración sigue el orden nuevo.") + "</div>";
 }
 
 function logisticaEventosEscenarios_(ev) {
@@ -2400,10 +2406,35 @@ function logisticaEventosEscenarios_(ev) {
         logisticaRefrescarTabla_();
         return;
     }
+    const salto = t.closest && t.closest("[data-esc-salto]");
+    if (salto) {
+        const escSalto = (logQuote.escenarios || []).find(function (x) { return x.id === salto.closest("[data-e]").getAttribute("data-e"); });
+        if (!escSalto) return;
+        escSalto.hojaNueva = !!salto.checked;
+        logEscFirmaPintada = logEscFirma_();
+        logMarcarSucio_();
+        logisticaRefrescarTabla_();
+        return;
+    }
     const add = t.closest("[data-esc-add]");
     if (add) { logisticaAgregarEscenario_(); return; }
     const del = t.closest("[data-esc-del]");
     if (del) logisticaQuitarEscenario_(del.closest("[data-e]").getAttribute("data-e"));
+}
+
+/** Reordena los escenarios según el orden en que quedaron sus filas en el panel (tras arrastrar). */
+function logisticaReordenarEscenariosDesdeDom_() {
+    const box = document.getElementById("logEscPanel");
+    if (!box) return;
+    const orden = [].map.call(box.querySelectorAll(".log-esc-item[data-e]"), function (n) { return n.getAttribute("data-e"); });
+    const esc = logQuote.escenarios || [];
+    if (orden.length !== esc.length) return;
+    const nuevo = orden.map(function (id) { return esc.find(function (e) { return e.id === id; }); }).filter(Boolean);
+    if (nuevo.length !== esc.length || nuevo.every(function (e, i) { return e === esc[i]; })) return;
+    logQuote.escenarios = nuevo;
+    logEscFirmaPintada = "";
+    logMarcarSucio_();
+    logisticaRefrescarTabla_();
 }
 
 function logFilasDemo_() {
@@ -2983,7 +3014,8 @@ function logisticaTablaHTML_(idioma) {
         const pesoK = Math.max(Number(cubK.pesoKg) || 0, Number(cubK.kgVol) || 0);
         const detFlete = logEnvDetalleFlete_(esEn, k);
         let cab = (esEn ? "OPTION " : "OPCIÓN ") + (idx + 1) + (e.nombre && String(e.nombre).trim() ? " — " + String(e.nombre).trim().toUpperCase() : "");
-        let h = "<tr class=\"sec esc-sec\"><td colspan=\"" + n + "\">" + logEsc_(cab) + "</td></tr>";
+        const salto = idx > 0 && !!e.hojaNueva;
+        let h = "<tr class=\"sec esc-sec" + (salto ? " esc-salto" : "") + "\"" + (salto ? " data-salto=\"1\"" : "") + "><td colspan=\"" + n + "\">" + logEsc_(cab) + "</td></tr>";
         h += filasProductoEsc_(k);
         const hayLogK = envios.length || envLineas.length;
         if (hayLogK || (descOn && logQuote.filas.length)) {
@@ -5559,7 +5591,7 @@ async function logisticaAbrirGuardada_(id, rev) {
             return d;
         })(),
         modo: g.modo === "esc" && Array.isArray(g.escenarios) && g.escenarios.length ? "esc" : "unica",
-        escenarios: Array.isArray(g.escenarios) ? g.escenarios.map(function (e) { return { id: e.id, nombre: e.nombre || "" }; }) : [],
+        escenarios: Array.isArray(g.escenarios) ? g.escenarios.map(function (e) { return { id: e.id, nombre: e.nombre || "", hojaNueva: !!e.hojaNueva }; }) : [],
         escUid: parseInt(g.escUid, 10) || 0,
         env: logEnvNormalizar_(g.env || {}),
         comision: g.comision ? logComisionNormalizar_(g.comision) : logComisionNormalizar_(logComisionDesdeCostos_()),
@@ -5758,6 +5790,7 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".it-desc-lite{font-size:8.2pt;color:#444}" +
         ".it-med{color:#555;font-size:8pt;margin-top:2px}" +
         ".items tr.sec{break-after:avoid;page-break-after:avoid}" +
+        ".items tr.esc-salto{break-before:page;page-break-before:always}" +
         ".items tr.sec-gap td{height:10px;padding:0;border:0;background:#fff}" +
         ".items tr.sec td,.items tr.tot td,.items tr.tot-pago td{height:.28in;padding-top:0;padding-bottom:0;box-sizing:border-box}" +
         ".items tr.sec td{background:#f1f1f2;color:var(--rojo);font-weight:700;letter-spacing:.04em;font-size:8.2pt;border-bottom:1px solid #d9d9d9}" +
@@ -5907,6 +5940,7 @@ function logisticaConstruirHTML(opts, imprimir) {
         "function limite(b){var f=b.parentNode.querySelector('.ftr');var y=f?f.getBoundingClientRect().top:b.getBoundingClientRect().bottom;return y-6;}" +
         "function noCabe(b,row){return row.getBoundingClientRect().bottom>limite(b);}" +
         "pack.rows.forEach(function(row){" +
+        "if(row.getAttribute('data-salto')&&tb.rows.length){body=page();table=tabla(false);body.appendChild(table);tb=table.tBodies[0];}" +
         "tb.appendChild(row);" +
         "var pasa=noCabe(body,row);" +
         "if(pasa&&tb.rows.length===1){body.parentNode.classList.add('crece');return;}" +
@@ -6428,28 +6462,33 @@ function logisticaPintarEscEnv_() {
     if (document.activeElement && box.contains(document.activeElement)) return;
     box.classList.remove("d-none");
     const esFcl = e.modalidad === "fcl";
-    let h = "<table><thead><tr><th>Opción</th><th>Cajas</th><th>m³</th><th>Peso kg</th>";
-    if (esFcl) h += "<th>20'</th><th>40'</th><th>40HC</th><th></th>";
-    h += "<th>Embarques</th></tr></thead><tbody>";
+    const esEn = idioma === "en";
+    let h = "";
     escs.forEach(function (x, i) {
         const st = logEnvEscDe_(e, x.id);
         const cub = logCubicajeTotal_(idioma, x.id);
         const auto = cub.auto || cub;
         const sug = esFcl ? logSugerirContenedores_(cub.m3, Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0)) : null;
         const ph = function (n) { return Number(n) > 0 ? String(Math.round(Number(n) * 1000) / 1000) : "0"; };
-        h += "<tr><td><b>" + logEsc_(logEscNombre_(x, i, idioma)) + "</b></td>" +
-            "<td>" + (auto.cajas || 0) + "</td>" +
-            "<td><input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.001\" data-op=\"" + logEsc_(x.id) + "\" data-campo=\"cubM3\" placeholder=\"" + ph(auto.m3) + "\" value=\"" + (st.cubM3 == null ? "" : st.cubM3) + "\"></td>" +
-            "<td><input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.01\" data-op=\"" + logEsc_(x.id) + "\" data-campo=\"cubPeso\" placeholder=\"" + ph(auto.pesoKg) + "\" value=\"" + (st.cubPeso == null ? "" : st.cubPeso) + "\"></td>";
+        const op = logEsc_(x.id);
+        h += "<div class=\"log-esc-card\">" +
+            "<div class=\"log-esc-card-h\"><b>" + logEsc_(logEscNombre_(x, i, idioma)) + "</b><span>" + (auto.cajas || 0) + (esEn ? " boxes" : " cajas") + "</span></div>" +
+            "<div class=\"log-esc-fields" + (esFcl ? " log-esc-fields-fcl" : "") + "\">" +
+            "<label>m³<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.001\" data-op=\"" + op + "\" data-campo=\"cubM3\" placeholder=\"" + ph(auto.m3) + "\" value=\"" + (st.cubM3 == null ? "" : st.cubM3) + "\"></label>" +
+            "<label>" + (esEn ? "Weight kg" : "Peso kg") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.01\" data-op=\"" + op + "\" data-campo=\"cubPeso\" placeholder=\"" + ph(auto.pesoKg) + "\" value=\"" + (st.cubPeso == null ? "" : st.cubPeso) + "\"></label>";
         if (esFcl) {
-            h += "<td><input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + logEsc_(x.id) + "\" data-campo=\"c20\" data-cont=\"1\" value=\"" + (st.contenedores.c20 || "") + "\"></td>" +
-                "<td><input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + logEsc_(x.id) + "\" data-campo=\"c40\" data-cont=\"1\" value=\"" + (st.contenedores.c40 || "") + "\"></td>" +
-                "<td><input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + logEsc_(x.id) + "\" data-campo=\"c40hc\" data-cont=\"1\" value=\"" + (st.contenedores.c40hc || "") + "\"></td>" +
-                "<td><button type=\"button\" class=\"btn btn-link btn-sm p-0 log-esc-cont-calc\" data-esc-calc=\"" + logEsc_(x.id) + "\" title=\"Recalcular contenedores de esta opción\">Calcular</button>" + (sug ? "<div class=\"text-muted\" style=\"font-size:0.68rem;\">" + logEsc_(logContenedoresTexto_(sug)) + "</div>" : "") + "</td>";
+            h += "<label>20'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c20\" data-cont=\"1\" value=\"" + (st.contenedores.c20 || "") + "\"></label>" +
+                "<label>40'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c40\" data-cont=\"1\" value=\"" + (st.contenedores.c40 || "") + "\"></label>" +
+                "<label>40HC<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c40hc\" data-cont=\"1\" value=\"" + (st.contenedores.c40hc || "") + "\"></label>";
         }
-        h += "<td><input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"1\" step=\"1\" data-op=\"" + logEsc_(x.id) + "\" data-campo=\"embarques\" value=\"" + (st.embarques || 1) + "\"></td></tr>";
+        h += "<label>" + (esEn ? "Shipments" : "Embarques") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"1\" step=\"1\" data-op=\"" + op + "\" data-campo=\"embarques\" value=\"" + (st.embarques || 1) + "\"></label>";
+        if (esFcl) {
+            h += "<div class=\"log-esc-calc-cell\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary log-esc-cont-calc\" data-esc-calc=\"" + op + "\" title=\"" + (esEn ? "Recalculate containers for this option" : "Recalcular contenedores de esta opción") + "\">" + (esEn ? "Calculate containers" : "Calcular contenedores") + "</button>" +
+                (sug ? "<span class=\"text-muted\">" + (esEn ? "Suggested: " : "Sugerido: ") + logEsc_(logContenedoresTexto_(sug)) + "</span>" : "") + "</div>";
+        }
+        h += "</div></div>";
     });
-    box.innerHTML = h + "</tbody></table><div class=\"text-muted\" style=\"font-size:0.7rem;\">m³ y peso vacíos usan el empaque de cada opción. Los contenedores se calculan por opción y puedes corregirlos.</div>";
+    box.innerHTML = h + "<div class=\"text-muted log-esc-nota\">" + (esEn ? "Blank m³ and weight use each option's packaging. Containers are calculated per option and you can correct them." : "m³ y peso vacíos usan el empaque de cada opción. Los contenedores se calculan por opción y puedes corregirlos.") + "</div>";
 }
 let logDestinoPaisTocado_ = false;
 let logDestinoCiudadTocado_ = false;
@@ -8864,6 +8903,14 @@ function logisticaInit() {
     if (panelEsc) {
         panelEsc.addEventListener("input", logisticaEventosEscenarios_);
         panelEsc.addEventListener("click", logisticaEventosEscenarios_);
+        if (typeof Sortable !== "undefined") {
+            new Sortable(panelEsc, {
+                handle: ".log-esc-grip",
+                draggable: ".log-esc-item",
+                animation: 150,
+                onEnd: function () { logisticaReordenarEscenariosDesdeDom_(); }
+            });
+        }
     }
     const menuAdd = document.getElementById("logAddMenu");
     if (menuAdd) menuAdd.addEventListener("click", logisticaAgregarFila_);

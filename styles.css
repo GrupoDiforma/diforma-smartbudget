@@ -448,25 +448,55 @@ body {
 }
 .log-esc-panel {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     margin-bottom: 10px;
 }
 .log-esc-item {
     display: flex;
     align-items: center;
     gap: 6px;
+    background: #fbfcfd;
+    border: 1px solid #e2e5ea;
+    border-radius: 8px;
+    padding: 5px 7px;
 }
-.log-esc-item input {
-    width: 150px;
+.log-esc-item input[data-esc-nombre] {
+    flex: 1 1 auto;
+    min-width: 70px;
+    width: auto;
 }
-.log-esc-env { width: 100%; margin-top: 10px; }
-.log-esc-env table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-.log-esc-env th, .log-esc-env td { padding: 3px 4px; border-bottom: 1px solid #e5e5e5; text-align: right; vertical-align: middle; }
-.log-esc-env th:first-child, .log-esc-env td:first-child { text-align: left; }
-.log-esc-env input { width: 58px; display: inline-block; }
-.log-esc-env .log-esc-cont-calc { font-size: 0.7rem; }
+.log-esc-grip { cursor: grab; color: #9aa3ad; padding: 2px 1px; touch-action: none; }
+.log-esc-grip:active { cursor: grabbing; }
+.log-esc-salto {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #4b5563;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.log-esc-salto:has(input:disabled) { opacity: .45; cursor: default; }
+.log-esc-ayuda { font-size: 0.7rem; line-height: 1.35; color: #6b7280; }
+.log-esc-env { grid-column: 1 / -1; width: 100%; margin-top: 2px; display: flex; flex-direction: column; gap: 8px; }
+.log-esc-card { border: 1px solid #e2e5ea; border-radius: 8px; padding: 8px 10px 10px; background: #fbfcfd; }
+.log-esc-card-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 0.82rem; }
+.log-esc-card-h span { color: #6b7280; font-size: 0.72rem; white-space: nowrap; }
+.log-esc-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 8px; align-items: end; }
+.log-esc-fields-fcl { grid-template-columns: 1.15fr 1.15fr .6fr .6fr .7fr .85fr 1.4fr; }
+.log-esc-fields label { display: flex; flex-direction: column; gap: 2px; margin: 0; min-width: 0; font-size: 0.66rem; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; color: #6b7280; }
+.log-esc-fields input { width: 100%; min-width: 0; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.log-esc-calc-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; font-size: 0.68rem; line-height: 1.25; }
+.log-esc-env .log-esc-cont-calc { font-size: 0.72rem; white-space: nowrap; }
+.log-esc-nota { font-size: 0.7rem; line-height: 1.35; }
+@media (max-width: 600px) {
+    .log-esc-fields-fcl { grid-template-columns: repeat(3, 1fr); }
+    .log-esc-calc-cell { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 8px; }
+}
 .log-fila-top {
     display: flex;
     align-items: center;
@@ -1759,6 +1789,19 @@ html, body { overflow-x: hidden; }
     border-color: var(--diforma-red);
     transform: scale(1.05);
 }
+.elem-switch {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    vertical-align: middle;
+}
+.elem-switch .elem-chip {
+    font-size: 0.72rem;
+    padding: 2px 10px;
+    border-radius: 999px;
+}
+.elem-switch .elem-chip.is-on { transform: none; }
 .elem-ahora {
     font-size: 0.78rem;
     font-weight: 700;
@@ -1778,6 +1821,12 @@ html, body { overflow-x: hidden; }
 }
 .stand-resumen table { margin: 0; }
 .stand-resumen th, .stand-resumen td { padding: 4px 8px; }
+.stand-nota { font-size: 0.74rem; line-height: 1.35; color: #6b7280; margin: 2px 0 8px; }
+.stand-tabla td, .stand-tabla th { vertical-align: middle; white-space: nowrap; }
+.stand-tabla td:first-child, .stand-tabla th:first-child { white-space: normal; min-width: 130px; }
+.stand-cant { width: 64px; margin: 0 auto; font-variant-numeric: tabular-nums; }
+.stand-pu { font-size: 0.7rem; font-weight: 400; color: #8b95a1; white-space: nowrap; }
+.stand-total th { background: #f4f4f5; border-top: 2px solid var(--sb-line); }
 .tyc-lang-btn.is-on {
     background: var(--diforma-blue);
     color: #fff;
