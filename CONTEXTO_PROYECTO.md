@@ -28,7 +28,9 @@ Sitio de producción: `https://smartbudget.grupodiforma.com` (GitHub Pages). Uso
   4. Indicar cómo probar en el preview local.
   5. Esperar validación y visto bueno.
   6. Solo si el usuario pide **publicar** o **desplegar**, ejecutar o entregar `./desplegar.sh`.
-- `./desplegar.sh` auto-incrementa la versión en `index.html` (V2.0, V2.1 … V2.9, V3.0) y alinea `main` con `desarrollo`.
+- `./desplegar.sh` es lo único que cambia la versión de la app, en `#appVersionBadge` de `index.html`, y alinea `main` con `desarrollo`.
+- **Versión de la app:** `V2.0`, `V2.1` … `V2.9`, `V3.0`. Dos números. El segundo va de 0 a 9; al pasar de 9 sube el primero y el segundo vuelve a 0. No usar tres números (`V1.0.33` era el esquema anterior; un badge así, al desplegar, entra en `V2.0`).
+- El `?v=` de `styles.css`, `app.js` y el resto es la caché de ese archivo. No sigue esta serie. Las versiones `V1`, `V2` de un presupuesto tampoco: son del proyecto, no de la app. Las notas «publicado en V1.0.29» de este archivo son historia del esquema anterior.
 
 ### 3. Modularidad física inviolable (Separation of Concerns)
 
@@ -344,7 +346,7 @@ Preferida **S** es una sola por grupo (origen: modalidad|concepto; interno: moda
 
 Lee este checkpoint y la sección **Tarifas logísticas**. No abras chats anteriores ni las cartas de IFS.
 
-El badge del repo está en **V2.0**. Producción publicada sigue en V1.0.33 hasta el próximo despliegue; ese despliegue la deja en V2.1. A partir de ahí el segundo número sube de uno en uno hasta V2.9 y el siguiente es V3.0. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
+La versión de la app es **V2.0**, **V2.1** … **V2.9**, **V3.0**. El badge lo cambia solo `./desplegar.sh`. El esquema de tres números (`V1.0.33`) ya no se usa. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
 
 Caché local: `styles.css 1.0.77` · `admin.js 1.0.68` · `connectors.js 1.0.41` · `ia-core.js 1.0.42` · `engine.js 1.0.39` · `logistica.js 1.0.135`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
 

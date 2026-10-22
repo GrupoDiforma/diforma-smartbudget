@@ -10,7 +10,7 @@ node -e '
 const fs = require("fs");
 let file = "index.html";
 let content = fs.readFileSync(file, "utf8");
-let match = content.match(/id="appVersionBadge">(V\d+\.\d+(?:\.\d+)?)/);
+let match = content.match(/id="appVersionBadge"[^>]*>(V\d+\.\d+(?:\.\d+)?)/);
 if (match) {
   let oldVer = match[1];
   let parts = oldVer.replace("V", "").split(".");
@@ -26,7 +26,7 @@ if (match) {
     if (minor > 9) { major += 1; minor = 0; }
     newVer = `V${major}.${minor}`;
   }
-  content = content.replace(`id="appVersionBadge">${oldVer}`, `id="appVersionBadge">${newVer}`);
+  content = content.replace(/(id="appVersionBadge"[^>]*>)V\d+\.\d+(?:\.\d+)?/, "$1" + newVer);
   fs.writeFileSync(file, content);
   console.log(`📌 Versión incrementada automáticamente: ${oldVer} -> ${newVer}`);
 }
