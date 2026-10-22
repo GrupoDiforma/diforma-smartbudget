@@ -834,9 +834,11 @@ async function refinarMapaConGemini(analisis, textoHoja) {
     try {
         const data = await realizarPeticionBD({
             action: "gemini_chat",
+            modulo: "excel",
             forzarPro: false,
             promptText: prompt
         }, { timeoutMs: 60000 });
+        if (typeof pintarUsoGemini === "function") pintarUsoGemini(data && data.uso);
         if (data && data.exito === false) {
             analisis.notas.push(data.mensaje || "Gemini no refinó el mapa.");
             analisis.origen = "heuristica";

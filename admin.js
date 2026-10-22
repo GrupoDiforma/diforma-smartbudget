@@ -662,8 +662,11 @@ function pintarFormularioAjustes_() {
     setVal('cfgPrompt', d.promptMaestro); setVal('cfgPromptLogistico', d.promptLogistico);
     setVal('cfgGeminiCupo', d.geminiCupoTokens != null ? d.geminiCupoTokens : 2000000);
     setVal('cfgGeminiCupoUsd', d.geminiCupoUsd != null ? d.geminiCupoUsd : 20);
+    setVal('cfgGeminiCupoCop', d.geminiCupoCop != null ? d.geminiCupoCop : 50000);
     setVal('cfgGeminiUsdIn', d.geminiUsdPor1MIn != null ? d.geminiUsdPor1MIn : 1.25);
     setVal('cfgGeminiUsdOut', d.geminiUsdPor1MOut != null ? d.geminiUsdPor1MOut : 10);
+    setVal('cfgGeminiUsdInFlash', d.geminiUsdPor1MInFlash != null ? d.geminiUsdPor1MInFlash : 0.30);
+    setVal('cfgGeminiUsdOutFlash', d.geminiUsdPor1MOutFlash != null ? d.geminiUsdPor1MOutFlash : 2.50);
     setVal('cfgComisiones', typeof d.comisiones === 'string' ? d.comisiones : JSON.stringify(d.comisiones || []));
     
     if(d.operativos) {
@@ -2023,7 +2026,7 @@ async function logTarCartaLeer_() {
         const prompt = logTarPromptDestino_(ruta, actuales, leido.texto);
         const parts = [{ text: prompt }];
         if (leido.parte) parts.push(leido.parte);
-        const data = await realizarPeticionBD({ action: "gemini_analizar", forzarPro: false, parts: parts }, { timeoutMs: 120000 });
+        const data = await realizarPeticionBD({ action: "gemini_analizar", modulo: "ajustes", forzarPro: false, parts: parts }, { timeoutMs: 120000 });
         if (typeof pintarUsoGemini === "function") pintarUsoGemini(data && data.uso);
         if (!data || !data.exito) throw new Error((data && data.mensaje) || "Gemini no respondió.");
         const texto = (typeof textoGemini === "function") ? textoGemini(data) : "";
@@ -2768,8 +2771,11 @@ async function guardarConfiguracion() {
         promptLogistico: document.getElementById('cfgPromptLogistico')?.value || '',
         geminiCupoTokens: Math.max(100000, getVal('cfgGeminiCupo') || 2000000),
         geminiCupoUsd: Math.max(1, getVal('cfgGeminiCupoUsd') || 20),
+        geminiCupoCop: Math.max(1, getVal('cfgGeminiCupoCop') || 50000),
         geminiUsdPor1MIn: getVal('cfgGeminiUsdIn') || 1.25,
         geminiUsdPor1MOut: getVal('cfgGeminiUsdOut') || 10,
+        geminiUsdPor1MInFlash: (function () { const el = document.getElementById('cfgGeminiUsdInFlash'); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : 0.30; })(),
+        geminiUsdPor1MOutFlash: (function () { const el = document.getElementById('cfgGeminiUsdOutFlash'); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : 2.50; })(),
         comisiones: JSON.stringify((typeof leerComisionesUI === "function") ? leerComisionesUI() : []),
         partidas: JSON.stringify(partidasParaGuardar_()),
         logTrm: getVal('cfgLogTrm') || 0,

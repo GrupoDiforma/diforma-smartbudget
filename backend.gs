@@ -1904,7 +1904,7 @@ function extraerPreciosPdfGemini_(file) {
     }],
     generationConfig: { temperature: 0.1 }
   };
-  var r = ejecutarGeminiDinamico(apiKey, payload, false);
+  var r = ejecutarGeminiDinamico(apiKey, payload, false, "catalogo");
   var txt = "";
   try { txt = r.data.candidates[0].content.parts[0].text || ""; } catch (e) { throw new Error("Gemini no devolvió texto del PDF."); }
   var m = txt.match(/\[[\s\S]*\]/);
@@ -2562,17 +2562,109 @@ function esErrorCupoGemini_(msg) {
 }
 
 function tarifasGeminiConfig_() {
-  var out = { cupoTokens: 2000000, cupoUsd: 20, usdIn: 1.25, usdOut: 10 };
+  var out = { cupoTokens: 2000000, cupoUsd: 20, cupoCop: 50000, usdIn: 1.25, usdOut: 10, usdInFlash: 0.30, usdOutFlash: 2.50, trmCop: 4150 };
   try {
     var cfg = obtenerConfiguracionGlobal();
     if (cfg.exito && cfg.data) {
       if (cfg.data.geminiCupoTokens) out.cupoTokens = Number(cfg.data.geminiCupoTokens) || out.cupoTokens;
       if (cfg.data.geminiCupoUsd != null) out.cupoUsd = Number(cfg.data.geminiCupoUsd) || out.cupoUsd;
+      if (cfg.data.geminiCupoCop != null && Number(cfg.data.geminiCupoCop) > 0) out.cupoCop = Number(cfg.data.geminiCupoCop);
       if (cfg.data.geminiUsdPor1MIn) out.usdIn = Number(cfg.data.geminiUsdPor1MIn) || out.usdIn;
       if (cfg.data.geminiUsdPor1MOut) out.usdOut = Number(cfg.data.geminiUsdPor1MOut) || out.usdOut;
+      if (cfg.data.geminiUsdPor1MInFlash != null && Number(cfg.data.geminiUsdPor1MInFlash) >= 0) out.usdInFlash = Number(cfg.data.geminiUsdPor1MInFlash);
+      if (cfg.data.geminiUsdPor1MOutFlash != null && Number(cfg.data.geminiUsdPor1MOutFlash) >= 0) out.usdOutFlash = Number(cfg.data.geminiUsdPor1MOutFlash);
+      if (cfg.data.logTrm && Number(cfg.data.logTrm) > 0) out.trmCop = Number(cfg.data.logTrm);
     }
   } catch (e) {}
   return out;
+}
+
+function tarifaGeminiModelo_(modelo, t) {
+  var m = String(modelo || "").toLowerCase();
+  if (m.indexOf("flash") !== -1) return { usdIn: t.usdInFlash, usdOut: t.usdOutFlash };
+  return { usdIn: t.usdIn, usdOut: t.usdOut };
+}
+
+function costoGeminiUsd_(tokensIn, tokensOutFacturable, modelo, t) {
+  var r = tarifaGeminiModelo_(modelo, t || tarifasGeminiConfig_());
+  return (Number(tokensIn) || 0) / 1000000 * r.usdIn + (Number(tokensOutFacturable) || 0) / 1000000 * r.usdOut;
+}
+
+function fechaUsoGemini_() {
+  var tz = "America/Bogota";
+  try { tz = Session.getScriptTimeZone() || tz; } catch (e) {}
+  return Utilities.formatDate(new Date(), tz, "yyyy-MM-dd");
+}
+
+function fechaUsoStr_(v) {
+  if (v instanceof Date) {
+    var tz = "America/Bogota";
+    try { tz = Session.getScriptTimeZone() || tz; } catch (e) {}
+    return Utilities.formatDate(v, tz, "yyyy-MM-dd");
+  }
+  return String(v || "");
+}
+
+function hojaUsoDiario_() {
+  var ss = libroHistorico_();
+  var sh = ss.getSheetByName("Gemini_Uso_Diario");
+  if (!sh) {
+    sh = ss.insertSheet("Gemini_Uso_Diario");
+    sh.appendRow(["fecha", "periodo", "modulo", "modelo", "llamadas", "tokensIn", "tokensOut", "tokensPensados", "tokensTotal", "costoUsd"]);
+    sh.setFrozenRows(1);
+  }
+  try { sh.getRange("A:B").setNumberFormat("@"); } catch (eFmt) {}
+  return sh;
+}
+
+function registrarUsoDiario_(patch, o) {
+  try {
+    var fecha = fechaUsoGemini_();
+    var periodo = periodoUsoGemini_();
+    var modulo = String(patch.modulo || "costos").slice(0, 40);
+    var modelo = String(patch.modelo || (o && o.ultimoModelo) || "");
+    var tin = Number(patch.tokensIn) || 0;
+    var tout = Number(patch.tokensOut) || 0;
+    var pensados = Number(patch.tokensPensados) || 0;
+    var costo = patch.ok ? costoGeminiUsd_(tin, tout, modelo, tarifasGeminiConfig_()) : 0;
+    var llamadas = (patch.llamada || patch.error) ? 1 : 0;
+    if (!llamadas && !tin && !tout) return;
+    var sh = hojaUsoDiario_();
+    var data = sh.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (fechaUsoStr_(data[i][0]) === fecha && String(data[i][2]) === modulo && String(data[i][3]) === modelo) {
+        sh.getRange(i + 1, 5, 1, 6).setValues([[
+          (Number(data[i][4]) || 0) + llamadas,
+          (Number(data[i][5]) || 0) + tin,
+          (Number(data[i][6]) || 0) + tout,
+          (Number(data[i][7]) || 0) + pensados,
+          (Number(data[i][8]) || 0) + tin + tout,
+          Math.round(((Number(data[i][9]) || 0) + costo) * 1000000) / 1000000
+        ]]);
+        return;
+      }
+    }
+    sh.appendRow([fecha, periodo, modulo, modelo, llamadas, tin, tout, pensados, tin + tout, Math.round(costo * 1000000) / 1000000]);
+  } catch (e) {}
+}
+
+function leerUsoDiario_(periodo) {
+  var filas = [];
+  try {
+    var sh = hojaUsoDiario_();
+    var data = sh.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (periodo && String(data[i][1]) !== String(periodo)) continue;
+      filas.push({
+        fecha: fechaUsoStr_(data[i][0]), periodo: String(data[i][1] || ""),
+        modulo: String(data[i][2] || ""), modelo: String(data[i][3] || ""),
+        llamadas: Number(data[i][4]) || 0, tokensIn: Number(data[i][5]) || 0,
+        tokensOut: Number(data[i][6]) || 0, tokensPensados: Number(data[i][7]) || 0,
+        tokensTotal: Number(data[i][8]) || 0, costoUsd: Number(data[i][9]) || 0
+      });
+    }
+  } catch (e) {}
+  return filas;
 }
 
 function cupoTokensConfig_() {
@@ -2686,6 +2778,7 @@ function registrarUsoGemini_(patch) {
       o.cupoAgotado = false;
     }
     guardarUsoGemini_(o);
+    registrarUsoDiario_(patch, o);
     return o;
   } finally {
     try { lock.releaseLock(); } catch (eRel) {}
@@ -2697,18 +2790,63 @@ function obtenerUsoGemini() {
   var o = leerUsoGemini_();
   var tin = Number(o.tokensIn) || 0;
   var tout = Number(o.tokensOut) || 0;
+  var diario = leerUsoDiario_(o.periodo);
   var costoUsd = (tin / 1000000) * t.usdIn + (tout / 1000000) * t.usdOut;
+  var pensados = 0;
+  if (diario.length) {
+    var dIn = 0, dOut = 0, dCosto = 0;
+    diario.forEach(function (f) { dCosto += Number(f.costoUsd) || 0; pensados += Number(f.tokensPensados) || 0; dIn += Number(f.tokensIn) || 0; dOut += Number(f.tokensOut) || 0; });
+    // Histórico del mes anterior al detalle diario: se estima con la tarifa general para no perderlo.
+    var rIn = Math.max(0, tin - dIn), rOut = Math.max(0, tout - dOut);
+    costoUsd = dCosto + (rIn / 1000000) * t.usdIn + (rOut / 1000000) * t.usdOut;
+  }
+  var costoCop = costoUsd * t.trmCop;
+  var pctCop = t.cupoCop > 0 ? Math.min(100, Math.round(costoCop * 1000 / t.cupoCop) / 10) : 0;
   var pctUsd = t.cupoUsd > 0 ? Math.min(100, Math.round(costoUsd * 1000 / t.cupoUsd) / 10) : 0;
   var pctTok = t.cupoTokens > 0 ? Math.min(100, Math.round((Number(o.tokensTotal) || 0) * 100 / t.cupoTokens)) : 0;
-  var pct = t.cupoUsd > 0 ? pctUsd : pctTok;
+  var hoyFecha = fechaUsoGemini_();
+  var hoy = { fecha: hoyFecha, llamadas: 0, tokensIn: 0, tokensOut: 0, tokensPensados: 0, tokensTotal: 0, costoUsd: 0 };
+  var porFecha = {}, porModulo = {}, porModelo = {};
+  function acum_(map, clave, f) {
+    if (!map[clave]) map[clave] = { nombre: clave, llamadas: 0, tokensIn: 0, tokensOut: 0, tokensPensados: 0, tokensTotal: 0, costoUsd: 0 };
+    var a = map[clave];
+    a.llamadas += f.llamadas; a.tokensIn += f.tokensIn; a.tokensOut += f.tokensOut;
+    a.tokensPensados += f.tokensPensados; a.tokensTotal += f.tokensTotal; a.costoUsd += f.costoUsd;
+  }
+  diario.forEach(function (f) {
+    if (f.fecha === hoyFecha) {
+      hoy.llamadas += f.llamadas; hoy.tokensIn += f.tokensIn; hoy.tokensOut += f.tokensOut;
+      hoy.tokensPensados += f.tokensPensados; hoy.tokensTotal += f.tokensTotal; hoy.costoUsd += f.costoUsd;
+    }
+    acum_(porFecha, f.fecha, f); acum_(porModulo, f.modulo || "costos", f); acum_(porModelo, f.modelo || "—", f);
+  });
+  var ultimos7 = Object.keys(porFecha).sort().slice(-7).map(function (k) {
+    var a = porFecha[k]; return { fecha: k, llamadas: a.llamadas, tokensTotal: a.tokensTotal, costoUsd: Math.round(a.costoUsd * 10000) / 10000, costoCop: Math.round(a.costoUsd * t.trmCop) };
+  });
+  function lista_(map) {
+    return Object.keys(map).map(function (k) {
+      var a = map[k];
+      return { nombre: a.nombre, llamadas: a.llamadas, tokensIn: a.tokensIn, tokensOut: a.tokensOut, tokensPensados: a.tokensPensados, tokensTotal: a.tokensTotal, costoUsd: Math.round(a.costoUsd * 10000) / 10000, costoCop: Math.round(a.costoUsd * t.trmCop) };
+    }).sort(function (a, b) { return b.costoUsd - a.costoUsd; });
+  }
   return {
     exito: true,
     data: Object.assign({}, o, {
       cupoTokens: t.cupoTokens,
       cupoUsd: t.cupoUsd,
+      cupoCop: t.cupoCop,
+      trmCop: t.trmCop,
       costoUsd: Math.round(costoUsd * 10000) / 10000,
-      porcentaje: pct,
-      porcentajeTokens: pctTok
+      costoCop: Math.round(costoCop),
+      tokensPensados: pensados,
+      porcentaje: pctCop,
+      porcentajeCop: pctCop,
+      porcentajeUsd: pctUsd,
+      porcentajeTokens: pctTok,
+      hoy: Object.assign({}, hoy, { costoCop: Math.round(hoy.costoUsd * t.trmCop) }),
+      ultimos7: ultimos7,
+      porModulo: lista_(porModulo),
+      porModelo: lista_(porModelo)
     })
   };
 }
@@ -2717,7 +2855,7 @@ function payloadUsoGemini_() {
   return obtenerUsoGemini().data;
 }
 
-function ejecutarGeminiDinamico(apiKey, payload, forzarPro) {
+function ejecutarGeminiDinamico(apiKey, payload, forzarPro, modulo) {
   var modelos = obtenerModelosDinamicos(apiKey);
   var c = [];
   var tm = forzarPro ? "PRO" : "FLASH";
@@ -2745,7 +2883,7 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro) {
   }
   if (!jsonRes) {
     var joined = err.join("\n");
-    registrarUsoGemini_({ error: joined });
+    registrarUsoGemini_({ error: joined, modulo: modulo || "costos" });
     var cupo = esErrorCupoGemini_(joined);
     return {
       exito: false,
@@ -2757,11 +2895,15 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro) {
     };
   }
   var um = (jsonRes.usageMetadata) || {};
+  var pensados = Number(um.thoughtsTokenCount) || 0;
   registrarUsoGemini_({
     llamada: true,
     tokensIn: um.promptTokenCount || 0,
-    tokensOut: um.candidatesTokenCount || 0,
+    tokensOut: (Number(um.candidatesTokenCount) || 0) + pensados,
+    tokensPensados: pensados,
+    tokensTotalReportado: um.totalTokenCount || 0,
     modelo: me,
+    modulo: modulo || "costos",
     ok: true
   });
   return { exito: true, data: jsonRes, modeloUsado: me, uso: payloadUsoGemini_() };
@@ -2770,13 +2912,13 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro) {
 function proxyGeminiAnalizar(p) {
   var k = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!k) throw new Error("Falta API Key");
-  return ejecutarGeminiDinamico(k, { contents: [{ parts: p.parts }], generationConfig: { temperature: 0.1 } }, p.forzarPro);
+  return ejecutarGeminiDinamico(k, { contents: [{ parts: p.parts }], generationConfig: { temperature: 0.1 } }, p.forzarPro, p.modulo || "costos");
 }
 
 function proxyGeminiChat(p) {
   var k = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!k) throw new Error("Falta API Key");
-  return ejecutarGeminiDinamico(k, { contents: [{ parts: [{ text: p.promptText }] }], generationConfig: { temperature: 0.2 } }, p.forzarPro);
+  return ejecutarGeminiDinamico(k, { contents: [{ parts: [{ text: p.promptText }] }], generationConfig: { temperature: 0.2 } }, p.forzarPro, p.modulo || "costos");
 }
 
 // ==========================================

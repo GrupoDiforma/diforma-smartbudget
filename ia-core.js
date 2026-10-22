@@ -816,14 +816,14 @@ async function llamarGeminiConImagenes(promptTexto, timeoutMs, opts) {
         });
     vis.forEach(function (p) { parts.push(p); });
     const ms = timeoutMs || (forzarPro ? 300000 : 240000);
-    const data = await realizarPeticionBD({ action: 'gemini_analizar', forzarPro: forzarPro, parts: parts }, { timeoutMs: ms });
+    const data = await realizarPeticionBD({ action: 'gemini_analizar', modulo: 'costos', forzarPro: forzarPro, parts: parts }, { timeoutMs: ms });
     pintarUsoGemini(data && data.uso);
     return data;
 }
 
 async function llamarGeminiChat(promptTexto, timeoutMs) {
     const forzarPro = document.getElementById('togglePro')?.checked || false;
-    const data = await realizarPeticionBD({ action: 'gemini_chat', forzarPro: forzarPro, promptText: promptTexto }, { timeoutMs: timeoutMs || 120000 });
+    const data = await realizarPeticionBD({ action: 'gemini_chat', modulo: 'costos', forzarPro: forzarPro, promptText: promptTexto }, { timeoutMs: timeoutMs || 120000 });
     pintarUsoGemini(data && data.uso);
     return data;
 }
@@ -835,26 +835,40 @@ function fmtTokens(n) {
     return String(n);
 }
 
+function fmtCop(n) {
+    return "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+}
+function costoCopUso_(uso) {
+    if (uso.costoCop != null) return Number(uso.costoCop) || 0;
+    const trm = (typeof trmActualGlobal === "number" && trmActualGlobal > 0) ? trmActualGlobal : (Number(uso.trmCop) || 4150);
+    return (Number(uso.costoUsd) || 0) * trm;
+}
+function pctCopUso_(uso, cop) {
+    const cupo = Number(uso.cupoCop) || 0;
+    if (cupo > 0) return Math.max(0, Math.min(100, Math.round(cop * 1000 / cupo) / 10));
+    return Math.max(0, Math.min(100, Number(uso.porcentaje) || 0));
+}
 function pintarUsoGemini(uso) {
     if (!uso) return;
+    window._ultimoUsoGemini = uso;
     const fill = document.getElementById("geminiUsoFill");
     const txt = document.getElementById("geminiUsoTxt");
     const wrap = document.getElementById("geminiUsoWrap");
     const alerta = document.getElementById("geminiUsoAlerta");
-    const pct = Math.max(0, Math.min(100, Number(uso.porcentaje) || 0));
+    const cop = costoCopUso_(uso);
+    const cupoCop = Number(uso.cupoCop) || 0;
+    const pct = pctCopUso_(uso, cop);
     const agotado = !!uso.cupoAgotado || String(uso.ultimoEstado) === "cupo";
     if (fill) fill.style.width = (agotado ? 100 : pct) + "%";
-    const usd = Number(uso.costoUsd);
-    const cupoUsd = Number(uso.cupoUsd) || 0;
     if (wrap) {
         wrap.classList.remove("ok", "warn", "crit");
         wrap.classList.add(agotado || pct >= 95 ? "crit" : (pct >= 80 ? "warn" : "ok"));
-        wrap.title = "Consumo de toda la empresa este mes (tokens × tarifa de Ajustes). El mismo número para todos. Google no publica el saldo real de la API.";
+        wrap.title = "Consumo Gemini de toda la empresa este mes: ~" + fmtCop(cop) + (cupoCop ? " de " + fmtCop(cupoCop) : "") + " (" + pct + "%), " + (uso.llamadas || 0) + " llamadas, " + fmtTokens(uso.tokensTotal) + " tokens. Clic para el detalle por día, módulo y modelo. Google no publica el saldo real.";
     }
     if (txt) {
-        if (agotado) txt.textContent = "Equipo · Gemini sin crédito";
-        else if (cupoUsd > 0 && !isNaN(usd)) txt.textContent = "Equipo " + pct + "% · ~US$" + usd.toFixed(2) + " / " + cupoUsd;
-        else txt.textContent = "Equipo " + pct + "% · " + fmtTokens(uso.tokensTotal) + "/" + fmtTokens(uso.cupoTokens);
+        if (agotado) txt.textContent = "Sin crédito";
+        else if (cupoCop > 0) txt.textContent = pct + "% · " + fmtCop(cop) + " / " + fmtCop(cupoCop);
+        else txt.textContent = pct + "% · " + fmtCop(cop);
     }
     if (alerta) {
         if (agotado) {
@@ -864,7 +878,48 @@ function pintarUsoGemini(uso) {
             alerta.classList.add("d-none");
         }
     }
+    pintarDetalleUsoGemini_(uso);
 }
+function filaUsoHtml_(f, trm) {
+    const cop = f.costoCop != null ? f.costoCop : (Number(f.costoUsd) || 0) * trm;
+    return "<tr><td>" + String(f.nombre || f.fecha || "—") + "</td><td class='text-end'>" + (f.llamadas || 0) + "</td><td class='text-end'>" + fmtTokens(f.tokensIn) + "</td><td class='text-end'>" + fmtTokens(f.tokensOut) + "</td><td class='text-end'>" + fmtTokens(f.tokensPensados) + "</td><td class='text-end'>" + fmtTokens(f.tokensTotal) + "</td><td class='text-end'>" + fmtCop(cop) + "</td></tr>";
+}
+function tablaUsoHtml_(titulo, filas, trm, vacio) {
+    let h = "<h6 class='fw-bold mt-3 mb-2' style='font-size:0.85rem;'>" + titulo + "</h6>";
+    if (!filas || !filas.length) return h + "<p class='text-muted small'>" + vacio + "</p>";
+    h += "<div class='table-responsive'><table class='table table-sm align-middle mb-0'><thead class='table-light'><tr><th></th><th class='text-end'>Llamadas</th><th class='text-end'>Entrada</th><th class='text-end'>Salida*</th><th class='text-end'>Pensados</th><th class='text-end'>Total</th><th class='text-end'>Costo est.</th></tr></thead><tbody>";
+    filas.forEach(function (f) { h += filaUsoHtml_(f, trm); });
+    return h + "</tbody></table></div>";
+}
+function pintarDetalleUsoGemini_(uso) {
+    const box = document.getElementById("geminiUsoDetalle");
+    if (!box || !uso) return;
+    const trm = (typeof trmActualGlobal === "number" && trmActualGlobal > 0) ? trmActualGlobal : (Number(uso.trmCop) || 4150);
+    const cop = costoCopUso_(uso);
+    const cupoCop = Number(uso.cupoCop) || 0;
+    const pct = pctCopUso_(uso, cop);
+    const hoy = uso.hoy || {};
+    const nombreModulo = { costos: "Costos", logistica: "Logística", ajustes: "Ajustes", catalogo: "Catálogo (sync PDF)", excel: "Excel" };
+    const porModulo = (uso.porModulo || []).map(function (f) { return Object.assign({}, f, { nombre: nombreModulo[f.nombre] || f.nombre }); });
+    const dias = (uso.ultimos7 || []).map(function (f) { return { nombre: f.fecha, llamadas: f.llamadas, tokensTotal: f.tokensTotal, costoCop: f.costoCop, costoUsd: f.costoUsd }; });
+    let h = "<div class='row g-2 text-center'>";
+    h += "<div class='col-6 col-md-3'><div class='border rounded p-2'><div class='text-muted' style='font-size:0.7rem;'>MES (" + String(uso.periodo || "") + ")</div><div class='fw-bold'>" + fmtCop(cop) + "</div><div class='small text-muted'>" + pct + "%" + (cupoCop ? " de " + fmtCop(cupoCop) : "") + "</div></div></div>";
+    h += "<div class='col-6 col-md-3'><div class='border rounded p-2'><div class='text-muted' style='font-size:0.7rem;'>HOY</div><div class='fw-bold'>" + fmtCop(hoy.costoCop != null ? hoy.costoCop : (Number(hoy.costoUsd) || 0) * trm) + "</div><div class='small text-muted'>" + (hoy.llamadas || 0) + " llamadas</div></div></div>";
+    h += "<div class='col-6 col-md-3'><div class='border rounded p-2'><div class='text-muted' style='font-size:0.7rem;'>LLAMADAS DEL MES</div><div class='fw-bold'>" + (uso.llamadas || 0) + "</div><div class='small text-muted'>Último modelo: " + String(uso.ultimoModelo || "—") + "</div></div></div>";
+    h += "<div class='col-6 col-md-3'><div class='border rounded p-2'><div class='text-muted' style='font-size:0.7rem;'>TOKENS DEL MES</div><div class='fw-bold'>" + fmtTokens(uso.tokensTotal) + "</div><div class='small text-muted'>In " + fmtTokens(uso.tokensIn) + " · Out " + fmtTokens(uso.tokensOut) + "</div></div></div>";
+    h += "</div>";
+    h += tablaUsoHtml_("Por módulo (mes)", porModulo, trm, "Sin detalle por módulo todavía: llega con la próxima llamada tras publicar el backend nuevo.");
+    h += tablaUsoHtml_("Por modelo (mes)", uso.porModelo || [], trm, "Sin detalle por modelo todavía.");
+    h += tablaUsoHtml_("Últimos días", dias, trm, "Sin uso registrado en los últimos días.");
+    h += "<p class='text-muted mt-3 mb-0' style='font-size:0.72rem;'>* La salida incluye los tokens pensados (razonamiento), que Google cobra como salida. Costo estimado con las tarifas de Ajustes y TRM " + fmtCop(trm).replace("$", "$") + " COP/USD; Google puede aplicar descuentos, por eso su consola manda. El detalle diario empieza a llenarse al publicar el <code>backend.gs</code> nuevo; el total del mes sí conserva el histórico.</p>";
+    box.innerHTML = h;
+}
+window.abrirModalUsoGemini = function () {
+    if (window._ultimoUsoGemini) pintarDetalleUsoGemini_(window._ultimoUsoGemini);
+    const el = document.getElementById("modalUsoGemini");
+    if (el && window.bootstrap) bootstrap.Modal.getOrCreateInstance(el).show();
+    if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
+};
 
 window.refrescarUsoGemini = async function () {
     try {

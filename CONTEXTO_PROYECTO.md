@@ -185,7 +185,8 @@ Mismo libro (`DB_SHEET_ID_V28`):
 - `Catalogo_Maestro`: corazón de precios (categoria, proveedor, nombre, um, costo_cop, vigente, revisar, fuente_archivo, file_id, ruta, actualizado). Vive en este libro (GD-SmartBudget / 01_Sistema), **no** dentro del buzón de listados de Compras.
 - `Ingesta_Log`: cada archivo procesado (estado OK/VACIO/ERROR, filas, fecha).
 - `Catalogo_Meta`: una fila de progreso (`estado`, archivo, índice, mensaje, `ultima_sync`, `ultima_por`).
-- `Gemini_Uso`: consumo mensual **de toda la empresa** (tokens/USD). El medidor “Equipo” lee esta hoja, no propiedades del script por cada deployment.
+- `Gemini_Uso`: consumo mensual **de toda la empresa** (tokens/USD). El contador global del encabezado lee esta hoja, no propiedades del script por cada deployment.
+- `Gemini_Uso_Diario`: una fila por fecha × módulo (`costos`, `logistica`, `ajustes`, `catalogo`, `excel`) × modelo, con llamadas, tokens de entrada/salida/pensados/total y costo USD estimado por modelo (Flash con su tarifa, resto con la de Pro). La crea el backend al registrar. El contador global vive en el encabezado (junto a Catálogo/Ajustes) y su modal desglosa hoy, mes, módulo, modelo y últimos días. El % del mes va contra `geminiCupoCop` (límite COP de Google, editable en Ajustes → Presupuesto Gemini; defecto 50.000), no contra el cupo USD. La salida facturable incluye `thoughtsTokenCount`. El histórico mensual previo al detalle se estima con la tarifa general para no perderlo.
 
 Los JSON de `Presupuestos` incluyen `versiones[]` (V1, V2… con matriz, chat, comentario y `fichaComercial`) y `cabecera.locale`.
 
@@ -227,7 +228,7 @@ Clonar AUX: **antes** de rellenar NAL/EXP (si se clona después, ExcelJS copia r
 
 **AIU en pantalla.** Fila **Costo directo** resaltada (`.aiu-directo`): es el dato que cotizan los coordinadores de producción.
 
-**IA y visor.** Split 50/50. PDF.js con paginación. Generar matriz timeout largo (hasta 180 s). Timeout por defecto de otras peticiones 45 s. Gemini PRO opcional. Medidor de cupo **global** (`Gemini_Uso`).
+**IA y visor.** Split 50/50. PDF.js con paginación. Generar matriz timeout largo (hasta 180 s). Timeout por defecto de otras peticiones 45 s. Gemini PRO opcional. Contador de consumo **global en el encabezado** (`Gemini_Uso` + `Gemini_Uso_Diario`; ver checkpoint 22 oct).
 
 **Ficha comercial (puente a Logística).** En Ingeniería, editable, persistida **por versión**: título, descripción 3–4 líneas, medidas generales y empaque (cm/in según locale). Sale al **Generar matriz** o con **Rellenar con IA** (no toca costos). Alimenta la cotización PDF. No reescribirla al cambiar Mercado a mano.
 
@@ -325,9 +326,11 @@ Preferida **S** es una sola por grupo (origen: modalidad|concepto; interno: moda
 
 «Al costo», «se confirmará» y «en caso de requerirse» no entran. Origen aéreo es la carta de San Juan del 8 oct 2026, no la de Miami de abril 2025. Las tablas de flete marítimo (FCL por naviera y LCL 180 USD W/M) no están cargadas salvo lo que Edwin escriba. Sin tarifa preferida, la fila queda vacía: no se inventa un `[Estimado IA]` en Análisis ni en Generar.
 
+**Escenarios (Opción 1…n) con logística (22 oct 2026).** Cada opción liquida su propia logística: cubicaje (cajas, m³, peso) por las cantidades de esa opción, mix de contenedores calculado y editable por opción, embarques por opción y cada línea (origen, flete interno, flete principal, seguro sobre el EXW de esa opción, destino, Duties/Taxes con su CIF) guardada en `env.porEsc[escId]` (`contenedores`, `contenedoresManual`, `embarques`, `cubM3/cubPeso/cubKgVol`, `valores/fuentes/notas/pcts` por línea). Sin `porEsc` (cotizaciones viejas) vale el global para todas hasta recalcular. Análisis y Generar recorren todas las opciones. En la hoja/PDF ya no se apilan qty/pu/sub con una sola logística y un gran total múltiple: va **una sección completa por opción** (encabezado OPCIÓN n, sus productos, subtotal EXW, su bloque logístico con `FCL mix · m³ · kg`, su gran total e IVA/anticipo si aplica), una debajo de otra en el mismo documento, sin salto de página forzado. La ficha de Envío muestra la tabla por opción (los inputs globales de contenedores/cubicaje se ocultan en escenarios) y Costos logísticos edita los valores de la opción elegida en las pestañas sobre las filas; el % de Duties/Taxes sigue compartido.
+
 **Envío, contenedores y embarques.** Cubicaje (m³, peso real, kg vol) es editable en la ficha. Vacío usa el empaque. En FCL el análisis propone cuántos 20', 40' y 40HC caben y los deja editables. **Calcular** vuelve a poner la mezcla. Útiles de planificación, no tarifas: 20' 28 m³ / 21.700 kg, 40' 58 m³ / 26.500 kg, 40HC 68 m³ / 26.500 kg. Si la operación usa otros, se cambian en `LOG_CONT_CAP_`. Lo escrito no se pisa. **Embarques** (defecto 1) multiplican los cargos marcados por embarque. El flete por kg, por W/M o por contenedor usa el cubicaje o la cantidad de cada equipo y no se multiplica otra vez.
 
-**Partida arancelaria (en el working tree, sin commit).** Vive en la ficha comercial del elemento (`fichaComercial.partida`) y en la fila de la cotización. Desplegable editable. **Rellenar con IA** está junto al título comercial, no en la barra de país, idioma y sistema. No se imprime. Lista en **Ajustes → Logística → Partidas** (`CONFIG_GLOBAL.partidas`), formato `9403.20.00.00`. Semilla: las 31 del listado (metálico, madera, plástico, display plástico, impresos, cartón, cajas corrugadas y plegadizas, calcomanías, hojalata, neveras, caja de luz, y los códigos nacionales del Excel, p. ej. `9403.20.99.00`). La ficha sugiere una sola; si nombra dos materiales, queda vacía. Cartonplast → plástico. El cruce con Duties y Taxes es país de destino × esa partida.
+**Partida arancelaria.** Vive en la ficha comercial del elemento (`fichaComercial.partida`) y en la fila de la cotización. Desplegable editable. **Rellenar con IA** está junto al título comercial, no en la barra de país, idioma y sistema. No se imprime. Lista en **Ajustes → Logística → Partidas** (`CONFIG_GLOBAL.partidas`), formato `9403.20.00.00`. Semilla: las 31 del listado (metálico, madera, plástico, display plástico, impresos, cartón, cajas corrugadas y plegadizas, calcomanías, hojalata, neveras, caja de luz, y los códigos nacionales del Excel, p. ej. `9403.20.99.00`). La ficha sugiere una sola; si nombra dos materiales, queda vacía. Cartonplast → plástico. El cruce con Duties y Taxes es país de destino × esa partida.
 
 **Aún sin diseñar, fuera de este catálogo:** márgenes logísticos dentro de Ajustes (el % ya vive en la ficha de la cotización). Partir el JSON del presupuesto queda para cuando Edwin pida el plan.
 
@@ -348,7 +351,7 @@ Lee este checkpoint y la sección **Tarifas logísticas**. No abras chats anteri
 
 La versión de la app es **V2.0**, **V2.1** … **V2.9**, **V3.0**. El badge lo cambia solo `./desplegar.sh`. El esquema de tres números (`V1.0.33`) ya no se usa. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
 
-Caché local: `styles.css 1.0.78` · `admin.js 1.0.71` · `connectors.js 1.0.41` · `ia-core.js 1.0.42` · `engine.js 1.0.39` · `logistica.js 1.0.138`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
+Caché local: `styles.css 1.0.80` · `admin.js 1.0.72` · `connectors.js 1.0.41` · `ia-core.js 1.0.43` · `engine.js 1.0.39` · `logistica.js 1.0.140` · `export-excel.js 1.0.33`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
 
 Nube, una fila por dato:
 
@@ -358,7 +361,7 @@ Nube, una fila por dato:
 - Al guardar una cotización hay overlay con segundos. La fila entra a Guardadas en ese navegador al terminar. El backend debe borrar la caché `cot_list_v2` para que el otro navegador la vea al momento.
 - Con una cotización abierta, **Guardar** reescribe esa misma Rev (`modo: misma`). **Guardar como Rev N+1** añade otra fila. Una cotización nueva solo nace si no hay ninguna abierta. En Guardadas, el basurero borra esa revisión; el segundo clic confirma. Drive solo tira un render `C-#####_r#_…` si ninguna otra fila lo cita. Los renders de presupuesto no se tocan. Hasta publicar este `backend.gs`, el servidor viejo sigue creando una Rev nueva.
 
-Cotización y ficha, en el working tree:
+Cotización y ficha, en el repo:
 
 - Encabezado gris de la tabla a dos líneas: Código de / proyecto, Precio / unitario · moneda, Precio / subtotal. La franja crece; ya no recorta con una sola línea.
 - Flete marítimo del PDF: `(FCL 1×40')` o `(LCL 2,350 m³)`.
@@ -370,4 +373,26 @@ Cotización y ficha, en el working tree:
 - Leer una carta de operador muestra el avance. No hay duplicado masivo de filas. Ciudades es la última pestaña de Ajustes → Logística.
 
 Siguiente, solo si Edwin lo pide: publicar `backend.gs`, o cargar la escala LCL de Cartagena que él dicte. No inventar 40HC de flete interno ni tarifas de puerto.
+
+---
+
+## CHECKPOINT — 22 oct 2026
+
+Dos cambios de esta jornada, **en el repo (rama `desarrollo`) y sin publicar**: el badge sigue en la versión que dejó el último despliegue y no se hizo `git push` ni `./desplegar.sh`. No se llamó `guardar_config` ni se alteraron Motor AIU, Márgenes, Catálogos fijos, Comisiones ni los textos de Prompts IA. Los campos nuevos de Gemini en Ajustes solo se guardan si un administrador pulsa Guardar.
+
+**1. Contador global de Gemini (encabezado).** El medidor viejo vivía escondido en el Asistente de costeo y subestimaba el gasto: no contaba `thoughtsTokenCount` (Google lo cobra como salida), estimaba Flash a tarifa de Pro, medía contra un cupo USD sin relación con el límite real y no desglosaba por día, módulo ni modelo (al probarlo decía octubre ≈ US$1,97 cuando la consola de Google marcaba COP 37.712 de 50.000 en el mes). Ahora:
+
+- Contador en el encabezado, junto a Catálogo/Ajustes/versión, visible en Ingeniería y en Logística; se quitó el del Asistente de costeo. Muestra `% · COP estimado / límite COP` con barra (ámbar ≥80 %, roja ≥95 % o sin crédito).
+- Clic abre el modal **Uso de Gemini — toda la empresa**: mes y hoy (costo y llamadas), tokens del mes, tablas por módulo y por modelo y últimos días.
+- `backend.gs` suma los pensados a la salida facturable, cobra Flash con su tarifa (`geminiUsdPor1MInFlash/OutFlash`; el resto con la de Pro) y escribe **`Gemini_Uso_Diario`** (una fila por fecha × módulo × modelo). Cada llamada se etiqueta por origen: `costos`, `logistica`, `ajustes`, `catalogo` (sync de PDF) y `excel` (el refinamiento de plantilla, que antes ni refrescaba el medidor).
+- El % va contra **`geminiCupoCop`** (defecto 50.000, el límite de Google; editable en Ajustes → Presupuesto Gemini si Edwin lo cambia en Google). El histórico mensual previo al detalle diario se sigue estimando con la tarifa general para no perder el total del mes.
+- Es un **estimado interno**, no el saldo de Google: Google no publica saldo en vivo, puede aplicar descuentos (en las capturas, −COP 845) y su consola manda. Solo cuenta lo que pasa por GAS en SmartBudget; si la misma clave se usa en otra herramienta, eso aparece en Google y no aquí. Octubre de 2026 no reconcilia exacto (los pensados de este mes nunca se guardaron); el primer mes limpio es noviembre.
+
+**2. Logística por escenario (Opción 1…n).** Antes el cubicaje salía solo de la Opción 1 y había un único mix de contenedores y un único valor por línea para todos los rangos, así que un FCL CIF cobraba el mismo flete a 38 que a 184 unidades y la hoja apilaba cantidades con un solo bloque logístico. Ahora cada opción liquida lo suyo (ver **Escenarios (Opción 1…n) con logística** en la sección de tarifas): cubicaje, contenedores calculables y editables por opción, embarques por opción, seguro sobre el EXW de esa opción y Duties/Taxes con su CIF, persistido en `env.porEsc[escId]`. La hoja trae **una sección completa por opción, una debajo de otra en el mismo PDF** (OPCIÓN n → productos → subtotal EXW → su logística con `FCL mix · m³ · kg` → su gran total e IVA/anticipo), sin salto de página forzado. Análisis, Generar, validaciones y el borrado por cambio del presupuesto recorren todas las opciones. Cotización ya guardada sin `porEsc`: usa el valor global en todas hasta que se pulse Análisis + Generar otra vez.
+
+**Pendientes, solo si Edwin lo pide:**
+
+1. Pegar `backend.gs` en Apps Script y publicar **versión nueva de la misma implementación**. Sin eso, el chip Gemini muestra el total mensual de siempre (sin `cupoCop` ni detalle diario) y Guardar aranceles/la sync del listado siguen respondiendo «Acción no válida» donde ya se anotó.
+2. Validar con la cotización real de escenarios (17652, CIF Everglades, FCL): Análisis → Generar → revisar mix por opción y los tres gran totales en el PDF.
+3. Publicar/desplegar cuando Edwin lo pida. No inventar 40HC de flete interno ni tarifas de puerto; la escala LCL de Cartagena la dicta Edwin.
 

@@ -461,6 +461,12 @@ body {
 .log-esc-item input {
     width: 150px;
 }
+.log-esc-env { width: 100%; margin-top: 10px; }
+.log-esc-env table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.log-esc-env th, .log-esc-env td { padding: 3px 4px; border-bottom: 1px solid #e5e5e5; text-align: right; vertical-align: middle; }
+.log-esc-env th:first-child, .log-esc-env td:first-child { text-align: left; }
+.log-esc-env input { width: 58px; display: inline-block; }
+.log-esc-env .log-esc-cont-calc { font-size: 0.7rem; }
 .log-fila-top {
     display: flex;
     align-items: center;
@@ -1656,11 +1662,18 @@ html, body { overflow-x: hidden; }
 }
 .sb-toast .btn-close { margin: 10px 10px 0 0; }
 .gemini-uso {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 8px;
     min-width: 160px;
+    border: 1px solid var(--sb-line, #dee2e6);
+    background: #fff;
+    border-radius: 999px;
+    padding: 4px 10px;
+    cursor: pointer;
 }
+.gemini-uso:hover { border-color: var(--diforma-blue, #0d6efd); }
+.gemini-uso-label { font-size: 0.72rem; font-weight: 700; color: var(--sb-muted, #6c757d); white-space: nowrap; }
 .gemini-uso-bar {
     width: 72px;
     height: 6px;
