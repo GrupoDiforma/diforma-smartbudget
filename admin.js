@@ -1329,7 +1329,10 @@ function logAjustesVista(vista) {
     });
     try { sessionStorage.setItem("logAjustesVista", id); } catch (e) {}
     if (id === "ciudades") logCiudadesPintar_();
-    else if (id !== "aranceles") logTarPintar_();
+    else {
+        if (id !== "aranceles") logTarPintar_();
+        if (typeof logCiudadesBotonGuardar_ === "function") logCiudadesBotonGuardar_();
+    }
 }
 
 function logCiudadesUsoTxt_(uso) {
@@ -1385,6 +1388,16 @@ function logCiudadesPintar_() {
         }).join("");
     }
     if (info) info.textContent = pais ? (filas.length + " en " + pais) : "";
+    const cargando = pais && typeof logCiudadesCargandoPais_ === "function" && logCiudadesCargandoPais_(pais);
+    if (cargando) {
+        body.querySelectorAll("select, button").forEach(function (el) { el.disabled = true; });
+        const ag = document.getElementById("logCiudadesAgregar");
+        if (ag) ag.disabled = true;
+    } else {
+        const ag = document.getElementById("logCiudadesAgregar");
+        if (ag) ag.disabled = false;
+    }
+    if (typeof logCiudadesBotonGuardar_ === "function") logCiudadesBotonGuardar_();
     if (pais && typeof logCiudadesAsegurarPais_ === "function") logCiudadesAsegurarPais_(pais);
 }
 

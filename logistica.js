@@ -911,6 +911,8 @@ var logCiudadesOdoo_ = [];
 var logCiudadesApp_ = [];
 var logCiudadesOcultas_ = {};
 var logCiudadesAsegurando_ = {};
+var logCiudadesHojaLista_ = {};
+var logCiudadesPublicarPend_ = {};
 var logCiudadesEstado_ = { clase: "is-info", texto: "Las ciudades quedan en la app, ligadas al país. Odoo solo completa un país la primera vez." };
 var LOG_PAISES_LOCAL_ = "smartbudget_paises_odoo";
 var LOG_CIUDADES_LOCAL_ = "smartbudget_ciudades_app";
@@ -1180,10 +1182,33 @@ function logCiudadesTomar_(lista, pais, desdeHoja) {
     return logCiudadesAppDePais_(pais || filas[0].pais).length;
 }
 
+function logCiudadesCargandoPais_(pais) {
+    const k = logTarNorm_(String(pais || "").trim());
+    return !!(k && logCiudadesAsegurando_[k] === 1);
+}
+
+/** Guardar queda apagado mientras el país elegido todavía no llegó de la hoja. */
+function logCiudadesBotonGuardar_() {
+    const btn = document.getElementById("btnGuardarAjustes");
+    if (!btn || (typeof _configHojaFallo !== "undefined" && _configHojaFallo)) return;
+    const pais = (document.getElementById("logCiudadesPais") || {}).value || "";
+    const cargando = window.logTarTab === "ciudades" && !!pais && logCiudadesCargandoPais_(pais);
+    btn.disabled = !!cargando;
+    btn.title = cargando
+        ? "Espera a que termine el listado de este país. Guardar o editar antes reemplazaría sus ciudades con la lista a medias."
+        : "Guarda estos ajustes para toda la empresa.";
+}
+
 async function logCiudadesPublicarPais_(pais) {
     if (!pais || typeof realizarPeticionBD !== "function") return null;
     if (!localStorage.getItem("smartbudget_token")) return null;
     if (!(typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl)) return null;
+    const k = logTarNorm_(pais);
+    /* Reemplazar el país en la hoja con una lista a medias borra las ciudades que todavía no llegaron. */
+    if (!k || !logCiudadesHojaLista_[k]) {
+        if (k) logCiudadesPublicarPend_[k] = pais;
+        return null;
+    }
     const filas = logCiudadesAppDePais_(pais).map(function (x) {
         return { id: x.id, nombre: x.nombre, pais: pais, uso: x.uso || "ciudad" };
     });
@@ -1205,6 +1230,15 @@ async function logCiudadesEmpujarLocal_() {
     try {
         const r = await realizarPeticionBD({ action: "ciudades_consultar", pais: "" }, { timeoutMs: 30000 });
         if (!r || !r.exito || !Array.isArray(r.data)) return;
+        logCiudadesTomar_(r.data, "", true);
+        r.data.forEach(function (x) {
+            const kk = logTarNorm_(x.pais);
+            if (kk) logCiudadesHojaLista_[kk] = true;
+        });
+        logCiudadesApp_.forEach(function (x) {
+            const kk = logTarNorm_(x.pais);
+            if (kk) logCiudadesHojaLista_[kk] = true;
+        });
         const enHoja = {};
         r.data.forEach(function (x) { enHoja[logCiudadesAppClave_(x.pais, x.nombre)] = 1; });
         const paises = {};
@@ -1225,6 +1259,7 @@ async function logCiudadesAsegurarPais_(pais) {
     const k = logTarNorm_(p);
     if (!k || logCiudadesAsegurando_[k]) return;
     logCiudadesAsegurando_[k] = 1;
+    logCiudadesBotonGuardar_();
     const ya = logCiudadesAppDePais_(p).length;
     if (!ya) logCiudadesEstadoPoner_("is-info", "Trayendo las ciudades de " + p + " a la app…");
     let trajo = ya;
@@ -1232,16 +1267,19 @@ async function logCiudadesAsegurarPais_(pais) {
         if (localStorage.getItem("smartbudget_token") && typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.gasUrl && typeof realizarPeticionBD === "function") {
             const guardadas = await realizarPeticionBD({ action: "ciudades_consultar", pais: p }, { timeoutMs: 25000 });
             if (guardadas && /Acci[oó]n no v[aá]lida/i.test(String(guardadas.mensaje || ""))) {
-                logCiudadesEstadoPoner_("is-warn", "La dirección publicada sigue en la versión vieja. En Apps Script: Implementar, Administrar implementaciones, el lápiz de la que ya está en uso, Versión nueva, Implementar. No crees otra implementación.");
                 logCiudadesAsegurando_[k] = 0;
+                logCiudadesEstadoPoner_("is-warn", "La dirección publicada sigue en la versión vieja. En Apps Script: Implementar, Administrar implementaciones, el lápiz de la que ya está en uso, Versión nueva, Implementar. No crees otra implementación.");
                 return;
             }
             if (guardadas && guardadas.exito && Array.isArray(guardadas.data)) {
                 if (guardadas.data.length) trajo = logCiudadesTomar_(guardadas.data, p, true);
+                logCiudadesHojaLista_[k] = true;
                 const enHoja = {};
                 guardadas.data.forEach(function (x) { enHoja[logTarNorm_(x.nombre)] = 1; });
                 const faltan = logCiudadesAppDePais_(p).filter(function (x) { return !enHoja[logTarNorm_(x.nombre)]; });
-                if (faltan.length) logCiudadesPublicarPais_(p);
+                const pend = logCiudadesPublicarPend_[k];
+                delete logCiudadesPublicarPend_[k];
+                if (faltan.length || pend) logCiudadesPublicarPais_(p);
             }
             if (!logCiudadesAppDePais_(p).length) {
                 const cod = typeof logEnvCodigoDePais_ === "function" ? logEnvCodigoDePais_(p) : "";
@@ -1255,16 +1293,16 @@ async function logCiudadesAsegurarPais_(pais) {
                     trajo = logCiudadesTomar_(dePais, p);
                     logCiudadesPublicarPais_(p);
                 } else if (!trajo && r && r.mensaje && !/Indica el país/i.test(r.mensaje)) {
-                    logCiudadesEstadoPoner_("is-warn", "No pude traer " + p + " desde Odoo. Puedes agregar las ciudades aquí; quedan en la app.");
                     logCiudadesAsegurando_[k] = 0;
+                    logCiudadesEstadoPoner_("is-warn", "No pude traer " + p + " desde Odoo. Puedes agregar las ciudades aquí; quedan en la app.");
                     return;
                 }
             }
         }
     } catch (e) {
         if (!trajo) {
-            logCiudadesEstadoPoner_("is-warn", "No pude traer " + p + ". Escríbela arriba y agrégala: queda en la app, sin Odoo.");
             logCiudadesAsegurando_[k] = 0;
+            logCiudadesEstadoPoner_("is-warn", "No pude traer " + p + ". Escríbela arriba y agrégala: queda en la app, sin Odoo.");
             return;
         }
     }
