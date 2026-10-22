@@ -7498,6 +7498,11 @@ function logTarAsegurar_() {
             base[k] = Array.isArray(raw[k]) ? raw[k] : [];
         });
     }
+    /* Sheets devuelve `equipo` como número (20, 40): se normaliza a texto para que las comparaciones no fallen. */
+    Object.keys(base).forEach(function (k) {
+        if (!Array.isArray(base[k])) return;
+        base[k].forEach(function (f) { if (f && f.equipo != null && f.equipo !== "") f.equipo = String(f.equipo); });
+    });
     base.conceptos = (raw && raw.conceptos && typeof raw.conceptos === "object") ? raw.conceptos : { origen: [], destino: [] };
     base.lugares = (raw && Array.isArray(raw.lugares)) ? raw.lugares : [];
     window.logTarConceptos = base.conceptos;
@@ -7561,9 +7566,6 @@ function logTarSemillaOrigen_() {
         logTarFila_({ id: "ifs-f-doccharge", modalidad: "fcl", concepto: "Document charge", precio: 60, fecha: fcl }),
         logTarFila_({ id: "ifs-f-security", modalidad: "fcl", concepto: "Security manifest", precio: 50, fecha: fcl }),
         logTarFila_({ id: "ifs-f-waybill", modalidad: "fcl", concepto: "Sea waybill", precio: 50, fecha: fcl }),
-        logTarFila_({ id: "ifs-f-dthc20", modalidad: "fcl", concepto: "DTHC 20", precio: 980, equipo: "20", fecha: fcl }),
-        logTarFila_({ id: "ifs-f-dthc40", modalidad: "fcl", concepto: "DTHC 40", precio: 1080, equipo: "40", fecha: fcl }),
-        logTarFila_({ id: "ifs-f-dthc40hc", modalidad: "fcl", concepto: "DTHC 40HC", precio: 1080, equipo: "40hc", fecha: fcl }),
         logTarFila_({ id: "ifs-f-agencia", modalidad: "fcl", concepto: "Agenciamiento", forma: "variable", baseVar: "valor", precio: 0.35, minimo: 559300, moneda: "COP", fecha: fcl }),
         logTarFila_({ id: "ifs-f-sae", modalidad: "fcl", concepto: "SAE", precio: 49000, moneda: "COP", fecha: fcl }),
         logTarFila_({ id: "ifs-f-planilla", modalidad: "fcl", concepto: "Planilla", precio: 49000, moneda: "COP", fecha: fcl }),
@@ -7953,8 +7955,9 @@ function logTarCargoFijo_(f, ctx, veces) {
     const usd = logTarUsd_(f.precio, f.moneda);
     if (usd == null) return { faltaTrm: true };
     let n = Math.max(1, parseInt(ctx && ctx.embarques, 10) || 1);
-    if (f.equipo === "20" || f.equipo === "40" || f.equipo === "40hc") {
-        n = f.equipo === "20" ? ctx.c20 : (f.equipo === "40" ? ctx.c40 : ctx.c40hc);
+    const eqTar = String(f.equipo || "").toLowerCase();
+    if (eqTar === "20" || eqTar === "40" || eqTar === "40hc") {
+        n = eqTar === "20" ? ctx.c20 : (eqTar === "40" ? ctx.c40 : ctx.c40hc);
         if (!(n > 0)) return { skip: true };
     } else if (f.aplica === "contenedor") {
         n = veces != null ? veces : ctx.contN;
@@ -8018,7 +8021,11 @@ function logTarFilasMod_(filas, mod) {
 }
 
 function logTarAplicarOrigen_(e, ctx, notas) {
-    const filas = logTarFilasMod_(logTarAsegurar_().origen, e.modalidad);
+    /* DTHC es un cargo de destino, no de origen (validado por Edwin, 22 oct 2026): no se liquida en Origen
+       aunque la fila siga cargada en Ajustes. La semilla ya no lo trae; en Ajustes se puede borrar la fila. */
+    const filas = logTarFilasMod_(logTarAsegurar_().origen, e.modalidad).filter(function (f) {
+        return logTarNorm_(f.concepto).indexOf("dthc") !== 0;
+    });
     if (!filas.length) return { suma: 0, uso: 0 };
     return logTarSumarConceptos_(filas, ctx, notas);
 }
@@ -8175,7 +8182,7 @@ function logTarAvisoRango_() {
     if (!(kg > 0)) return "";
     logTarAsegurar_();
     const filas = logTarPreferidas_(logTarAsegurar_().aereo).filter(function (f) {
-        return logTarSi_(pais, f.pais) && logTarSi_(ciudad, f.ciudad);
+        return logTarMismoPais_(pais, f.pais) && logTarSi_(ciudad, f.ciudad);
     });
     if (!filas.length) return "";
     const rango = logTarRangoAereo_(filas[0], kg);
@@ -8186,7 +8193,7 @@ function logTarAvisoRango_() {
 
 function logTarAplicarAereo_(e, ctx, notas) {
     const filas = logTarPreferidas_(logTarAsegurar_().aereo).filter(function (f) {
-        return logTarSi_(e.destinoPais, f.pais) && logTarSi_(e.destinoCiudad, f.ciudad);
+        return logTarMismoPais_(e.destinoPais || e.destinoCodigo, f.pais) && logTarSi_(e.destinoCiudad, f.ciudad);
     });
     if (!filas.length) return { suma: 0, uso: 0 };
     if (!(ctx.kg > 0)) {
@@ -8238,7 +8245,7 @@ function logTarOtrosUsd_(f, veces, notas) {
 
 function logTarAplicarFcl_(e, ctx, notas) {
     const filas = logTarPreferidas_(logTarAsegurar_().fcl).filter(function (f) {
-        return logTarSi_(e.destinoPais, f.pais) && logTarSi_(e.destinoPuerto || e.destinoCiudad, f.puerto);
+        return logTarMismoPais_(e.destinoPais || e.destinoCodigo, f.pais) && logTarSi_(e.destinoPuerto || e.destinoCiudad, f.puerto);
     });
     if (!filas.length) return { suma: 0, uso: 0 };
     let suma = 0;
@@ -8266,7 +8273,7 @@ function logTarAplicarFcl_(e, ctx, notas) {
 
 function logTarAplicarLcl_(e, ctx, notas) {
     const filas = logTarPreferidas_(logTarAsegurar_().lcl).filter(function (f) {
-        return logTarSi_(e.destinoPais, f.pais) && logTarSi_(e.destinoPuerto || e.destinoCiudad, f.puerto);
+        return logTarMismoPais_(e.destinoPais || e.destinoCodigo, f.pais) && logTarSi_(e.destinoPuerto || e.destinoCiudad, f.puerto);
     });
     if (!filas.length) return { suma: 0, uso: 0 };
     const f = filas[0];
@@ -8342,7 +8349,7 @@ function logTarDetalleDestino_(f) {
 
 function logTarAplicarDestino_(e, ctx, notas) {
     const filas = logTarFilasMod_(logTarAsegurar_().destino, e.modalidad).filter(function (f) {
-        return logTarSi_(e.destinoPais, f.pais) && logTarSi_(e.destinoCiudad, f.ciudad);
+        return logTarMismoPais_(e.destinoPais || e.destinoCodigo, f.pais) && logTarSi_(e.destinoCiudad, f.ciudad);
     });
     if (!filas.length) return { suma: 0, uso: 0 };
     const montos = {};
