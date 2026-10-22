@@ -28,7 +28,7 @@ Sitio de producción: `https://smartbudget.grupodiforma.com` (GitHub Pages). Uso
   4. Indicar cómo probar en el preview local.
   5. Esperar validación y visto bueno.
   6. Solo si el usuario pide **publicar** o **desplegar**, ejecutar o entregar `./desplegar.sh`.
-- `./desplegar.sh` auto-incrementa la versión en `index.html` y alinea `main` con `desarrollo`.
+- `./desplegar.sh` auto-incrementa la versión en `index.html` (V2.0, V2.1 … V2.9, V3.0) y alinea `main` con `desarrollo`.
 
 ### 3. Modularidad física inviolable (Separation of Concerns)
 
@@ -344,7 +344,7 @@ Preferida **S** es una sola por grupo (origen: modalidad|concepto; interno: moda
 
 Lee este checkpoint y la sección **Tarifas logísticas**. No abras chats anteriores ni las cartas de IFS.
 
-Producción sigue en **V1.0.33**. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
+El badge del repo está en **V2.0**. Producción publicada sigue en V1.0.33 hasta el próximo despliegue; ese despliegue la deja en V2.1. A partir de ahí el segundo número sube de uno en uno hasta V2.9 y el siguiente es V3.0. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
 
 Caché local: `styles.css 1.0.77` · `admin.js 1.0.68` · `connectors.js 1.0.41` · `ia-core.js 1.0.42` · `engine.js 1.0.39` · `logistica.js 1.0.135`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
 

@@ -14,10 +14,18 @@ let match = content.match(/id="appVersionBadge">(V\d+\.\d+(?:\.\d+)?)/);
 if (match) {
   let oldVer = match[1];
   let parts = oldVer.replace("V", "").split(".");
-  let major = parts[0] || "1";
-  let minor = parts[1] || "0";
-  let patch = parseInt(parts[2] || "0") + 1;
-  let newVer = `V${major}.${minor}.${patch}`;
+  let major = parseInt(parts[0], 10) || 2;
+  let minor = parseInt(parts[1], 10);
+  if (!isFinite(minor)) minor = 0;
+  /* V2.0, V2.1 … V2.9 y después V3.0. Un número de tres partes (V1.0.33) entra directo en V2.0. */
+  let newVer;
+  if (parts.length >= 3) {
+    newVer = "V2.0";
+  } else {
+    minor += 1;
+    if (minor > 9) { major += 1; minor = 0; }
+    newVer = `V${major}.${minor}`;
+  }
   content = content.replace(`id="appVersionBadge">${oldVer}`, `id="appVersionBadge">${newVer}`);
   fs.writeFileSync(file, content);
   console.log(`📌 Versión incrementada automáticamente: ${oldVer} -> ${newVer}`);
