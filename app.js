@@ -1122,6 +1122,10 @@ function resetearVersionesProyecto() {
     window.versionesPresupuesto = [versionVacia_("V1", "")];
     window.versionActivaId = "V1";
     window.elementoActivoId = "";
+    /* Nueva mesa = Individual. Si el select queda en Grupal, pintarBarraElementos recrea Pieza 1. */
+    window.tipoEstructura = "INDIVIDUAL";
+    const selT = document.getElementById("selTipoEstructura");
+    if (selT) selT.value = "INDIVIDUAL";
     pintarSelectorVersiones();
     pintarBarraElementos();
 }
@@ -1291,6 +1295,10 @@ function ocultarAvisoCodigoGuardado() {
 }
 
 function cerrarAvisoCodigoGuardado() {
+    const p = window._importOdooPendiente;
+    const restaurar = p && p.codigoRestaurar != null ? String(p.codigoRestaurar) : "";
+    const input = document.getElementById("inputCodigo");
+    if (input && restaurar) input.value = restaurar;
     window._importOdooPendiente = null;
     ocultarAvisoCodigoGuardado();
     if (typeof mostrarAlertaOdoo === "function") {
@@ -1421,6 +1429,7 @@ async function cargarProyectoBD(idProyecto) {
             textoEsperaNube("Preparando la matriz…");
             const p = data.data; const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
             setVal('inputCodigo', p.cabecera?.noProyecto); setVal('noProyecto', p.cabecera?.nombreProyecto); setVal('cliente', p.cabecera?.cliente);
+            window._codigoProyectoActivo = String((p.cabecera && p.cabecera.noProyecto) || idProyecto || "").trim();
             window.odooPistas = p.odooPistas || {};
             /* En Drive solo vive el render con pin de cotización. Planos y fotos del análisis no se recuperan. */
             (p.versiones || []).forEach(function (v) { delete v.archivosGrupo; });
@@ -1448,6 +1457,12 @@ var _sesionGuardarT = null;
 function idsCabeceraSesion() {
     return ["inputCodigo", "noProyecto", "cliente", "fecha", "comercial", "disenador", "analista", "simFee", "selMercado", "selTipoEstructura"];
 }
+
+function cancelarGuardarSesionPendiente() {
+    clearTimeout(_sesionGuardarT);
+    _sesionGuardarT = null;
+}
+window.cancelarGuardarSesionPendiente = cancelarGuardarSesionPendiente;
 
 function programarGuardarSesion() {
     clearTimeout(_sesionGuardarT);
@@ -1551,6 +1566,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 2. Ejecutar funciones externas (Si existen en otros archivos)
     if(typeof obtenerTRMOficial === "function") await obtenerTRMOficial();
     restaurarSesionTrabajo();
+    window._codigoProyectoActivo = String(document.getElementById("inputCodigo")?.value || "").trim();
     if (typeof window.cargarImagenOdooEnVisor === "function") {
         const hayOdoo = (window.archivosGemaBase64 || []).some(function (f) { return f && f._odoo; });
         if (!hayOdoo) window.cargarImagenOdooEnVisor();

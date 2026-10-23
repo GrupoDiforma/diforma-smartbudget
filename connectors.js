@@ -817,9 +817,13 @@ function abrirModalOdooMateriales() { new bootstrap.Modal(document.getElementByI
 function aplicarImportacionOdoo_(rec, cod) {
     window._importOdooPendiente = null;
     if (typeof ocultarAvisoCodigoGuardado === "function") ocultarAvisoCodigoGuardado();
+    /* Lienzo en blanco primero; luego cabecera Odoo. Así no queda matriz/chat/Tipo del proyecto anterior. */
+    if (typeof window.limpiarMesaDeTrabajo === "function") window.limpiarMesaDeTrabajo();
     const tipo = (rec.pricelist_id && rec.pricelist_id[1] && rec.pricelist_id[1].toLowerCase().includes("usd")) ? "EXPORTACION" : "NACIONAL";
     const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
 
+    setVal('inputCodigo', cod);
+    window._codigoProyectoActivo = String(cod || "").trim();
     setVal('noProyecto', rec.name || cod);
     setVal('cliente', rec.partner_id ? rec.partner_id[1] : '');
     setVal('fecha', rec.create_date ? rec.create_date.substring(0, 10) : '');
@@ -828,11 +832,19 @@ function aplicarImportacionOdoo_(rec, cod) {
     setVal('analista', rec.id_presupuestador ? rec.id_presupuestador[1] : '');
 
     if (typeof aplicarMercado === "function") aplicarMercado(tipo);
-    if (typeof window.limpiarMesaDeTrabajo === "function") window.limpiarMesaDeTrabajo();
+    /* Refuerzo: un onchange o sesión pendiente no debe dejar Tipo=Grupal del proyecto anterior. */
+    if (typeof aplicarTipoEstructura === "function") aplicarTipoEstructura("INDIVIDUAL", { hidratar: true });
+    else {
+        window.tipoEstructura = "INDIVIDUAL";
+        const selT = document.getElementById("selTipoEstructura");
+        if (selT) selT.value = "INDIVIDUAL";
+    }
     window.odooPistas = pistasBriefOdoo(rec);
     aplicarLocaleProyecto(mapearLocaleOdoo(rec), { silencio: true });
     pintarFichaComercial(fichaComercialVacia());
     window.cargarImagenOdooEnVisor(); /* la imagen del proyecto queda en el visor y se reutiliza en la cotización */
+    if (typeof guardarSesionTrabajo === "function") guardarSesionTrabajo();
+    else if (typeof programarGuardarSesion === "function") programarGuardarSesion();
     const loc = localeProyectoActual();
     const um = loc.sistema === "imperial" ? "in" : "cm";
     const idiomaTxt = loc.idioma === "en" ? "English" : "Español";
@@ -859,9 +871,19 @@ async function abrirProyectoGuardadoDesdeBusqueda() {
     }
 }
 
+function codigoProyectoEnPantalla_() {
+    const activo = String(window._codigoProyectoActivo || "").trim();
+    if (activo) return activo;
+    const nombre = String(document.getElementById("noProyecto")?.value || "").trim();
+    if (nombre) return nombre.split(/\s+/)[0] || "";
+    return String(document.getElementById("inputCodigo")?.value || "").trim();
+}
+
 async function buscarProyectoOdooServerless() {
-    const cod = document.getElementById('inputCodigo')?.value.trim();
+    const input = document.getElementById('inputCodigo');
+    const cod = input?.value.trim();
     if(!cod) return mostrarAlertaOdoo("Ingresa código.", "warning");
+    const codigoEnPantalla = codigoProyectoEnPantalla_();
     mostrarAlertaOdoo("Conectando con Servidor...", "info", true);
     if (typeof ocultarAvisoCodigoGuardado === "function") ocultarAvisoCodigoGuardado();
     try {
@@ -879,7 +901,17 @@ async function buscarProyectoOdooServerless() {
             : null;
         const inseguro = lista.origen !== "nube";
         if (guardado || inseguro) {
-            window._importOdooPendiente = { rec: rec, cod: cod, idGuardado: guardado ? String(guardado.id || guardado.noProyecto || "") : "" };
+            /* No dejar código nuevo en el input encima del presupuesto anterior. */
+            const mismo = typeof normCodigoProyecto_ === "function"
+                ? normCodigoProyecto_(codigoEnPantalla) === normCodigoProyecto_(cod)
+                : String(codigoEnPantalla).toUpperCase() === String(cod).toUpperCase();
+            if (input && codigoEnPantalla && !mismo) input.value = codigoEnPantalla;
+            window._importOdooPendiente = {
+                rec: rec,
+                cod: cod,
+                idGuardado: guardado ? String(guardado.id || guardado.noProyecto || "") : "",
+                codigoRestaurar: codigoEnPantalla
+            };
             if (typeof mostrarAvisoProyectoGuardado === "function") mostrarAvisoProyectoGuardado(guardado, cod, inseguro && !!guardado);
             return;
         }

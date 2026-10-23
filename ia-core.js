@@ -775,19 +775,34 @@ ${JSON.stringify({ rangos: (typeof lotesSimulacion !== 'undefined' ? lotesSimula
 }
 
 window.limpiarMesaDeTrabajo = function() {
+    /* Anula un guardado de sesión pendiente del proyecto anterior (podía reescribir Tipo Grupal). */
+    if (typeof window.cancelarGuardarSesionPendiente === "function") window.cancelarGuardarSesionPendiente();
     window.historialChatIA = [];
     window.faseIA = 'idle';
     window._avisoProMatriz = false;
+    window.odooPistas = {};
+    window.elementoActivoId = "";
     ocultarHintGeminiPro();
     if (typeof window.vaciarArchivosIA === 'function') window.vaciarArchivosIA();
     if (typeof itemsPresupuesto !== 'undefined') itemsPresupuesto = [];
     if (typeof lotesSimulacion !== 'undefined') lotesSimulacion = [{ id: 'l1', q: 1 }];
+    /* Tipo Individual antes de resetear versiones: si queda Grupal, pintarBarraElementos recrea Pieza 1. */
+    window.tipoEstructura = "INDIVIDUAL";
+    const selTipo = document.getElementById("selTipoEstructura");
+    if (selTipo) selTipo.value = "INDIVIDUAL";
     if (typeof pintarFichaComercial === "function") pintarFichaComercial(typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {});
     if (typeof resetearVersionesProyecto === "function") resetearVersionesProyecto();
+    if (typeof aplicarTipoEstructura === "function") aplicarTipoEstructura("INDIVIDUAL", { hidratar: true });
+    const fee = document.getElementById("simFee");
+    if (fee) fee.value = "0";
+    if (typeof poblarSelectComisiones === "function") poblarSelectComisiones();
+    if (typeof window.pintarHistorialChatIA === "function") window.pintarHistorialChatIA([], "idle");
+    else resetChatPlaceholder();
     if (typeof renderizarTablaItems === 'function') renderizarTablaItems();
-    resetChatPlaceholder();
+    if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
     actualizarBotonGenerar();
-    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+    if (typeof guardarSesionTrabajo === "function") guardarSesionTrabajo();
+    else if (typeof programarGuardarSesion === "function") programarGuardarSesion();
 };
 
 async function obtenerCatalogoDriveTexto() {
