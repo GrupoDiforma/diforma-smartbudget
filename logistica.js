@@ -1037,6 +1037,43 @@ function logImgRefElemento_(elemId, verId) {
     return "";
 }
 
+/**
+ * Pieza viva en Costos si el código abierto coincide (para leer el pin «En cotización»).
+ * La imagen Grupo/Odoo del proyecto NO es pin de pieza.
+ */
+function logElementoVivoCostos_(proy, elemId, nombreHint) {
+    const p = typeof logisticaLeerProyecto_ === "function" ? logisticaLeerProyecto_() : null;
+    if (!p || !p.hayProyecto || !proy || logNormCod_(p.codigo) !== logNormCod_(proy)) return null;
+    const vers = window.versionesPresupuesto || [];
+    const nom = String(nombreHint || "").trim().toLowerCase();
+    let porNombre = null;
+    for (let i = 0; i < vers.length; i++) {
+        const els = (vers[i] && vers[i].elementos) || [];
+        if (elemId) {
+            const hit = els.find(function (e) { return e && String(e.id) === String(elemId); });
+            if (hit) return hit;
+        }
+        if (nom && !porNombre) {
+            porNombre = els.find(function (e) {
+                if (!e) return false;
+                const n = String(e.nombre || "").trim().toLowerCase();
+                const t = String((e.fichaComercial && e.fichaComercial.titulo) || "").trim().toLowerCase();
+                return n === nom || t === nom || (n && nom.indexOf(n) >= 0) || (t && nom.indexOf(t) >= 0);
+            }) || null;
+        }
+    }
+    return porNombre;
+}
+
+/** Pin de cotización de un elemento: data URL y/o imgRef de Drive. Null si solo hay Grupo/Odoo. */
+function logPinImgDeElemento_(el) {
+    if (!el) return null;
+    const out = {};
+    if (el.imgCotizacion && /^data:image\//.test(el.imgCotizacion)) out.img = el.imgCotizacion;
+    if (el.imgRef) out.imgRef = el.imgRef;
+    return (out.img || out.imgRef) ? out : null;
+}
+
 function logNombrePreImg_(fila) {
     const codigo = String((fila && fila.proy) || (logisticaLeerProyecto_() || {}).codigo || "").trim();
     if (!codigo || !fila || !fila.elem) return "";
@@ -2886,11 +2923,18 @@ function logFilaValores_(fila, idioma, escId) {
     if (typeof v.unit === "number" && logEsEnvio_(fila) && !logEsCotizacionExterior_()) v.unit = logMonedaDesdeCop_(v.unit);
     if (typeof v.unit === "number") v.unit = logRedondear_(v.unit);
     if (!v.img && fila.tipo === "item") {
-        const deElem = (fila.elem && typeof window.imagenCotizacionElemento === "function")
-            ? window.imagenCotizacionElemento(fila.elem)
-            : "";
-        if (deElem) v.img = deElem;
-        else if (logImgOdoo.url && logImgOdoo.codigo === fila.proy) v.img = logImgOdoo.url;
+        if (fila.elem) {
+            /* Pieza de grupal: solo el pin «En cotización», nunca la imagen Grupo/Odoo del proyecto */
+            const vivo = logElementoVivoCostos_(fila.proy, fila.elem, v.titulo || (fila.snap && fila.snap.nombre));
+            const pin = logPinImgDeElemento_(vivo);
+            if (pin && pin.img) v.img = pin.img;
+            else if (typeof window.imagenCotizacionElemento === "function") {
+                const deElem = window.imagenCotizacionElemento(fila.elem);
+                if (deElem) v.img = deElem;
+            }
+        } else if (logImgOdoo.url && logImgOdoo.codigo === fila.proy) {
+            v.img = logImgOdoo.url;
+        }
     }
     return v;
 }
@@ -3579,13 +3623,19 @@ async function logisticaCargarImagenOdoo_(force) {
 
 let logImgEd = null;
 
-/** Imagen original disponible para una fila: la subida a mano o, si no, la de Odoo. */
+/** Imagen original disponible para una fila: pin de pieza, subida a mano; Odoo solo si no es pieza de grupal. */
 function logImgFuente_(fila) {
     if (fila.imgSrc) return fila.imgSrc;
-    if (fila.img) return fila.img; /* sin original cargado: se edita sobre la imagen ya guardada */
-    if (fila.elem && typeof window.imagenCotizacionElemento === "function") {
-        const deElem = window.imagenCotizacionElemento(fila.elem);
-        if (deElem) return deElem;
+    if (fila.img) return fila.img;
+    if (fila.elem) {
+        const vivo = logElementoVivoCostos_(fila.proy, fila.elem, fila.snap && fila.snap.nombre);
+        const pin = logPinImgDeElemento_(vivo);
+        if (pin && pin.img) return pin.img;
+        if (typeof window.imagenCotizacionElemento === "function") {
+            const deElem = window.imagenCotizacionElemento(fila.elem);
+            if (deElem) return deElem;
+        }
+        return "";
     }
     if (fila.tipo === "item" && logImgOdoo.orig && logImgOdoo.codigo === fila.proy) return logImgOdoo.orig;
     return "";
@@ -3728,12 +3778,14 @@ async function logisticaTraerImgsFaltantes_() {
     return logisticaRecargarImgs_({ silencio: true, filas: filas, auto: true });
 }
 
-/** Baja de Drive los renders que no quedaron en la hoja (cotización guardada). */
+/** Baja de Drive los renders que no quedaron en la hoja (cotización guardada). Con «todas», también intenta Odoo si no hay imgRef. */
 async function logisticaRecargarImgs_(opts) {
     opts = opts || {};
     if (_logImgsP && !opts.todas) return _logImgsP;
-    const filas = opts.filas || (opts.todas
-        ? (logQuote.filas || []).filter(function (f) { return f.imgRef || f.srcRef; })
+    let filas = opts.filas || (opts.todas
+        ? (logQuote.filas || []).filter(function (f) {
+            return f.tipo === "item" && (f.imgRef || f.srcRef || !(f.img && /^data:image\//.test(f.img)));
+        })
         : logisticaFilasImgPendientes_());
     if (!filas.length) {
         if (!opts.silencio && typeof mostrarNotificacion === "function") {
@@ -3750,23 +3802,58 @@ async function logisticaRecargarImgs_(opts) {
         for (let i = 0; i < filas.length; i++) {
             if (logQuote.abierta !== abierta) break;
             const fila = filas[i];
-            const ref = fila.imgRef || fila.srcRef;
-            fila._imgBlob = false;
+            if (fila.img && /^data:image\//.test(fila.img) && !opts.todas) { ok++; continue; }
             logCargaBar_("Cargando fotos " + (i + 1) + " de " + filas.length + " · " + Math.floor((Date.now() - t0) / 1000) + " s");
             if (typeof textoEsperaNube === "function" && opts.espera) {
                 textoEsperaNube("Trayendo render " + (i + 1) + " de " + filas.length + "…");
             }
-            try {
-                const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: [ref], modo: "blob" }, { timeoutMs: 60000 });
-                const u = r && r.exito && r.data ? (r.data[ref] || "") : "";
-                if (u && /^data:image\//.test(u)) {
-                    logIdbPutImg_(ref, u);
-                    fila.img = u;
-                    fila._imgBlob = true;
-                    logisticaPonerImgFila_(fila.uid, u);
+            /* 1) Pin vivo en Costos (mismo código) — manda sobre Grupo/Odoo */
+            if (fila.elem) {
+                logAplicarImgElementoAjeno_(fila, null);
+                if (fila.img && /^data:image\//.test(fila.img)) {
+                    logisticaPonerImgFila_(fila.uid, fila.img);
                     ok++;
-                } else fail++;
-            } catch (e) { fail++; }
+                    continue;
+                }
+                if (!fila.imgRef) {
+                    const vivo = logElementoVivoCostos_(fila.proy, fila.elem, fila.snap && fila.snap.nombre);
+                    const pin = logPinImgDeElemento_(vivo);
+                    if (pin && pin.imgRef) fila.imgRef = pin.imgRef;
+                }
+            }
+            const ref = fila.imgRef || fila.srcRef;
+            if (ref) {
+                fila._imgBlob = false;
+                try {
+                    const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: [ref], modo: "blob" }, { timeoutMs: 60000 });
+                    const u = r && r.exito && r.data ? (r.data[ref] || "") : "";
+                    if (u && /^data:image\//.test(u)) {
+                        logIdbPutImg_(ref, u);
+                        fila.img = u;
+                        fila._imgBlob = true;
+                        logisticaPonerImgFila_(fila.uid, u);
+                        ok++;
+                        continue;
+                    }
+                } catch (e) { /* sin blob */ }
+            }
+            /* Odoo = imagen Grupo del proyecto: solo filas individuales (sin pieza) */
+            if (!fila.elem) {
+                const cod = String(fila.proy || "").trim();
+                if (cod && typeof window.traerImagenOdoo === "function") {
+                    try {
+                        const rO = await window.traerImagenOdoo(cod, !!opts.todas);
+                        if (rO && rO.estado === "ok" && rO.url) {
+                            fila.img = rO.url;
+                            fila.imgSrc = rO.orig;
+                            logisticaPonerImgFila_(fila.uid, rO.url);
+                            ok++;
+                            continue;
+                        }
+                    } catch (e2) { /* sin imagen */ }
+                }
+            }
+            fail++;
         }
         if (logQuote.abierta === abierta) {
             logCargaBar_("");
@@ -3775,7 +3862,7 @@ async function logisticaRecargarImgs_(opts) {
             if (!opts.silencio && typeof mostrarNotificacion === "function") {
                 if (ok && !fail) mostrarNotificacion("Imágenes listas. Ya puedes bajar el PDF.", "success");
                 else if (ok) mostrarNotificacion("Llegaron " + ok + " de " + filas.length + " fotos. Pulsa Recargar imágenes otra vez.", "warning");
-                else mostrarNotificacion("No se pudieron traer las fotos de Drive. Reintenta en un momento.", "danger");
+                else mostrarNotificacion("No se pudieron traer las fotos (Drive u Odoo). Reintenta o súbelas a mano en la miniatura.", "danger");
             } else if (opts.auto && fail && typeof mostrarNotificacion === "function") {
                 mostrarNotificacion("Algunas fotos no bajaron. Usa Recargar imágenes.", "warning");
             }
@@ -4993,7 +5080,7 @@ function logisticaAccionFila_(ev) {
 
 /* --- consolidado: agregar una versión guardada de otro proyecto (sin cambiar el abierto) --- */
 
-let logOtro = { lista: [], q: "", id: "", payload: null };
+let logOtro = { lista: [], q: "", id: "", payload: null, selElem: {} };
 
 function logCodigoDePayload_(p) {
     const cab = (p && p.cabecera) || {};
@@ -5014,19 +5101,100 @@ function logVersionesDePayload_(p) {
     }];
 }
 
-/** Precios de una versión que no está abierta: no debe usar la matriz del proyecto actual. */
-function logPreciosVersionAjena_(ver) {
+/** Precios de una versión individual ajena (sin elementos). No usa la matriz del proyecto abierto. */
+function logPreciosVersionAjenaIndiv_(ver) {
     if (!ver || typeof calcularPreciosVersion_ !== "function") return null;
     const copia = JSON.parse(JSON.stringify(ver));
     copia.id = "_ext_" + String(ver.id || "V1");
+    delete copia.elementos;
     return calcularPreciosVersion_(copia);
 }
 
-function logNuevaFilaCongelada_(p, ver, loteId) {
+/**
+ * Precios de una versión ajena. En grupal la matriz vive en cada elemento, no en ver.matrizItems;
+ * sin este cruce el modal de consolidado marcaba «sin precios» en todos los grupales.
+ */
+function logPreciosVersionAjena_(ver) {
+    if (!ver || typeof calcularPreciosVersion_ !== "function") return null;
+    const elems = Array.isArray(ver.elementos) ? ver.elementos : [];
+    if (!elems.length) return logPreciosVersionAjenaIndiv_(ver);
+    const conMatriz = elems.find(function (el) { return el && (el.matrizItems || []).length; }) || elems[0];
+    return logPreciosVersionAjenaIndiv_(Object.assign({}, ver, {
+        matrizItems: (conMatriz && conMatriz.matrizItems) || [],
+        escalas: (conMatriz && conMatriz.escalas && conMatriz.escalas.length)
+            ? conMatriz.escalas
+            : (ver.escalas || []),
+        fichaComercial: (conMatriz && conMatriz.fichaComercial) || ver.fichaComercial || {}
+    }));
+}
+
+/** Escalas (con precio si se puede) de una pieza ajena. */
+function logEscalasDeElementoAjeno_(ver, el) {
+    if (!ver) return [];
+    if (!el) {
+        const pr0 = logPreciosVersionAjenaIndiv_(ver);
+        return (pr0 && pr0.escalas) ? pr0.escalas : ((ver.escalas || []).map(function (e) {
+            return { id: e.id, q: Number(e.q) || 1, puCop: e.puCop != null ? e.puCop : null };
+        }));
+    }
+    const copia = Object.assign({}, ver, {
+        matrizItems: el.matrizItems || [],
+        escalas: el.escalas && el.escalas.length ? el.escalas : (ver.escalas || []),
+        fichaComercial: el.fichaComercial || ver.fichaComercial || {}
+    });
+    const pr = logPreciosVersionAjenaIndiv_(copia);
+    if (pr && pr.escalas && pr.escalas.length) return pr.escalas;
+    const crudas = (el.escalas && el.escalas.length) ? el.escalas : (ver.escalas || []);
+    return (crudas || []).map(function (e) {
+        return { id: e.id, q: Number(e.q) || 1, puCop: e.puCop != null ? e.puCop : null };
+    });
+}
+
+/**
+ * Escalas (Q) del modal: solo las de las piezas elegidas.
+ * Varias piezas → intersección (cantidades que todas tienen). Una sola → las suyas.
+ */
+function logEscalasUiVersionAjena_(ver, elemsSel) {
+    if (!ver) return [];
+    const todos = Array.isArray(ver.elementos) ? ver.elementos.filter(Boolean) : [];
+    const elems = (elemsSel && elemsSel.length) ? elemsSel : todos;
+    if (!todos.length) return logEscalasDeElementoAjeno_(ver, null);
+    if (!elems.length) return [];
+    const listas = elems.map(function (el) { return logEscalasDeElementoAjeno_(ver, el); });
+    if (listas.length === 1) return listas[0].slice().sort(function (a, b) { return (Number(a.q) || 0) - (Number(b.q) || 0); });
+    const base = {};
+    (listas[0] || []).forEach(function (e) {
+        const q = Number(e.q) || 1;
+        base[q] = { id: e.id, q: q, puCop: e.puCop != null ? e.puCop : null };
+    });
+    for (let i = 1; i < listas.length; i++) {
+        const qs = {};
+        (listas[i] || []).forEach(function (e) { qs[Number(e.q) || 1] = true; });
+        Object.keys(base).forEach(function (q) {
+            if (!qs[q]) delete base[q];
+        });
+    }
+    return Object.keys(base).map(Number).sort(function (a, b) { return a - b; }).map(function (q) { return base[q]; });
+}
+
+/** Elige la escala por id o por Q. Si exacta=false y no hay match, usa la primera (compat). */
+function logElegirEscalaPorLoteOQ_(escalas, loteId, qHint, exacta) {
+    if (!escalas || !escalas.length) return null;
+    if (loteId != null && loteId !== "" && escalas.some(function (e) { return e.id === loteId; })) {
+        return escalas.find(function (e) { return e.id === loteId; });
+    }
+    if (qHint != null && qHint !== "" && isFinite(Number(qHint))) {
+        const hit = escalas.find(function (e) { return Number(e.q) === Number(qHint); });
+        if (hit) return hit;
+    }
+    return exacta ? null : escalas[0];
+}
+
+function logNuevaFilaCongelada_(p, ver, loteId, qHint) {
     const codigo = logCodigoDePayload_(p);
     const pr = logPreciosVersionAjena_(ver);
     const escalas = pr && pr.escalas ? pr.escalas.map(function (e) { return { id: e.id, q: e.q, puCop: e.puCop }; }) : [];
-    const primera = escalas.find(function (e) { return e.id === loteId; }) || escalas[0] || null;
+    const primera = logElegirEscalaPorLoteOQ_(escalas, loteId, qHint);
     const ficha = ver.fichaComercial || p.fichaComercial || {};
     const nombre = logNombreSinCodigo_((p.cabecera && p.cabecera.nombreProyecto) || "", codigo);
     const fila = {
@@ -5064,24 +5232,65 @@ function logisticaPintarOtroProyecto_() {
     if (tit) tit.textContent = logOtro.payload ? "Elige la versión" : "De otro proyecto";
     if (sub) {
         sub.textContent = logOtro.payload
-            ? "Se agrega congelada: ficha y precios de cuando se guardó en la nube. El proyecto abierto no cambia."
+            ? "Se agrega congelada (ficha y precios de la nube). En un grupal marca las piezas y luego la cantidad. El proyecto abierto no cambia."
             : "Proyectos guardados en Costos (nube). Elige uno y luego una versión.";
     }
     if (logOtro.payload) {
         const p = logOtro.payload;
         const codigo = logCodigoDePayload_(p);
         const vers = logVersionesDePayload_(p);
+        logOtro.selElem = logOtro.selElem || {};
         box.innerHTML = vers.map(function (ver) {
-            const pr = logPreciosVersionAjena_(ver);
-            const escalas = pr && pr.escalas ? pr.escalas : [];
-            const nota = ver.comentario ? "<div class=\"text-muted small\">" + logEsc_(ver.comentario) + "</div>" : "";
-            const botones = escalas.length
-                ? escalas.map(function (e) {
-                    return "<button type=\"button\" class=\"btn btn-sm btn-outline-primary\" data-over=\"" + logEsc_(ver.id) + "\" data-oq=\"" + logEsc_(e.id) + "\">Q " + logFmtNum_(e.q, "es", 0) + "</button>";
-                }).join("")
-                : "<span class=\"badge text-bg-light border\">sin precios</span>";
-            return "<div class=\"list-group-item\"><b>" + logEsc_(codigo) + " · " + logEsc_(ver.id) + "</b>" +
-                nota + "<div class=\"d-flex flex-wrap gap-1 mt-1\">" + botones + "</div></div>";
+            const elems = Array.isArray(ver.elementos) ? ver.elementos.filter(Boolean) : [];
+            const nPiezas = elems.length;
+            if (nPiezas > 1 && !logOtro.selElem[ver.id]) {
+                const ini = {};
+                elems.forEach(function (el) { if (el && el.id != null) ini[el.id] = true; });
+                logOtro.selElem[ver.id] = ini;
+            }
+            const sel = logOtro.selElem[ver.id] || {};
+            const elegidas = nPiezas > 1
+                ? elems.filter(function (el) { return sel[el.id] !== false; })
+                : elems;
+            const nSel = elegidas.length;
+            const escalas = logEscalasUiVersionAjena_(ver, nPiezas > 1 ? elegidas : null);
+            const nota = (ver.comentario ? "<div class=\"text-muted small\">" + logEsc_(ver.comentario) + "</div>" : "")
+                + (nPiezas > 1 ? "<div class=\"text-muted small\">Grupal · marca piezas; las Q son solo las comunes a las elegidas</div>" : "");
+            let piezasHtml = "";
+            if (nPiezas > 1) {
+                piezasHtml = "<div class=\"log-otro-piezas mt-2\">" +
+                    "<div class=\"d-flex flex-wrap align-items-center gap-2 mb-1\">" +
+                    "<span class=\"small fw-semibold\">Piezas (" + nSel + "/" + nPiezas + ")</span>" +
+                    "<button type=\"button\" class=\"btn btn-sm btn-link p-0\" data-oe-all=\"" + logEsc_(ver.id) + "\">Todas</button>" +
+                    "<button type=\"button\" class=\"btn btn-sm btn-link p-0\" data-oe-none=\"" + logEsc_(ver.id) + "\">Ninguna</button>" +
+                    "</div>" +
+                    elems.map(function (el) {
+                        if (!el) return "";
+                        const nom = String(el.nombre || (el.fichaComercial && el.fichaComercial.titulo) || el.id || "Pieza").trim();
+                        const on = sel[el.id] !== false;
+                        const qs = logEscalasDeElementoAjeno_(ver, el).map(function (e) {
+                            return "Q " + logFmtNum_(e.q, "es", 0);
+                        }).join(" · ");
+                        return "<label class=\"form-check log-otro-pieza\">" +
+                            "<input class=\"form-check-input\" type=\"checkbox\" data-oe-ver=\"" + logEsc_(ver.id) + "\" data-oe-id=\"" + logEsc_(el.id) + "\"" + (on ? " checked" : "") + ">" +
+                            "<span class=\"form-check-label\"><span>" + logEsc_(nom) + "</span>" +
+                            (qs ? "<span class=\"text-muted d-block\" style=\"font-size:0.75rem\">" + logEsc_(qs) + "</span>" : "<span class=\"text-danger d-block\" style=\"font-size:0.75rem\">sin escalas</span>") +
+                            "</span></label>";
+                    }).join("") +
+                    "</div>";
+            }
+            let botones;
+            if (!nSel && nPiezas > 1) {
+                botones = "<span class=\"badge text-bg-light border\">Marca al menos una pieza</span>";
+            } else if (escalas.length) {
+                botones = escalas.map(function (e) {
+                    return "<button type=\"button\" class=\"btn btn-sm btn-outline-primary\" data-over=\"" + logEsc_(ver.id) + "\" data-oq=\"" + logEsc_(e.id) + "\" data-oq-q=\"" + logEsc_(e.q) + "\">Q " + logFmtNum_(e.q, "es", 0) + "</button>";
+                }).join("");
+            } else {
+                botones = "<span class=\"badge text-bg-light border\">" + (nPiezas > 1 ? "Sin cantidad común entre las piezas elegidas" : "sin precios") + "</span>";
+            }
+            return "<div class=\"list-group-item\" data-over-block=\"" + logEsc_(ver.id) + "\"><b>" + logEsc_(codigo) + " · " + logEsc_(ver.id) + "</b>" +
+                nota + piezasHtml + "<div class=\"d-flex flex-wrap gap-1 mt-2\">" + botones + "</div></div>";
         }).join("") || "<div class=\"text-muted p-3\">Este presupuesto no tiene versiones.</div>";
         return;
     }
@@ -5108,7 +5317,7 @@ async function logisticaAbrirOtroProyecto_() {
         return;
     }
     logAsegurarFilas_();
-    logOtro = { lista: [], q: "", id: "", payload: null };
+    logOtro = { lista: [], q: "", id: "", payload: null, selElem: {} };
     const buscar = document.getElementById("logOtroBuscar");
     if (buscar) { buscar.value = ""; buscar.classList.remove("d-none"); }
     const volver = document.getElementById("logOtroVolver");
@@ -5143,85 +5352,209 @@ async function logisticaElegirOtroProyecto_(id) {
         if (!r || !r.exito || !r.data) throw new Error((r && r.mensaje) || "Sin respuesta.");
         logOtro.id = id;
         logOtro.payload = r.data;
+        logOtro.selElem = {};
     } catch (e) {
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo abrir: " + ((e && e.message) || e), "danger");
         logOtro.payload = null;
+        logOtro.selElem = {};
     } finally {
         if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
     }
     logisticaPintarOtroProyecto_();
 }
 
-function logisticaAgregarVersionAjena_(verId, loteId) {
+/** Piezas marcadas en el modal (grupal). Si no hay selección guardada, todas. */
+function logElemsElegidosAjena_(ver) {
+    const elems = (ver && Array.isArray(ver.elementos)) ? ver.elementos.filter(Boolean) : [];
+    if (elems.length <= 1) return elems;
+    const sel = (logOtro.selElem && logOtro.selElem[ver.id]) || {};
+    return elems.filter(function (el) { return sel[el.id] !== false; });
+}
+
+/**
+ * Aplica el pin «En cotización» a la fila.
+ * Prioridad: pieza viva en Costos (mismo código) → datos del elemento importado.
+ * Nunca usa la imagen Grupo/Odoo del proyecto.
+ */
+function logAplicarImgElementoAjeno_(fila, el) {
+    if (!fila) return;
+    const nom = (el && el.nombre)
+        || (fila.snap && fila.snap.nombre)
+        || (el && el.fichaComercial && el.fichaComercial.titulo)
+        || "";
+    if (el && el.id && !fila.elem) fila.elem = el.id;
+    const vivo = logElementoVivoCostos_(fila.proy, fila.elem || (el && el.id), nom);
+    const pin = logPinImgDeElemento_(vivo) || logPinImgDeElemento_(el);
+    if (!pin) return;
+    if (pin.imgRef) fila.imgRef = pin.imgRef;
+    if (pin.img) {
+        fila.img = pin.img;
+        if (fila.imgRef) logIdbPutImg_(fila.imgRef, pin.img);
+    }
+}
+
+/** Tras importar: pin vivo / Drive. Odoo (Grupo) solo en filas individuales sin pieza. */
+function logisticaHidratarImgsTrasImport_(filas) {
+    filas = (filas || []).filter(Boolean);
+    if (!filas.length) return;
+    filas.forEach(function (f) { logAplicarImgElementoAjeno_(f, null); });
+    const conRef = filas.filter(function (f) {
+        return (f.imgRef || f.srcRef) && !(f.img && /^data:image\//.test(f.img));
+    });
+    const fin = function () {
+        logisticaRefrescarTabla_();
+        logisticaAvisarImgsPendientes_();
+    };
+    const promesa = conRef.length
+        ? logisticaRecargarImgs_({ filas: conRef, silencio: true, auto: true })
+        : Promise.resolve(0);
+    Promise.resolve(promesa).then(function () {
+        /* Releer pin vivo por si Costos lo tenía en memoria y Drive falló */
+        filas.forEach(function (f) {
+            const cur = logFilaPorUid_(f.uid) || f;
+            if (cur.img && /^data:image\//.test(cur.img)) return;
+            logAplicarImgElementoAjeno_(cur, null);
+        });
+        const individuales = filas.filter(function (f) {
+            const cur = logFilaPorUid_(f.uid) || f;
+            return !cur.elem && !(cur.img && /^data:image\//.test(cur.img));
+        });
+        if (!individuales.length || typeof window.traerImagenOdoo !== "function") return null;
+        const porCod = {};
+        individuales.forEach(function (f) {
+            const c = String(f.proy || "").trim();
+            if (!c) return;
+            (porCod[c] = porCod[c] || []).push(f.uid);
+        });
+        return Promise.all(Object.keys(porCod).map(function (cod) {
+            return window.traerImagenOdoo(cod, false).then(function (r) {
+                if (!r || r.estado !== "ok") return;
+                porCod[cod].forEach(function (uid) {
+                    const f = logFilaPorUid_(uid);
+                    if (!f || f.elem || (f.img && /^data:image\//.test(f.img))) return;
+                    f.img = r.url;
+                    f.imgSrc = r.orig;
+                });
+            }).catch(function () {});
+        }));
+    }).then(fin).catch(fin);
+}
+
+function logisticaAgregarVersionAjena_(verId, loteId, qHint) {
     const p = logOtro.payload;
     if (!p) return;
     const ver = logVersionesDePayload_(p).find(function (v) { return String(v.id) === String(verId); });
     if (!ver) return;
     const codigo = logCodigoDePayload_(p);
     const abierto = logisticaLeerProyecto_();
+    const aplicarLoteExacto_ = function (f, escalasVivas) {
+        const esc = logElegirEscalaPorLoteOQ_(escalasVivas || logEscalasFila_(f), loteId, qHint, true);
+        if (!esc) return false;
+        f.lote = esc.id;
+        return true;
+    };
+    const nuevas = [];
     let fila;
     if (abierto.codigo && abierto.codigo === codigo) {
-        const elems = ver.elementos || [];
-        if (elems.length) {
+        const elems = logElemsElegidosAjena_(ver);
+        if ((ver.elementos || []).length) {
+            if (!elems.length) {
+                if (typeof mostrarNotificacion === "function") mostrarNotificacion("Marca al menos una pieza para importar.", "warning");
+                return;
+            }
+            let ok = 0;
+            let sinQ = 0;
             elems.forEach(function (el) {
                 const f = logNuevaFilaItem_(ver.id, codigo, el.id);
-                if (loteId) f.lote = loteId;
+                if (!aplicarLoteExacto_(f)) { sinQ++; return; }
+                logAplicarImgElementoAjeno_(f, el);
                 logQuote.filas.push(f);
+                nuevas.push(f);
+                ok++;
             });
+            if (!ok) {
+                if (typeof mostrarNotificacion === "function") {
+                    mostrarNotificacion("Ninguna pieza marcada tiene la cantidad Q " + logFmtNum_(qHint, "es", 0) + ".", "warning");
+                }
+                return;
+            }
             logMarcarSucio_();
             bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogOtro")).hide();
             logisticaRefrescarTabla_();
+            logisticaHidratarImgsTrasImport_(nuevas);
             if (typeof mostrarNotificacion === "function") {
-                mostrarNotificacion("Agregadas " + elems.length + " piezas de " + codigo + " " + (ver.id || ""), "success");
+                let msg = "Agregadas " + ok + " pieza" + (ok === 1 ? "" : "s") + " de " + codigo + " " + (ver.id || "");
+                if (sinQ) msg += " · " + sinQ + " sin esa cantidad";
+                mostrarNotificacion(msg, sinQ ? "warning" : "success");
             }
             return;
         }
         fila = logNuevaFilaItem_(ver.id, codigo);
+        if (!aplicarLoteExacto_(fila)) {
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion("Esa cantidad no existe en el presupuesto.", "warning");
+            return;
+        }
     } else if (ver.elementos && ver.elementos.length) {
-        ver.elementos.forEach(function (el) {
+        const elems = logElemsElegidosAjena_(ver);
+        if (!elems.length) {
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion("Marca al menos una pieza para importar.", "warning");
+            return;
+        }
+        let ok = 0;
+        let sinQ = 0;
+        elems.forEach(function (el) {
             const copiaVer = Object.assign({}, ver, {
                 matrizItems: el.matrizItems || [],
                 escalas: el.escalas && el.escalas.length ? el.escalas : ver.escalas,
                 fichaComercial: el.fichaComercial || ver.fichaComercial || {}
             });
-            const f = logNuevaFilaCongelada_(p, copiaVer, loteId);
+            delete copiaVer.elementos;
+            const escalasEl = logEscalasDeElementoAjeno_(ver, el);
+            const esc = logElegirEscalaPorLoteOQ_(escalasEl, loteId, qHint, true);
+            if (!esc) { sinQ++; return; }
+            const f = logNuevaFilaCongelada_(p, copiaVer, esc.id, esc.q);
             f.elem = el.id;
-            if (el.imgRef) f.imgRef = el.imgRef;
+            logAplicarImgElementoAjeno_(f, el);
             if (f.snap) {
                 f.snap.nombre = el.nombre || f.snap.nombre;
                 if (f.snap.ficha && !f.snap.ficha.titulo) f.snap.ficha.titulo = el.nombre || "";
             }
-            if (loteId) f.lote = loteId;
             logQuote.filas.push(f);
+            nuevas.push(f);
+            ok++;
         });
+        if (!ok) {
+            if (typeof mostrarNotificacion === "function") {
+                mostrarNotificacion("Ninguna pieza marcada tiene la cantidad Q " + logFmtNum_(qHint, "es", 0) + ".", "warning");
+            }
+            return;
+        }
         logMarcarSucio_();
         bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogOtro")).hide();
         logisticaRefrescarTabla_();
+        logisticaHidratarImgsTrasImport_(nuevas);
         if (typeof mostrarNotificacion === "function") {
-            mostrarNotificacion((logTipoDoc_(logisticaLeerOpciones_().idioma) === "CONS" ? "CONS · " : "") + "Agregadas " + ver.elementos.length + " piezas de " + codigo, "success");
+            let msg = (logTipoDoc_(logisticaLeerOpciones_().idioma) === "CONS" ? "CONS · " : "") + "Agregadas " + ok + " pieza" + (ok === 1 ? "" : "s") + " de " + codigo;
+            if (sinQ) msg += " · " + sinQ + " sin esa cantidad";
+            mostrarNotificacion(msg, sinQ ? "warning" : "success");
         }
         return;
     } else {
-        fila = logNuevaFilaCongelada_(p, ver, loteId);
+        fila = logNuevaFilaCongelada_(p, ver, loteId, qHint);
+        const escOk = logElegirEscalaPorLoteOQ_((fila.snap && fila.snap.escalas) || [], loteId, qHint, true);
+        if (!escOk) {
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion("Esa cantidad no existe en el presupuesto.", "warning");
+            return;
+        }
     }
-    if (loteId) fila.lote = loteId;
     logQuote.filas.push(fila);
+    nuevas.push(fila);
     logMarcarSucio_();
     bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogOtro")).hide();
     logisticaRefrescarTabla_();
+    logisticaHidratarImgsTrasImport_(nuevas);
     if (typeof mostrarNotificacion === "function") {
         mostrarNotificacion((logTipoDoc_(logisticaLeerOpciones_().idioma) === "CONS" ? "CONS · " : "") + "Agregada " + codigo + " " + (ver.id || ""), "success");
-    }
-    /* imagen de Odoo de ese proyecto, en segundo plano; no toca el visor del proyecto abierto */
-    if (fila.tipo === "item" && codigo && typeof window.traerImagenOdoo === "function") {
-        const uid = fila.uid;
-        window.traerImagenOdoo(codigo, false).then(function (r) {
-            const f = logFilaPorUid_(uid);
-            if (!f || r.estado !== "ok") return;
-            f.img = r.url;
-            f.imgSrc = r.orig;
-            logisticaRefrescarTabla_();
-        }).catch(function () { /* la fila queda sin imagen; se puede subir a mano */ });
     }
 }
 
@@ -5229,12 +5562,53 @@ function logisticaInitOtroProyecto_() {
     const buscar = document.getElementById("logOtroBuscar");
     if (buscar) buscar.addEventListener("input", function () { logOtro.q = buscar.value; logisticaPintarOtroProyecto_(); });
     const volver = document.getElementById("logOtroVolver");
-    if (volver) volver.addEventListener("click", function () { logOtro.payload = null; logisticaPintarOtroProyecto_(); });
+    if (volver) volver.addEventListener("click", function () {
+        logOtro.payload = null;
+        logOtro.selElem = {};
+        logisticaPintarOtroProyecto_();
+    });
     const box = document.getElementById("logOtroLista");
     if (box) {
+        box.addEventListener("change", function (ev) {
+            const t = ev.target;
+            if (!t || !t.getAttribute || !t.getAttribute("data-oe-id")) return;
+            const verId = t.getAttribute("data-oe-ver");
+            const elId = t.getAttribute("data-oe-id");
+            logOtro.selElem = logOtro.selElem || {};
+            logOtro.selElem[verId] = logOtro.selElem[verId] || {};
+            logOtro.selElem[verId][elId] = !!t.checked;
+            /* Reponer botones Q: solo cantidades de las piezas marcadas */
+            logisticaPintarOtroProyecto_();
+        });
         box.addEventListener("click", function (ev) {
-            const ver = ev.target.closest("[data-oq]");
-            if (ver && !ver.disabled) { logisticaAgregarVersionAjena_(ver.getAttribute("data-over"), ver.getAttribute("data-oq")); return; }
+            const all = ev.target.closest("[data-oe-all]");
+            if (all) {
+                const verId = all.getAttribute("data-oe-all");
+                const ver = logVersionesDePayload_(logOtro.payload || {}).find(function (v) { return String(v.id) === String(verId); });
+                const ini = {};
+                ((ver && ver.elementos) || []).forEach(function (el) { if (el && el.id != null) ini[el.id] = true; });
+                logOtro.selElem = logOtro.selElem || {};
+                logOtro.selElem[verId] = ini;
+                logisticaPintarOtroProyecto_();
+                return;
+            }
+            const none = ev.target.closest("[data-oe-none]");
+            if (none) {
+                const verId = none.getAttribute("data-oe-none");
+                const ver = logVersionesDePayload_(logOtro.payload || {}).find(function (v) { return String(v.id) === String(verId); });
+                const ini = {};
+                ((ver && ver.elementos) || []).forEach(function (el) { if (el && el.id != null) ini[el.id] = false; });
+                logOtro.selElem = logOtro.selElem || {};
+                logOtro.selElem[verId] = ini;
+                logisticaPintarOtroProyecto_();
+                return;
+            }
+            if (ev.target.closest(".log-otro-pieza") || ev.target.closest("[data-oe-id]")) return;
+            const verBtn = ev.target.closest("[data-oq]");
+            if (verBtn && !verBtn.disabled) {
+                logisticaAgregarVersionAjena_(verBtn.getAttribute("data-over"), verBtn.getAttribute("data-oq"), verBtn.getAttribute("data-oq-q"));
+                return;
+            }
             const proy = ev.target.closest("[data-oid]");
             if (proy) logisticaElegirOtroProyecto_(proy.getAttribute("data-oid"));
         });
