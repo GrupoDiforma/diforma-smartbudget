@@ -651,6 +651,65 @@ function logisticaTomarProyectoCostos_() {
     }
 }
 
+/**
+ * Actualiza filas de esta cotización con ficha y precios vivos del presupuesto
+ * abierto en Costos (mismo código de proyecto). Sirve sobre todo cuando la hoja
+ * vino del historial (precios congelados) y en Costos ya se recalcularon márgenes.
+ */
+function logisticaActualizarPresupuestoDesdeCostos_() {
+    try { if (typeof snapshotVersionActual === "function") snapshotVersionActual(); } catch (e) { /* se usa lo que haya en memoria */ }
+    const p = logisticaLeerProyecto_();
+    if (!p.hayProyecto) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Abre en Costos el presupuesto del que quieres traer los precios.", "warning");
+        }
+        return;
+    }
+    const cod = logNormCod_(p.codigo);
+    const filas = ((logQuote && logQuote.filas) || []).filter(function (f) {
+        return f.tipo === "item" && logNormCod_(f.proy) === cod;
+    });
+    if (!filas.length) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Ninguna fila de esta cotización es del proyecto " + p.codigo + " abierto en Costos.", "warning");
+        }
+        return;
+    }
+    let ok = 0;
+    let sinPrecio = 0;
+    filas.forEach(function (fila) {
+        delete fila.snap;
+        const pr = logPreciosVersion_(fila.ver, fila.elem);
+        if (pr && pr.escalas && pr.escalas.length) {
+            if (!pr.escalas.some(function (e) { return e.id === fila.lote; })) fila.lote = pr.escalas[0].id;
+            ok++;
+        } else {
+            sinPrecio++;
+        }
+        fila.over = {};
+        delete fila.puFijo;
+        fila.opc = {};
+        fila.excl = {};
+        logOpcCompletar_(fila);
+    });
+    const trm = logTrmDesdeCostos_();
+    if (trm > 0) {
+        logQuote.trm = trm;
+        const inpTrm = document.getElementById("logTRM");
+        if (inpTrm) inpTrm.value = trm;
+    }
+    logMarcarSucio_();
+    logisticaRefrescarTabla_();
+    if (typeof mostrarNotificacion !== "function") return;
+    if (ok && !sinPrecio) {
+        mostrarNotificacion("Presupuesto actualizado con los precios de Costos (" + p.codigo + ").", "success");
+    } else if (ok) {
+        mostrarNotificacion("Se actualizaron " + ok + " fila(s). " + sinPrecio + " sin precios calculados en Costos.", "warning");
+    } else {
+        mostrarNotificacion("Costos no tiene precios calculados para " + p.codigo + ". Genera la matriz primero.", "warning");
+    }
+}
+
 /** Pide a Odoo el contacto y el comercial del proyecto de la cotización. force=true ignora lo ya cargado. */
 async function logisticaCargarOdoo_(force) {
     const codigo = logCodigoProyectoCotizacion_();
@@ -8969,25 +9028,10 @@ function logisticaInit() {
             logisticaPrefetchHistorial_();
         });
     }
-    const btnOdoo = document.getElementById("btnLogOdoo");
-    if (btnOdoo) {
-        btnOdoo.addEventListener("click", async function () {
-            const codigo = logCodigoProyectoCotizacion_();
-            if (!codigo) {
-                if (typeof mostrarNotificacion === "function") mostrarNotificacion("Esta cotización no tiene un proyecto para consultar en Odoo.", "warning");
-                return;
-            }
-            const previo = logCab.over;
-            await logisticaCargarOdoo_(true);
-            if (logOdoo.estado === "ok" && logOdoo.codigo === codigo) {
-                logCab.over = {};
-                logMarcarSucio_();
-                logisticaActualizarVista();
-            } else {
-                logCab.over = previo;
-                logisticaActualizarVista();
-            }
-            logisticaCargarImagenOdoo_(true);
+    const btnPresupuesto = document.getElementById("btnLogPresupuesto");
+    if (btnPresupuesto) {
+        btnPresupuesto.addEventListener("click", function () {
+            logisticaActualizarPresupuestoDesdeCostos_();
         });
     }
 

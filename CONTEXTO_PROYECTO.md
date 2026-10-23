@@ -307,6 +307,8 @@ Al guardar, `datos.comision` (`pct`, `pctBase`, `fee`) y `snap.pctCom` van en el
 
 **Precio del proyecto en la cotización activa.** La ficha (medidas y empaque) se lee en vivo. El precio unitario también, mientras la fila no tenga `snap`. Si la hoja se quedó con el primer precio, al cambiar la matriz, la cantidad o el simulador se suelta y vuelve el del presupuesto (`logAlinearPrecioVivo_`, `logisticaTrasPresupuesto_` desde `engine.js`). Una cotización **guardada** conserva el `snap` y no se mueve. El botón refrescar de esa fila vuelve a leer el presupuesto abierto. El tamaño de la caja no cambia el unitario: ese sale de la matriz y del AIU.
 
+**Actualiza Presupuesto (23 oct 2026).** En la barra de Logística, el botón que decía «Actualizar desde Odoo» ahora es **Actualiza Presupuesto** (`#btnLogPresupuesto` → `logisticaActualizarPresupuestoDesdeCostos_`). Trae ficha, precios y TRM del presupuesto abierto en Costos a las filas de la cotización con el mismo código de proyecto: descongela `snap`, limpia overrides de precio y reescribe escalas. Pensado para abrir la misma cotización y el mismo presupuesto desde el historial, ajustar márgenes en Costos y volcar esos precios a la hoja sin armar la cotización de cero. Odoo (contacto, comercial e imagen) sigue cargándose solo al entrar a la pestaña; ya no hay botón que lo fuerce. Si Costos tiene otro código o no hay precios calculados, avisa y no toca la hoja.
+
 **Asistente de logística.** Tres papeles, no uno. **Análisis costos logísticos** y **Generar datos logísticos** son locales e instantáneos: no llaman a Gemini. El análisis liquida lo que hay en Ajustes y sugiere otra modalidad si el volumen lo pide; no la cambia. Generar escribe el costo en la ficha (`fuente` `[Catálogo]`). La cotización le suma el margen. El **chat** es lo único que usa Gemini: sugiere modalidad, explica un hueco (rango aéreo vacío, contenedor justo, Incoterm) y responde preguntas. No inventa tarifas, no reescribe el catálogo y no dice que ya cambió la modalidad. Duties y Taxes siguen en Aranceles.
 
 **Catálogo de aranceles (en local, falta publicar).** Misma mecánica que `Catalogo_Maestro`: el archivo sigue en Drive, la sync escribe la hoja `Aranceles`, Logística lee la hoja. Fuente: `GD-Logistica\Aranceles\Impuestos y aranceles_listado.xlsx` (una fila por país + partida `9403.20.00.00`, duties %, base, taxes %, base, observación). El país de la cotización es el de Odoo (`res.country`); el Excel no duplica esa lista. Ajustes → Logística: primero Partidas (solo código y descripción; Agregar y Quitar) y debajo Aranceles (agregar a mano, observación, sin Guardar ni Duplicar por fila). Las dos se graban con el Guardar de Ajustes. Sincronizar Drive reemplaza la tabla de aranceles y suma partidas nuevas. El IVU de Puerto Rico lo paga el importador: la cotización no lo suma mientras la observación lo diga. No copiar usuarios ni claves de las primeras filas del libro original. Ids de Drive no van al frontend ni aquí. El script no crea carpetas. Falta pegar `backend.gs` y publicar una versión nueva de la implementación que ya usa la app; si no, Guardar aranceles y la sync del listado plano responden «Acción no válida».
@@ -358,7 +360,7 @@ Lee este checkpoint y la sección **Tarifas logísticas**. No abras chats anteri
 
 La versión de la app es **V2.0**, **V2.1** … **V2.9**, **V3.0**. El badge lo cambia solo `./desplegar.sh`. El esquema de tres números (`V1.0.33`) ya no se usa. El guardado de cotizaciones está en el repo y todavía no está publicado. No hacer `git push` ni `./desplegar.sh` salvo que Edwin lo pida. No llamar `guardar_config`. No poner ids de Drive ni claves en frontend ni aquí. No alterar Motor AIU, Márgenes, el contenido de Catálogos fijos, Comisiones ni el texto de Prompts IA. Mover Catálogo maestro y Catálogos fijos bajo el menú **Costos** ya está hecho: no cambiar el contenido de esos paneles.
 
-Caché local: `styles.css 1.0.85` · `admin.js 1.0.72` · `connectors.js 1.0.41` · `ia-core.js 1.0.43` · `engine.js 1.0.39` · `logistica.js 1.0.150` · `export-excel.js 1.0.33`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
+Caché local: `styles.css 1.0.85` · `admin.js 1.0.72` · `connectors.js 1.0.41` · `ia-core.js 1.0.43` · `engine.js 1.0.39` · `logistica.js 1.0.152` · `export-excel.js 1.0.33`. Tras cambiar uno de esos archivos, subir el `?v=` en `index.html`. Edwin recarga con Ctrl+F5. `backend.gs` no lleva `?v=`: hay que pegarlo y publicar **versión nueva de la misma implementación**. Una implementación nueva cambia la URL.
 
 Nube, una fila por dato:
 
@@ -380,6 +382,12 @@ Cotización y ficha, en el repo:
 - Leer una carta de operador muestra el avance. No hay duplicado masivo de filas. Ciudades es la última pestaña de Ajustes → Logística.
 
 Siguiente, solo si Edwin lo pide: publicar `backend.gs`, o cargar la escala LCL de Cartagena que él dicte. No inventar 40HC de flete interno ni tarifas de puerto.
+
+---
+
+## CHECKPOINT — 23 oct 2026
+
+**Actualiza Presupuesto en Logística.** Se reemplazó el botón «Actualizar desde Odoo» por **Actualiza Presupuesto**: vuelca a la cotización abierta los precios (y TRM) del presupuesto de Costos del mismo código. Sirve cuando historial + márgenes retocados en Costos deben llegar a la hoja sin reconstruirla. Odoo sigue cargando contacto/imagen al abrir la pestaña. Archivos: `index.html`, `logistica.js` (`?v=1.0.152`). No toca `backend.gs` ni Ajustes. Publicar con `desplegar.cmd` cuando Edwin lo pida (sube el badge).
 
 ---
 
