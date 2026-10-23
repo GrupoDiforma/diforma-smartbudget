@@ -651,10 +651,183 @@ function logisticaTomarProyectoCostos_() {
     }
 }
 
+/** Textos candidatos para cruzar una fila congelada con un elemento del grupal. */
+function logTextosIdentidadFila_(fila) {
+    const out = [];
+    const push = function (s) {
+        s = String(s || "").trim().toLowerCase();
+        if (s && out.indexOf(s) < 0) out.push(s);
+    };
+    const ov = (fila && fila.over) || {};
+    const sn = (fila && fila.snap) || {};
+    const f = sn.ficha || {};
+    push(ov.titulo);
+    push(f.titulo);
+    push(sn.nombre);
+    if (f.titulo && sn.nombre && f.titulo !== sn.nombre) {
+        push(String(sn.nombre).trim() + " — " + String(f.titulo).trim());
+        push(String(sn.nombre).trim() + " - " + String(f.titulo).trim());
+    }
+    return out;
+}
+
+/** ¿La versión de Costos es grupal con varias piezas? */
+function logVersionEsGrupalMulti_(ver) {
+    return !!(ver && Array.isArray(ver.elementos) && ver.elementos.length > 1);
+}
+
+/**
+ * Cotizaciones viejas no guardaban `elem`. Si falta, intenta emparejar por título/nombre
+ * con los elementos de la versión en Costos. Vacío = no se pudo resolver.
+ */
+function logResolverElemFila_(fila) {
+    const ver = logVersiones_().find(function (x) { return logVerIgual_(x.id, fila.ver); })
+        || logVersiones_().find(function (x) { return logVerIgual_(x.id, window.versionActivaId); });
+    const elems = (ver && ver.elementos) || [];
+    if (fila.elem && elems.some(function (e) { return String(e.id) === String(fila.elem); })) {
+        return String(fila.elem);
+    }
+    if (!elems.length) return "";
+    if (elems.length === 1) return String(elems[0].id);
+    const claves = logTextosIdentidadFila_(fila);
+    if (!claves.length) return "";
+    let hit = elems.find(function (e) {
+        const n = String(e.nombre || "").trim().toLowerCase();
+        return n && claves.indexOf(n) >= 0;
+    });
+    if (!hit) {
+        hit = elems.find(function (e) {
+            const t = String((e.fichaComercial && e.fichaComercial.titulo) || "").trim().toLowerCase();
+            const n = String(e.nombre || "").trim().toLowerCase();
+            return claves.some(function (clave) {
+                return (t && (t === clave || clave.indexOf(t) >= 0 || t.indexOf(clave) >= 0))
+                    || (n && (clave.indexOf(n) >= 0 || n.indexOf(clave) >= 0));
+            });
+        });
+    }
+    return hit ? String(hit.id) : "";
+}
+
+/** Escalas previas de la fila (array del snap, o síntesis q/lote de cotizaciones viejas). */
+function logEscalasPrevFila_(fila) {
+    const sn = (fila && fila.snap) || null;
+    const out = [];
+    const push = function (id, q, puCop) {
+        if (id == null || id === "") return;
+        if (out.some(function (e) { return e.id === id; })) return;
+        out.push({ id: id, q: q != null ? Number(q) : null, puCop: puCop != null ? Number(puCop) : null });
+    };
+    if (sn && Array.isArray(sn.escalas) && sn.escalas.length) {
+        sn.escalas.forEach(function (e) {
+            if (e) push(e.id, e.q, e.puCop);
+        });
+    } else if (sn && sn.q != null && fila.lote) {
+        push(fila.lote, sn.q, sn.puCop);
+    }
+    if (fila && fila.opc) {
+        Object.keys(fila.opc).forEach(function (escId) {
+            const id = fila.opc[escId];
+            const known = out.find(function (e) { return e.id === id; });
+            push(id, known ? known.q : null, known ? known.puCop : null);
+        });
+    }
+    if (fila && fila.lote) push(fila.lote, null, null);
+    return out;
+}
+
+/** Cruza ids de escala viejos→nuevos por cantidad (los ids pueden cambiar al recalcular). */
+function logRemapLotesFila_(fila, pr, escalasPrev) {
+    if (!pr || !pr.escalas || !pr.escalas.length) return;
+    const prev = Array.isArray(escalasPrev) ? escalasPrev : [];
+    const mapId = {};
+    prev.forEach(function (old) {
+        if (!old || old.id == null) return;
+        const neu = (old.q != null && isFinite(Number(old.q))
+            ? pr.escalas.find(function (e) { return Number(e.q) === Number(old.q); })
+            : null)
+            || pr.escalas.find(function (e) { return e.id === old.id; });
+        if (neu) mapId[old.id] = neu.id;
+    });
+    const resolver = function (loteId) {
+        if (loteId == null || loteId === "") return loteId;
+        if (mapId[loteId]) return mapId[loteId];
+        if (pr.escalas.some(function (e) { return e.id === loteId; })) return loteId;
+        const old = prev.find(function (e) { return e && e.id === loteId; });
+        if (old && old.q != null && isFinite(Number(old.q))) {
+            const neu = pr.escalas.find(function (e) { return Number(e.q) === Number(old.q); });
+            if (neu) return neu.id;
+        }
+        /* sin pista de cantidad: no adivinar Q1; dejar el id (la fila avisará si no hay precio) */
+        return loteId;
+    };
+    const nuevoLote = resolver(fila.lote);
+    if (nuevoLote && pr.escalas.some(function (e) { return e.id === nuevoLote; })) fila.lote = nuevoLote;
+    else if (!pr.escalas.some(function (e) { return e.id === fila.lote; })) fila.lote = pr.escalas[0].id;
+    if (fila.opc) {
+        Object.keys(fila.opc).forEach(function (escId) {
+            const r = resolver(fila.opc[escId]);
+            if (r && pr.escalas.some(function (e) { return e.id === r; })) fila.opc[escId] = r;
+        });
+    }
+}
+
+/**
+ * Reescribe ficha/precios de una fila desde Costos sin romper escenarios (opc/excl)
+ * ni la identidad de pieza en un grupal. Devuelve true si hubo precios.
+ */
+function logisticaRefrescarFilaDesdeCostos_(fila) {
+    if (!fila || fila.tipo !== "item") return false;
+    const p = logisticaLeerProyecto_();
+    /* Si Costos tiene abierto este mismo proyecto, usa la versión que se está trabajando. */
+    if (p.hayProyecto && logNormCod_(p.codigo) === logNormCod_(fila.proy) && window.versionActivaId) {
+        fila.ver = window.versionActivaId;
+    } else if (fila.ver && window.versionActivaId && !logVersiones_().some(function (x) { return logVerIgual_(x.id, fila.ver); })) {
+        fila.ver = window.versionActivaId;
+    }
+    const ver = logVersiones_().find(function (x) { return logVerIgual_(x.id, fila.ver); });
+    const escalasPrev = logEscalasPrevFila_(fila);
+    const elemId = logResolverElemFila_(fila);
+    if (elemId) fila.elem = elemId;
+    /* grupal multi-pieza sin elem resuelto: no aplicar el precio de la pieza activa a todas */
+    if (logVersionEsGrupalMulti_(ver) && !fila.elem) return false;
+    const pr = logPreciosVersion_(fila.ver, fila.elem || "");
+    if (!pr || !pr.escalas || !pr.escalas.length) return false;
+    logRemapLotesFila_(fila, pr, escalasPrev);
+    const esc = pr.escalas.find(function (e) { return e.id === fila.lote; }) || pr.escalas[0];
+    const origen = typeof logComisionDesdeCostos_ === "function" ? logComisionDesdeCostos_() : { pct: 0, fee: 0 };
+    const ficha = logFichaVersion_(fila.ver, fila.elem || "") || {};
+    let nombre = "";
+    if (fila.elem && ver && ver.elementos) {
+        const elObj = ver.elementos.find(function (e) { return String(e.id) === String(fila.elem); });
+        nombre = (elObj && elObj.nombre) || "";
+    }
+    if (!nombre) nombre = logNombreSinCodigo_(p.nombre, String(fila.proy || "").trim() || p.codigo);
+    fila.snap = {
+        ficha: JSON.parse(JSON.stringify(ficha)),
+        q: esc ? esc.q : null,
+        puCop: esc ? esc.puCop : null,
+        escalas: pr.escalas.map(function (e) { return { id: e.id, q: e.q, puCop: e.puCop }; }),
+        trm: logTrm_() || pr.trm || null,
+        nombre: nombre,
+        pctCom: origen.pct,
+        feeCom: origen.fee
+    };
+    /* solo suelta precios/cantidades escritos a mano; conserva textos y opc/excl */
+    if (fila.over) {
+        Object.keys(fila.over).forEach(function (k) {
+            if (k === "unit" || k.indexOf("unit:") === 0 || k === "qty" || k.indexOf("qty:") === 0) delete fila.over[k];
+        });
+    }
+    delete fila.puFijo;
+    return true;
+}
+
 /**
  * Actualiza filas de esta cotización con ficha y precios vivos del presupuesto
  * abierto en Costos (mismo código de proyecto). Sirve sobre todo cuando la hoja
  * vino del historial (precios congelados) y en Costos ya se recalcularon márgenes.
+ * No reescribe opc/excl ni convierte todas las piezas en la activa.
+ * En CONS solo actualiza las filas del proyecto abierto en Costos.
  */
 function logisticaActualizarPresupuestoDesdeCostos_() {
     try { if (typeof snapshotVersionActual === "function") snapshotVersionActual(); } catch (e) { /* se usa lo que haya en memoria */ }
@@ -666,9 +839,9 @@ function logisticaActualizarPresupuestoDesdeCostos_() {
         return;
     }
     const cod = logNormCod_(p.codigo);
-    const filas = ((logQuote && logQuote.filas) || []).filter(function (f) {
-        return f.tipo === "item" && logNormCod_(f.proy) === cod;
-    });
+    const todas = ((logQuote && logQuote.filas) || []).filter(function (f) { return f.tipo === "item"; });
+    const filas = todas.filter(function (f) { return logNormCod_(f.proy) === cod; });
+    const otras = todas.length - filas.length;
     if (!filas.length) {
         if (typeof mostrarNotificacion === "function") {
             mostrarNotificacion("Ninguna fila de esta cotización es del proyecto " + p.codigo + " abierto en Costos.", "warning");
@@ -678,35 +851,28 @@ function logisticaActualizarPresupuestoDesdeCostos_() {
     let ok = 0;
     let sinPrecio = 0;
     filas.forEach(function (fila) {
-        delete fila.snap;
-        const pr = logPreciosVersion_(fila.ver, fila.elem);
-        if (pr && pr.escalas && pr.escalas.length) {
-            if (!pr.escalas.some(function (e) { return e.id === fila.lote; })) fila.lote = pr.escalas[0].id;
-            ok++;
-        } else {
-            sinPrecio++;
-        }
-        fila.over = {};
-        delete fila.puFijo;
-        fila.opc = {};
-        fila.excl = {};
-        logOpcCompletar_(fila);
+        if (logisticaRefrescarFilaDesdeCostos_(fila)) ok++;
+        else sinPrecio++;
     });
     const trm = logTrmDesdeCostos_();
     if (trm > 0) {
         logQuote.trm = trm;
         const inpTrm = document.getElementById("logTRM");
         if (inpTrm) inpTrm.value = trm;
+        filas.forEach(function (fila) {
+            if (fila.snap) fila.snap.trm = trm;
+        });
     }
     logMarcarSucio_();
     logisticaRefrescarTabla_();
     if (typeof mostrarNotificacion !== "function") return;
+    const extraOtras = otras ? (" " + otras + " de otro proyecto no se tocaron.") : "";
     if (ok && !sinPrecio) {
-        mostrarNotificacion("Presupuesto actualizado con los precios de Costos (" + p.codigo + ").", "success");
+        mostrarNotificacion("Presupuesto actualizado con los precios de Costos (" + p.codigo + ")." + extraOtras, "success");
     } else if (ok) {
-        mostrarNotificacion("Se actualizaron " + ok + " fila(s). " + sinPrecio + " sin precios calculados en Costos.", "warning");
+        mostrarNotificacion("Se actualizaron " + ok + " fila(s). " + sinPrecio + " sin poder cruzar pieza/precios en Costos." + extraOtras, "warning");
     } else {
-        mostrarNotificacion("Costos no tiene precios calculados para " + p.codigo + ". Genera la matriz primero.", "warning");
+        mostrarNotificacion("No se pudo actualizar: genera la matriz en Costos o revisa que cada pieza de la cotización exista en el grupal." + extraOtras, "warning");
     }
 }
 
@@ -4805,14 +4971,9 @@ function logisticaAccionFila_(ev) {
     if (acc !== "img") logMarcarSucio_();
     if (acc === "img") { logisticaAbrirEditorImagen_(fila.uid); }
     else if (acc === "refrescar") {
-        delete fila.snap;
-        const pr = logPreciosVersion_(fila.ver, fila.elem);
-        if (pr && pr.escalas.length && !pr.escalas.some(function (e) { return e.id === fila.lote; })) fila.lote = pr.escalas[0].id;
-        fila.over = {};
-        delete fila.puFijo;
-        fila.opc = {};
-        fila.excl = {};
-        logOpcCompletar_(fila);
+        if (!logisticaRefrescarFilaDesdeCostos_(fila) && typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Costos no tiene precios calculados para esta fila. Genera la matriz primero.", "warning");
+        }
         logisticaRefrescarTabla_();
     }
     else if (acc === "noimg") { logImgQuitar_(fila); logisticaRefrescarTabla_(); }
@@ -5277,6 +5438,7 @@ function logisticaSerializar_(idioma) {
     const filas = logQuote.filas.map(function (fila) {
         const v = logFilaValores_(fila, idioma);
         const c = { uid: fila.uid, tipo: fila.tipo, proy: fila.proy || "", ver: fila.ver || "", lote: fila.lote || "", over: clon(fila.over || {}) };
+        if (fila.elem) c.elem = fila.elem;
         if (fila.puFijo) c.puFijo = true;
         if (fila.opc && Object.keys(fila.opc).length) c.opc = clon(fila.opc);
         if (fila.excl && Object.keys(fila.excl).length) c.excl = clon(fila.excl);
