@@ -1091,6 +1091,16 @@ function logPaisDeCodigo_(cod) {
     return logPaisPorCodigo_[c] || "";
 }
 
+/** Cualquier grafía (EN/ES/ISO) → nombre en español del catálogo. Así la
+ * cotización, el menú y la hoja hablan el mismo idioma. */
+function logPaisEnEspanol_(pais) {
+    const raw = String(pais || "").trim();
+    if (!raw) return "";
+    const cod = logEnvCodigoDePais_(raw);
+    if (!cod) return raw;
+    return logPaisDeCodigo_(cod) || raw;
+}
+
 function logPaisNombreEs_(codigo, nombre) {
     const cod = String(codigo || "").trim().toUpperCase();
     if (!cod) return String(nombre || "").trim();
@@ -1117,6 +1127,10 @@ function logPaisesAplicar_(lista) {
     logPaisesCat_ = es;
     logPaisIndiceOlvidar_();
     const e = logQuote && logQuote.env;
+    if (e && e.destinoPais) {
+        e.destinoPais = logPaisEnEspanol_(e.destinoPais);
+        if (typeof logPintarSelectPais_ === "function") logPintarSelectPais_(e.destinoPais);
+    }
     if (!e || !e.destinoPais || e.destinoCodigo) return;
     const cod = logEnvCodigoDePais_(e.destinoPais);
     if (!cod) return;
@@ -1568,8 +1582,9 @@ function logEnvNormalizar_(src) {
     d.incoterm = LOG_INCOTERM_MATRIZ_[inc] ? inc : "EXW";
     if (logEnvIncotermsDe_(d.modalidad).indexOf(d.incoterm) < 0) d.incoterm = "EXW";
     d.destinoCiudad = String(e.destinoCiudad || "").trim();
-    d.destinoPais = String(e.destinoPais || "").trim();
+    d.destinoPais = logPaisEnEspanol_(String(e.destinoPais || "").trim());
     d.destinoCodigo = String(e.destinoCodigo || "").trim().toUpperCase();
+    if (!d.destinoCodigo && d.destinoPais) d.destinoCodigo = logEnvCodigoDePais_(d.destinoPais) || "";
     d.destinoPuerto = String(e.destinoPuerto || "").trim();
     d.contenedores = logContenedoresNorm_(e.contenedores);
     const sumaCont = d.contenedores.c20 + d.contenedores.c40 + d.contenedores.c40hc;
@@ -6618,6 +6633,7 @@ function logAplicarPaisCliente_() {
         pais = String((typeof localeProyectoActual === "function" ? localeProyectoActual() : {}).pais || "").trim();
     } catch (err) { pais = ""; }
     if (!pais) { logPedirPaisCliente_(); return; }
+    pais = logPaisEnEspanol_(pais);
     logQuote.env.destinoPais = pais;
     const cod = typeof logEnvCodigoDePais_ === "function" ? logEnvCodigoDePais_(pais) : "";
     if (cod && !String(logQuote.env.destinoCodigo || "").trim()) logQuote.env.destinoCodigo = cod;
@@ -6626,10 +6642,9 @@ function logAplicarPaisCliente_() {
         if (unica) logQuote.env.destinoCiudad = unica;
     }
     if (logEnvPintando_) return;
-    const paisEl = document.getElementById("logDestPais");
+    if (typeof logPintarSelectPais_ === "function") logPintarSelectPais_(pais);
     const codEl = document.getElementById("logDestCodigo");
     const ciuEl = document.getElementById("logDestCiudad");
-    if (paisEl && document.activeElement !== paisEl) paisEl.value = pais;
     if (codEl && cod && document.activeElement !== codEl && !String(codEl.value || "").trim()) codEl.value = cod;
     if (ciuEl && logQuote.env.destinoCiudad && document.activeElement !== ciuEl && !ciuEl.value) ciuEl.value = logQuote.env.destinoCiudad;
     if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(true);
@@ -6728,11 +6743,11 @@ function logisticaPintarEnv_(forzar) {
         if (tienen !== incs.join(",")) incSel.innerHTML = html;
         logSetSiNoFoco_("logIncoterm", e.incoterm);
     }
-    const ciudadElegida = logPintarSelectCiudad_(e.destinoCiudad, e.destinoPais);
-    const puertoElegido = logPintarSelectPuerto_(e.destinoPuerto, e.destinoPais);
+    const paisElegido = logPintarSelectPais_(e.destinoPais);
+    const ciudadElegida = logPintarSelectCiudad_(e.destinoCiudad, paisElegido || e.destinoPais);
+    const puertoElegido = logPintarSelectPuerto_(e.destinoPuerto, paisElegido || e.destinoPais);
     logSetSiNoFoco_("logDestCiudad", ciudadElegida || e.destinoCiudad);
-    logSetSiNoFoco_("logDestPais", e.destinoPais);
-    logSetSiNoFoco_("logDestCodigo", e.destinoCodigo);
+    logSetSiNoFoco_("logDestCodigo", e.destinoCodigo || logEnvCodigoDePais_(paisElegido || e.destinoPais));
     logSetSiNoFoco_("logDestPuerto", puertoElegido || e.destinoPuerto);
     logSetSiNoFoco_("logResumenPct", e.resumenPct);
     const swOn = document.getElementById("logCostosOn");
@@ -6926,7 +6941,7 @@ function logisticaOnEnvUi_(ev) {
     if (t && t.id === "logDestCiudad" && logQuote.env && !logQuote.env.destinoPais) {
         const paisCiudad = logPaisUnicoDeLugar_(logQuote.env.destinoCiudad);
         if (paisCiudad) {
-            logQuote.env.destinoPais = paisCiudad;
+            logQuote.env.destinoPais = logPaisEnEspanol_(paisCiudad);
             const codCiudad = logEnvCodigoDePais_(paisCiudad);
             if (codCiudad) logQuote.env.destinoCodigo = codCiudad;
         }
@@ -7301,6 +7316,33 @@ function logListaPaises_() {
     });
     out.sort(function (a, b) { return a.localeCompare(b, "es"); });
     return out;
+}
+
+/** País siempre en español, con la misma flecha que Ciudad. */
+function logPintarSelectPais_(actual) {
+    const el = document.getElementById("logDestPais");
+    if (!el) return String(actual || "").trim();
+    const ahora = logPaisEnEspanol_(actual);
+    if (el.tagName !== "SELECT") {
+        if (document.activeElement !== el) el.value = ahora;
+        return ahora;
+    }
+    const lista = logListaPaises_();
+    const norm = logTarNorm_(ahora);
+    let html = "<option value=\"\">País</option>";
+    let visto = !ahora;
+    lista.forEach(function (n) {
+        const sel = logTarNorm_(n) === norm;
+        if (sel) visto = true;
+        html += "<option value=\"" + logEsc_(n) + "\"" + (sel ? " selected" : "") + ">" + logEsc_(n) + "</option>";
+    });
+    if (ahora && !visto) html += "<option value=\"" + logEsc_(ahora) + "\" selected>" + logEsc_(ahora) + "</option>";
+    if (el.getAttribute("data-opts") !== html) {
+        el.innerHTML = html;
+        el.setAttribute("data-opts", html);
+    }
+    if (document.activeElement !== el && el.value !== ahora) el.value = ahora;
+    return ahora;
 }
 function logListaCodigos_() {
     const vistos = {};
@@ -8840,17 +8882,24 @@ function logisticaInit() {
     if (margen) margen.addEventListener("change", logisticaActualizarVista);
     const selCiudad = document.getElementById("logDestCiudad");
     if (selCiudad) selCiudad.addEventListener("focus", function () { logRefrescarCiudadesEnv_(true); });
-    logCombo_("logDestPais", "logPaisMenu", logListaPaises_, function (pais) {
-        const cod = logEnvCodigoDePais_(pais);
-        const c = document.getElementById("logDestCodigo");
-        if (cod && c) c.value = cod;
-    });
+    const selPais = document.getElementById("logDestPais");
+    if (selPais && !selPais.getAttribute("data-pais-on")) {
+        selPais.setAttribute("data-pais-on", "1");
+        selPais.addEventListener("change", function () {
+            const pais = logPaisEnEspanol_(selPais.value);
+            if (pais && selPais.value !== pais) selPais.value = pais;
+            const cod = logEnvCodigoDePais_(pais);
+            const c = document.getElementById("logDestCodigo");
+            if (cod && c) c.value = cod;
+            if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(true);
+        });
+    }
     logCombo_("logDestCodigo", "logCodigoMenu", logListaCodigos_, function (cod) {
         const pais = logPaisDeCodigo_(cod);
-        const p = document.getElementById("logDestPais");
-        if (pais && p) p.value = pais;
+        if (pais && typeof logPintarSelectPais_ === "function") logPintarSelectPais_(pais);
     });
     logCargarPaises_();
+    logPintarSelectPais_((logQuote && logQuote.env && logQuote.env.destinoPais) || "");
     logCargarCiudades_();
     logCargarAranceles_();
     if (document.getElementById("fichaPartida")) logPintarSelectPartida_("");

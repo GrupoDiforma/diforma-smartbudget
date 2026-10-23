@@ -290,6 +290,9 @@ body {
     border-radius: 6px;
     padding: 6px 8px;
     font-size: 0.84rem;
+    color: #212529;
+    -webkit-appearance: none;
+    appearance: none;
 }
 .log-menu button:hover { background: #f3f5f8; }
 .log-req {

@@ -716,6 +716,52 @@ function mismoPais_(a, b) {
   return ciudadesNorm_(a) === ciudadesNorm_(b);
 }
 
+/** ISO → nombre en español (catálogo fijo). Las cotizaciones y la hoja
+ * Ciudades quedan en un solo idioma. */
+var PAIS_NOMBRE_ES_ = {
+  AF: "Afganistán", AL: "Albania", DE: "Alemania", AD: "Andorra", AO: "Angola", AR: "Argentina",
+  AU: "Australia", AT: "Austria", BE: "Bélgica", BO: "Bolivia", BR: "Brasil", BG: "Bulgaria",
+  CA: "Canadá", CL: "Chile", CN: "China", CO: "Colombia", CR: "Costa Rica", HR: "Croacia",
+  CU: "Cuba", DK: "Dinamarca", EC: "Ecuador", EG: "Egipto", SV: "El Salvador", AE: "Emiratos Árabes Unidos",
+  SK: "Eslovaquia", SI: "Eslovenia", ES: "España", US: "Estados Unidos", EE: "Estonia", PH: "Filipinas",
+  FI: "Finlandia", FR: "Francia", GR: "Grecia", GT: "Guatemala", HN: "Honduras", HU: "Hungría",
+  IN: "India", ID: "Indonesia", IE: "Irlanda", IS: "Islandia", IL: "Israel", IT: "Italia",
+  JP: "Japón", JO: "Jordania", KZ: "Kazajistán", KE: "Kenia", LV: "Letonia", LB: "Líbano",
+  LT: "Lituania", MY: "Malasia", MX: "México", NI: "Nicaragua", NG: "Nigeria", NO: "Noruega",
+  NZ: "Nueva Zelanda", NL: "Países Bajos", PA: "Panamá", PY: "Paraguay", PE: "Perú", PL: "Polonia",
+  PT: "Portugal", PR: "Puerto Rico", GB: "Reino Unido", DO: "República Dominicana", RO: "Rumanía",
+  RU: "Rusia", SG: "Singapur", ZA: "Sudáfrica", SE: "Suecia", CH: "Suiza", TH: "Tailandia",
+  TT: "Trinidad y Tobago", TR: "Turquía", UA: "Ucrania", UY: "Uruguay", VE: "Venezuela", VN: "Vietnam"
+};
+
+function paisNombreEs_(s) {
+  var raw = String(s || "").trim();
+  if (!raw) return "";
+  var cod = paisCodigo_(raw);
+  if (!cod && /^[A-Za-z]{2}$/.test(raw)) cod = raw.toUpperCase();
+  if (cod && PAIS_NOMBRE_ES_[cod]) return PAIS_NOMBRE_ES_[cod];
+  return raw;
+}
+
+/** Si el país venía en inglés, lo deja en español y completa el ISO. */
+function cotNormalizarEnvPais_(datos) {
+  if (!datos || !datos.env || typeof datos.env !== "object") return false;
+  var antes = String(datos.env.destinoPais || "").trim();
+  if (!antes) return false;
+  var es = paisNombreEs_(antes);
+  var cod = paisCodigo_(antes) || String(datos.env.destinoCodigo || "").trim().toUpperCase();
+  var cambio = false;
+  if (es && es !== antes) {
+    datos.env.destinoPais = es;
+    cambio = true;
+  }
+  if (cod && String(datos.env.destinoCodigo || "").toUpperCase() !== cod) {
+    datos.env.destinoCodigo = cod;
+    cambio = true;
+  }
+  return cambio;
+}
+
 function obtenerHojaCiudades_() {
   var ss = libroHistorico_();
   var sheet = ss.getSheetByName("Ciudades");
@@ -1279,6 +1325,7 @@ function guardarCotizacionBD(p, email) {
       id = "C-" + ("00000" + seq).slice(-5);
     }
     var datos = JSON.parse(p.datos);
+    cotNormalizarEnvPais_(datos);
     var refs = {};
     var carpeta = null;
     (p.imagenes || []).forEach(function (im) {
@@ -1417,6 +1464,18 @@ function obtenerCotizacionBD(id, rev) {
   var json = [13, 14, 15, 16].map(function (c) { return String(d[c] || ""); }).join("");
   var datos;
   try { datos = JSON.parse(json); } catch (e) { return { exito: false, mensaje: "El contenido guardado está dañado." }; }
+  /* Cotizaciones viejas con país en inglés: se muestran y se reescriben en español. */
+  if (cotNormalizarEnvPais_(datos)) {
+    try {
+      var jsonNuevo = JSON.stringify(datos);
+      if (jsonNuevo.length <= COT_CHUNK_ * 4) {
+        var partes = [];
+        for (var k = 0; k < 4; k++) partes.push(jsonNuevo.substring(k * COT_CHUNK_, (k + 1) * COT_CHUNK_));
+        sh.getRange(idx + 2, 14, 1, 4).setValues([partes]);
+        cotLimpiarCacheLista_();
+      }
+    } catch (eW) { /* si no se pudo reescribir, la app igual muestra el español */ }
+  }
   return {
     exito: true,
     data: {
