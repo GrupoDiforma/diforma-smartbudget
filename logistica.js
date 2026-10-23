@@ -5256,8 +5256,11 @@ function logisticaSerializar_(idioma) {
         if (fila.srcRef) c.srcRef = fila.srcRef;
         if (fila.tipo !== "seccion" && fila.tipo !== "envio") {
             if (v.img && !fila.imgRef && /^data:image\/(jpeg|png)/.test(v.img)) {
-                const pre = logNombrePreImg_(fila);
-                imagenes.push({ k: fila.uid + ":img", data: v.img, preNombre: pre || "" });
+                /* Si se recortó/giró, no mandar preNombre: el servidor reutilizaría el PRE-img original y descartaría el JPEG editado. */
+                const pre = logImgEditada_(fila) ? "" : (logNombrePreImg_(fila) || "");
+                const pack = { k: fila.uid + ":img", data: v.img };
+                if (pre) pack.preNombre = pre;
+                imagenes.push(pack);
             }
             if (logImgEditada_(fila) && fila.imgSrc && !fila.srcRef && /^data:image\/(jpeg|png)/.test(fila.imgSrc)) imagenes.push({ k: fila.uid + ":src", data: fila.imgSrc });
         }

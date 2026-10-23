@@ -1334,22 +1334,22 @@ function guardarCotizacionBD(p, email) {
         refs[im.k] = String(im.ref);
         return;
       }
+      /* data manda: un recorte/giro nuevo no debe reutilizar el PRE-img del presupuesto. */
+      if (im.data) {
+        var m = String(im.data).match(/^data:([^;]+);base64,(.+)$/);
+        if (!m) return;
+        if (!carpeta) carpeta = carpetaCotizaciones_();
+        var nombre = id + "_r" + rev + "_" + String(im.k).replace(/[^\w]/g, "_") + ".jpg";
+        var file = carpeta.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], nombre));
+        publicarArchivoCotizacion_(file);
+        refs[im.k] = file.getId();
+        return;
+      }
       if (im.preNombre) {
         if (!carpeta) carpeta = carpetaCotizaciones_();
         var ya = archivoPresupuestoPorNombre_(carpeta, String(im.preNombre));
-        if (ya) {
-          refs[im.k] = ya.getId();
-          return;
-        }
+        if (ya) refs[im.k] = ya.getId();
       }
-      if (!im.data) return;
-      var m = String(im.data).match(/^data:([^;]+);base64,(.+)$/);
-      if (!m) return;
-      if (!carpeta) carpeta = carpetaCotizaciones_();
-      var nombre = id + "_r" + rev + "_" + String(im.k).replace(/[^\w]/g, "_") + ".jpg";
-      var file = carpeta.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], nombre));
-      publicarArchivoCotizacion_(file);
-      refs[im.k] = file.getId();
     });
     (datos.filas || []).forEach(function (f) {
       if (refs[f.uid + ":img"]) f.imgRef = refs[f.uid + ":img"];
