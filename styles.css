@@ -229,7 +229,7 @@ body {
     /* minmax(0, …) evita el scroll horizontal: antes 520px fijos empujaban la hoja en pantallas a media anchura */
     grid-template-columns: minmax(0, 34rem) minmax(0, 1fr);
     gap: 16px;
-    align-items: start;
+    align-items: stretch;
     min-width: 0;
     overflow-x: hidden;
 }
@@ -239,15 +239,20 @@ body {
     gap: 12px;
     min-width: 0;
     min-height: 0; /* permite encogerse en el grid y scrollear por dentro */
-    align-self: start;
+    align-self: stretch;
     position: sticky;
     top: 8px;
     height: calc(100vh - 96px);
     max-height: calc(100vh - 96px);
     overflow-x: hidden;
     overflow-y: auto;
-    overscroll-behavior: contain;
-    padding-right: 2px;
+    overscroll-behavior-y: contain;
+    overscroll-behavior-x: none;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    isolation: isolate;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
 }
 .log-card {
     background: #fff;
@@ -478,10 +483,17 @@ body {
     font-size: 0.82rem;
 }
 .log-fila-simple {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 6px 8px;
+}
+.log-fila-simple .log-fila-top {
     flex-direction: row;
     align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
+}
+.log-fila-simple .log-fila-esc {
+    margin-left: 26px;
 }
 .log-esc-panel {
     display: flex;
@@ -492,12 +504,104 @@ body {
 }
 .log-esc-item {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     background: #fbfcfd;
     border: 1px solid #e2e5ea;
     border-radius: 8px;
     padding: 5px 7px;
+    min-height: 38px;
+    transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.log-esc-item.log-esc-drop-ghost,
+.log-esc-item:has(.log-fila) {
+    border-color: #1a73e8;
+    background: #f0f6ff;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+.log-esc-item > .log-fila {
+    display: none; /* el clone de Sortable no debe verse dentro de la opción */
+}
+.log-esc-log-on {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #374151;
+}
+.log-esc-log-on .form-check-label {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.78rem;
+}
+.log-opc-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+}
+.log-opc-tabs-lab {
+    font-size: 0.72rem;
+    color: #6b7280;
+    width: 100%;
+}
+.log-opc-tabs-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+.log-opc-bucket {
+    border: 1px solid #e2e5ea;
+    border-radius: 10px;
+    background: #f8fafc;
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+.log-opc-bucket-base {
+    background: #fff;
+    border-color: #d8dee6;
+}
+.log-opc-bucket-base .log-opc-bucket-h {
+    background: #f3f5f8;
+}
+.log-opc-bucket-h {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 9px;
+    background: #eef2f7;
+    border-bottom: 1px solid #e2e5ea;
+}
+.log-opc-bucket-h input[data-esc-nombre] {
+    flex: 1 1 120px;
+    min-width: 90px;
+}
+.log-opc-bucket-list {
+    min-height: 48px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.log-opc-bucket-list.log-opc-drop-over {
+    background: #eef5ff;
+    box-shadow: inset 0 0 0 2px rgba(26, 115, 232, 0.25);
+}
+.log-opc-bucket-empty {
+    font-size: 0.78rem;
+    color: #9aa3ad;
+    padding: 10px 6px;
+    text-align: center;
+}
+.log-opc-perso {
+    font-size: 0.72rem;
+    color: #1a73e8;
+    font-weight: 650;
 }
 .log-esc-item input[data-esc-nombre] {
     flex: 1 1 auto;
@@ -520,14 +624,26 @@ body {
 .log-esc-salto:has(input:disabled) { opacity: .45; cursor: default; }
 .log-esc-ayuda { font-size: 0.7rem; line-height: 1.35; color: #6b7280; }
 .log-esc-env { grid-column: 1 / -1; width: 100%; margin-top: 2px; display: flex; flex-direction: column; gap: 8px; }
-.log-esc-card { border: 1px solid #e2e5ea; border-radius: 8px; padding: 8px 10px 10px; background: #fbfcfd; }
-.log-esc-card-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 0.82rem; }
+.log-esc-env { display: flex; flex-direction: column; gap: 8px; grid-column: 1 / -1; min-width: 0; }
+.log-esc-calc-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: #6b7280;
+    margin: 2px 0 0;
+}
+.log-esc-card { border: 1px solid #e2e5ea; border-radius: 8px; padding: 8px 10px 10px; background: #fbfcfd; min-width: 0; }
+.log-esc-card-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 4px; font-size: 0.82rem; }
+.log-esc-card-h b { flex: 1 1 auto; min-width: 0; }
 .log-esc-card-h span { color: #6b7280; font-size: 0.72rem; white-space: nowrap; }
-.log-esc-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 8px; align-items: end; }
-.log-esc-fields-fcl { grid-template-columns: 1.15fr 1.15fr .6fr .6fr .7fr .85fr 1.4fr; }
+.log-esc-card-h .log-esc-cont-calc { margin-left: auto; flex: 0 0 auto; }
+.log-esc-sug { font-size: 0.72rem; margin: 0 0 6px; line-height: 1.3; }
+.log-esc-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 8px; align-items: end; }
+.log-esc-fields-fcl { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .log-esc-fields label { display: flex; flex-direction: column; gap: 2px; margin: 0; min-width: 0; font-size: 0.66rem; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; color: #6b7280; }
 .log-esc-fields input { width: 100%; min-width: 0; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
-.log-esc-calc-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; font-size: 0.68rem; line-height: 1.25; }
+.log-esc-calc-cell { display: none; }
 .log-esc-env .log-esc-cont-calc { font-size: 0.72rem; white-space: nowrap; }
 .log-esc-nota { font-size: 0.7rem; line-height: 1.35; }
 @media (max-width: 600px) {
@@ -765,6 +881,12 @@ body {
     padding: 8px 8px 12px;
     overflow-x: hidden;
     overflow-y: auto;
+    overscroll-behavior-y: contain;
+    overscroll-behavior-x: none;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    isolation: isolate;
     height: calc(100vh - 96px);
     max-height: calc(100vh - 96px);
     max-width: 100%;
