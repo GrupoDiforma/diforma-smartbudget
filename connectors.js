@@ -663,10 +663,23 @@ function pintarLocaleProyecto() {
     const loc = localeProyectoActual();
     const selI = document.getElementById("selIdiomaFicha");
     const selS = document.getElementById("selSistemaFicha");
-    const pais = document.getElementById("fichaPaisTxt");
+    const paisTxt = document.getElementById("fichaPaisTxt");
     if (selI) selI.value = loc.idioma;
     if (selS) selS.value = loc.sistema;
-    if (pais) pais.textContent = loc.pais ? ("País " + loc.pais) : "País —";
+    if (paisTxt) paisTxt.textContent = "País cliente";
+    if (typeof logPintarSelectPaisCliente === "function") logPintarSelectPaisCliente();
+    else {
+        const selP = document.getElementById("fichaPaisCliente");
+        if (selP && loc.pais) {
+            if (![].some.call(selP.options, function (o) { return o.value === loc.pais; })) {
+                selP.insertAdjacentHTML("beforeend", "<option value=\"" + String(loc.pais).replace(/"/g, "&quot;") + "\">" + loc.pais + "</option>");
+            }
+            selP.value = loc.pais;
+        }
+    }
+    const el = typeof elementoActivoObj_ === "function" ? elementoActivoObj_() : null;
+    const partida = el && el.fichaComercial ? el.fichaComercial.partida : "";
+    if (typeof logPintarSelectPartida === "function") logPintarSelectPartida(partida);
     const um = umFichaActual();
     document.querySelectorAll(".ficha-um").forEach(function (el) { el.textContent = um; });
     document.querySelectorAll(".ficha-um-peso").forEach(function (el) { el.textContent = loc.sistema === "imperial" ? "lb" : "kg"; });

@@ -130,7 +130,7 @@ async function _fetchGas_(payload, opts) {
         if (e.name === "AbortError") {
             var actAbort = payload && payload.action;
             if (/^gemini_/.test(String(actAbort || ""))) {
-                throw new Error("Gemini tardó más de lo esperado. En la entrevista deja PRO apagado; si acabas de cancelar, espera un minuto (el servidor puede seguir ocupado) y reintenta una sola vez.");
+                throw new Error("Gemini tardó más de lo esperado. Espera un minuto (el servidor de Google puede seguir ocupado) y reintenta una sola vez.");
             }
             throw new Error("El servidor tardó demasiado. Vuelve a intentar.");
         }
@@ -138,7 +138,7 @@ async function _fetchGas_(payload, opts) {
         if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
             var act = String((payload && payload.action) || "");
             if (/^gemini_/.test(act)) {
-                throw new Error("Se cortó la conexión con Gemini. Espera un minuto (el servidor puede seguir ocupado) y pulsa Generar matriz otra vez.");
+                throw new Error("Se cortó la conexión con Gemini. Espera un minuto (el servidor de Google puede seguir ocupado) y reintenta.");
             }
             if (/^catalogo_/.test(act)) {
                 throw new Error("No se pudo leer el catálogo maestro. Reintenta; si sigue, revisa la conexión a Apps Script.");

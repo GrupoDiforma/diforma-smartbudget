@@ -1093,8 +1093,8 @@ titulo corto (como en cotización). descripcion 3–4 líneas: qué es, uso en P
 dimensiones del mueble (ancho × fondo × alto) del PDF/render o del chat. empaque de la caja un poco MAYOR que la pieza (no más baja). Si va desarmada, dilo en descripcion.
 empaque.unidades = und. por caja: si el analista dijo «caja con 200U», unidades=200. No lo dejes vacío.
 empaque.peso = peso de UNA caja, en kg si las medidas son cm o en lb si son in. Solo si el analista, el PDF o el chat lo dijeron. Si no está dicho, 0. No lo estimes.
-partida: elige UNA de esta lista, en formato 9403.20.00.00, según el material visible. Si hay más de un material, deja partida vacía. Lista: ${((typeof logListaPartidas === "function" ? logListaPartidas() : []).map(function (p) { return p.codigo + " " + p.nombre; }).join("; ") || "9403.20.00.00 metálico; 9403.60.00.00 madera; 9403.70.00.00 plástico; 3926.90.90.90 display plástico; 4911.10.00.00 impresos; 9403.89.00.00 cartón")}.
-PROHIBIDO copiar medidas del Lead Odoo si el archivo o el chat ya dieron otras.
+partida: elige UNA de esta lista (solo partidas configuradas en Ajustes→Logística→Aranceles para el país del cliente). Formato 9403.20.00.00. Si no hay ninguna que encaje o la lista está vacía, deja partida vacía y en el párrafo del chat invita a configurar la partida faltante en Ajustes → Logística → Aranceles para ese país. País del cliente: ${(typeof logPaisCliente === "function" ? logPaisCliente() : "") || (typeof localeProyectoActual === "function" ? (localeProyectoActual().pais || "sin país") : "sin país")}. Lista: ${((typeof logListaPartidas === "function" ? logListaPartidas({ pais: (typeof logPaisCliente === "function" ? logPaisCliente() : "") }) : []).map(function (p) { return p.codigo + " " + p.nombre; }).join("; ") || "(vacía: no hay partidas de Aranceles para este país)")}.
+PROHIBIDO inventar una partida que no esté en la lista. PROHIBIDO copiar medidas del Lead Odoo si el archivo o el chat ya dieron otras.
 
 Ficha actual (puedes completar huecos, no borres lo que ya esté bien):
 ${JSON.stringify(fichaHoy)}
@@ -1134,21 +1134,39 @@ ${JSON.stringify({
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const cotizacion = extraerCotizacionIA(texto);
+        let notaPartida = "";
         if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
             rellenarEmpUndDesdeChat_(cotizacion.ficha);
             rellenarEmpPesoDesdeChat_(cotizacion.ficha);
+            const paisCli = typeof logPaisCliente === "function" ? logPaisCliente() : "";
+            const listaP = typeof logListaPartidas === "function" ? logListaPartidas({ pais: paisCli }) : [];
+            let partIn = cotizacion.ficha.partida ? String(cotizacion.ficha.partida) : "";
+            if (partIn && paisCli && typeof logPartidaFmt === "function") {
+                const fmt = logPartidaFmt(partIn);
+                if (!listaP.some(function (p) { return p.codigo === fmt; })) {
+                    cotizacion.ficha.partida = "";
+                    partIn = "";
+                    notaPartida = "No hay esa partida en Aranceles para " + paisCli + ". Quedó en blanco: configúrala en Ajustes → Logística → Aranceles y vuelve a elegirla.";
+                }
+            }
             aplicarFichaComercial(cotizacion.ficha);
             if (typeof logSugerirPartida === "function" && typeof leerFichaComercialUI === "function") {
                 const ya = leerFichaComercialUI();
                 if (!ya.partida) {
-                    const sug = logSugerirPartida((ya.titulo || "") + "\n" + (ya.descripcion || ""));
+                    const sug = logSugerirPartida((ya.titulo || "") + "\n" + (ya.descripcion || ""), { pais: paisCli });
                     if (sug && sug.codigo) aplicarFichaComercial({ partida: sug.codigo });
+                    else if (!notaPartida && paisCli && !listaP.length) {
+                        notaPartida = "No hay partidas de Aranceles para " + paisCli + ". Configura la partida en Ajustes → Logística → Aranceles.";
+                    } else if (!notaPartida && !ya.partida) {
+                        notaPartida = "No pude asignar partida para " + (paisCli || "este país") + ". Revisa el material o configúrala en Ajustes → Logística → Aranceles.";
+                    }
                 }
             }
             if (typeof logAlCambiarPartidaFicha === "function") logAlCambiarPartidaFicha();
             avisarEmpaqueVsPieza_();
         }
-        const charla = textoSinJson(texto, cotizacion);
+        let charla = textoSinJson(texto, cotizacion);
+        if (notaPartida) charla = (charla ? charla + "\n\n" : "") + notaPartida;
         window.historialChatIA.push({ role: "model", text: charla });
         pintarMensaje("model", charla.replace(/\n/g, "<br>"), data.modeloUsado);
         if (typeof programarGuardarSesion === "function") programarGuardarSesion();

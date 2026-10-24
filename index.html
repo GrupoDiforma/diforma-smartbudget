@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.91">
+  <link rel="stylesheet" href="styles.css?v=1.0.92">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -130,8 +130,13 @@
                 <button type="button" id="btnCompletarFicha" class="btn btn-outline-primary btn-sm" title="Completa título, descripción, medidas y partida. No toca la matriz." onclick="completarFichaIA()"><i class="bi bi-stars me-1"></i>Rellenar con IA</button>
               </div>
               <div class="d-flex align-items-center gap-2 flex-wrap">
-                <span class="small text-muted" id="fichaPaisTxt">País —</span>
-                <select id="fichaPartida" class="form-select form-select-sm" style="width:auto;max-width:280px;" title="No se imprime. Se cruza con el país para Duties y Taxes." onchange="logAlCambiarPartidaFicha()">
+                <label class="small text-muted mb-0 d-flex align-items-center gap-1" title="País del cliente (Odoo). Filtra las partidas en Costos.">
+                  <span id="fichaPaisTxt">País cliente</span>
+                  <select id="fichaPaisCliente" class="form-select form-select-sm" style="width:auto;max-width:160px;" onchange="logAlCambiarPaisCliente()">
+                    <option value="">—</option>
+                  </select>
+                </label>
+                <select id="fichaPartida" class="form-select form-select-sm" style="width:auto;max-width:280px;" title="Solo partidas de Aranceles del país del cliente. No se imprime." onchange="logAlCambiarPartidaFicha()">
                   <option value="">Partida arancelaria</option>
                 </select>
                 <select id="selIdiomaFicha" class="form-select form-select-sm" style="width:auto;" title="Sale de Odoo (lang_code)" onchange="cambiarLocaleProyecto({idioma:this.value})">
@@ -1012,22 +1017,22 @@
               </section>
             </div>
             <div class="tab-pane fade admin-stack" id="panel-logistica">
-              <div class="row g-3 mb-3 log-tar-params">
-                <div class="col-md-3 admin-field">
-                  <label for="cfgLogTrm">TRM (COP por USD)</label>
-                  <input type="number" id="cfgLogTrm" class="form-control form-control-sm" min="1" step="0.01" placeholder="A mano">
+              <div class="mb-3 log-tar-params">
+                <div class="row g-3">
+                  <div class="col-md-4 admin-field">
+                    <label for="cfgLogTrm">TRM (COP por USD)</label>
+                    <input type="number" id="cfgLogTrm" class="form-control form-control-sm" min="1" step="0.01" placeholder="A mano">
+                  </div>
+                  <div class="col-md-4 admin-field">
+                    <label for="cfgLogMeses">Vigencia (meses)</label>
+                    <input type="number" id="cfgLogMeses" class="form-control form-control-sm" min="1" step="1" value="6">
+                  </div>
+                  <div class="col-md-4 admin-field">
+                    <label for="cfgLogMargen">Margen logística %</label>
+                    <input type="number" id="cfgLogMargen" class="form-control form-control-sm" min="0" max="200" step="1" value="30" title="Se suma al costo de cada fila de exportación al pasarlo a la cotización. Duties y Taxes no lo llevan. No se imprime.">
+                  </div>
                 </div>
-                <div class="col-md-3 admin-field">
-                  <label for="cfgLogMeses">Vigencia (meses)</label>
-                  <input type="number" id="cfgLogMeses" class="form-control form-control-sm" min="1" step="1" value="6">
-                </div>
-                <div class="col-md-3 admin-field">
-                  <label for="cfgLogMargen">Margen logística %</label>
-                  <input type="number" id="cfgLogMargen" class="form-control form-control-sm" min="0" max="200" step="1" value="30" title="Se suma al costo de cada fila de exportación al pasarlo a la cotización. Duties y Taxes no lo llevan. No se imprime.">
-                </div>
-                <div class="col-md-3 d-flex align-items-end">
-                  <small class="text-muted">Cuenta desde la fecha en que cargaste la tarifa. Si ya pasó, se sigue usando y el asistente avisa que conviene cotizar. Un valor en COP pasa a USD con esta TRM. El margen se suma al costo de exportación al pasarlo a la cotización. Una cotización ya guardada conserva el % con el que se armó.</small>
-                </div>
+                <small class="text-muted d-block mt-2">Cuenta desde la fecha en que cargaste la tarifa. Si ya pasó, se sigue usando y el asistente avisa que conviene cotizar. Un valor en COP pasa a USD con esta TRM. El margen se suma al costo de exportación al pasarlo a la cotización. Una cotización ya guardada conserva el % con el que se armó.</small>
               </div>
               <div class="log-ajustes-sub" id="logTarNav" role="tablist"></div>
               <div id="logTarPanel">
@@ -1110,7 +1115,7 @@
                 <header class="admin-card-head">
                   <div>
                     <h3 class="admin-card-title">Partidas arancelarias</h3>
-                    <p class="admin-card-desc">Formato 9403.20.00.00. La ficha comercial elige una de aquí. El país de la cotización la cruza con la lista de aranceles. Se guarda con el botón de Ajustes.</p>
+                    <p class="admin-card-desc">Maestro de partidas en formato 0000.00.00.00. Las tasas por país (abajo) solo usan códigos de esta lista; al sincronizar o guardar se fusionan. En Costos y Cotizaciones el select se filtra por país.</p>
                   </div>
                   <button type="button" class="btn admin-btn" onclick="agregarPartidaUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
                 </header>
@@ -1127,7 +1132,7 @@
                 <header class="admin-card-head">
                   <div>
                     <h3 class="admin-card-title">Aranceles</h3>
-                    <p class="admin-card-desc">Calcula Duties y Taxes en DDP según la base de cada fila. Puedes agregar filas a mano. Sincronizar Drive vuelve a leer el Excel y reemplaza esta tabla. Los cambios se guardan con el botón de Ajustes.</p>
+                    <p class="admin-card-desc">Tasas Duties/Taxes por país y partida (siempre 0000.00.00.00, ligada al maestro de arriba). Sincronizar Drive reemplaza esta tabla. Los cambios se guardan con el botón de Ajustes.</p>
                   </div>
                   <button type="button" class="btn admin-btn" onclick="agregarFilaArancelUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
                 </header>
@@ -1138,6 +1143,29 @@
                     <button type="button" id="btnCronAranceles" class="btn admin-btn" onclick="activarCronArancelesUI()">Activar sync cada 7 días</button>
                   </div>
                   <p class="small text-muted mb-2">Duty sobre EXW o CIF. Taxes sobre CIF + gravamen cuando la base lo dice. Si la observación dice que lo paga el importador, la cotización no lo suma. En el PDF, Duties y Taxes salen sumados en una sola fila.</p>
+                  <div id="logAraSim" class="log-tar-sim mb-3">
+                    <div class="row g-2 align-items-end">
+                      <div class="col-md-2"><label class="small text-muted">País</label><select id="logAraSimPais" class="form-select form-select-sm"></select></div>
+                      <div class="col-md-2"><label class="small text-muted">Partida</label><select id="logAraSimPartida" class="form-select form-select-sm"></select></div>
+                      <div class="col-md-2"><label class="small text-muted">Valor mercancía (EXW)</label><input id="logAraSimExw" type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="USD"></div>
+                      <div class="col-md-2"><label class="small text-muted">Flete internacional</label><input id="logAraSimFlete" type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="USD"></div>
+                      <div class="col-md-2"><label class="small text-muted">Seguro</label><input id="logAraSimSeguro" type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="USD"></div>
+                      <div class="col-md-2"><label class="small text-muted">Origen + flete interno</label><input id="logAraSimOrigen" type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="USD"></div>
+                      <div class="col-md-2"><button type="button" class="btn admin-btn btn-sm w-100" id="logAraSimBtn">Simular Duties/Taxes</button></div>
+                    </div>
+                    <div id="logAraSimOut" class="small mt-2"></div>
+                  </div>
+                  <div class="admin-actions mb-2 flex-wrap gap-2">
+                    <input type="search" id="logAraBuscar" class="form-control form-control-sm" placeholder="Buscar país, partida, nota…" style="max-width:220px;">
+                    <select id="logAraFiltroPais" class="form-select form-select-sm" style="max-width:180px;"><option value="">País: todos</option></select>
+                    <select id="logAraOrden" class="form-select form-select-sm" style="max-width:180px;">
+                      <option value="pais">Orden: país</option>
+                      <option value="partida">Orden: partida</option>
+                      <option value="duties">Orden: Duties %</option>
+                      <option value="taxes">Orden: Taxes %</option>
+                    </select>
+                    <small class="text-muted" id="logAraContador"></small>
+                  </div>
                 </div>
                 <div class="admin-card-table">
                   <div class="catalogo-tabla-wrap">
@@ -1506,13 +1534,13 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.75"></script>
+  <script src="admin.js?v=1.0.79"></script>
     <script src="seguridad.js?v=1.0.26"></script>
-    <script src="app.js?v=1.0.56"></script>
+    <script src="app.js?v=1.0.57"></script>
   <script src="engine.js?v=1.0.40"></script>
-  <script src="connectors.js?v=1.0.43"></script>
-  <script src="ia-core.js?v=1.0.46"></script>
+  <script src="connectors.js?v=1.0.44"></script>
+  <script src="ia-core.js?v=1.0.47"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.172"></script>
+  <script src="logistica.js?v=1.0.177"></script>
 </body>
 </html>

@@ -462,6 +462,48 @@ body.logistica-activa {
 .log-env-row [data-lmg] { grid-column: 4; grid-row: 1; width: auto; }
 .log-env-row [data-ldup] { grid-column: 5; grid-row: 1; }
 .log-env-row [data-ldel] { grid-column: 6; grid-row: 1; }
+/* Duties/Taxes: % pegado al título; observación a todo el ancho hasta los iconos. */
+.log-env-row.is-arancel {
+    grid-template-columns: 28px minmax(0, 1fr) 84px 28px 28px;
+}
+.log-env-row.is-arancel .log-env-conc {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+.log-env-row.is-arancel .log-env-conc [data-lc] {
+    grid-column: unset;
+    grid-row: unset;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.log-env-row.is-arancel .log-env-conc [data-lp] {
+    grid-column: unset;
+    grid-row: unset;
+    flex: 0 0 52px;
+    width: 52px;
+    text-align: right;
+}
+.log-env-pct-mark {
+    flex: 0 0 auto;
+    font-size: 0.75rem;
+    color: #6b7280;
+    line-height: 1;
+}
+.log-env-row.is-arancel [data-lv] { grid-column: 3; grid-row: 1; }
+.log-env-row.is-arancel [data-ldup] { grid-column: 4; grid-row: 1; }
+.log-env-row.is-arancel [data-ldel] { grid-column: 5; grid-row: 1; }
+.log-env-row.is-arancel [data-ln] {
+    grid-column: 2 / 4;
+    grid-row: 2;
+    width: 100%;
+    min-width: 0;
+    text-overflow: ellipsis;
+}
+.log-env-row [data-lv].log-env-auto { color: #374151; }
 .log-env-suma {
     display: grid;
     grid-template-columns: 28px minmax(0, 1fr) 84px 58px 28px 28px;
@@ -1425,6 +1467,11 @@ html, body { overflow-x: hidden; }
 }
 #panel-logistica .arancel-acc { display: flex; flex-wrap: wrap; gap: 4px; }
 #panel-logistica .arancel-acc .btn { padding: 2px 6px; }
+#arancelesBody [data-k="nota"] {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
 .catalogo-pager-nav {
     display: flex;
     justify-content: center;

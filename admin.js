@@ -354,8 +354,9 @@ function quitarComisionUI(btn) {
 
 function htmlFilaPartida_(p) {
     const f = p || { codigo: "", nombre: "" };
+    const codigo = arancelPartidaFmt_(f.codigo || "") || String(f.codigo || "");
     return "<tr>" +
-        "<td><input data-k=\"codigo\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.codigo || "") + "\" placeholder=\"9403.20.00.00\"></td>" +
+        "<td><input data-k=\"codigo\" class=\"form-control form-control-sm\" value=\"" + escHtml(codigo) + "\" placeholder=\"0000.00.00.00\"></td>" +
         "<td><input data-k=\"nombre\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.nombre || "") + "\"></td>" +
         "<td><button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-pq=\"quitar\" title=\"Quitar\">Quitar</button></td></tr>";
 }
@@ -398,6 +399,18 @@ function pintarTablaPartidas() {
             if (tr) tr.remove();
             if (!tbody.querySelector("tr")) tbody.innerHTML = "<tr><td colspan=\"3\">Sin partidas. Agrega una o sincroniza el Excel.</td></tr>";
         });
+        tbody.addEventListener("change", function (ev) {
+            const inp = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-k") === "codigo" ? ev.target : null;
+            if (!inp) return;
+            const fmt = arancelPartidaFmt_(inp.value);
+            if (fmt && inp.value !== fmt) inp.value = fmt;
+            /* Al editar el maestro, refrescar selects de partida en la tabla de tasas. */
+            document.querySelectorAll("#arancelesBody select[data-k=\"partida\"]").forEach(function (sel) {
+                const v = sel.value;
+                sel.innerHTML = selPartidaArancel_(v);
+                if (v) sel.value = arancelPartidaFmt_(v);
+            });
+        });
     }
 }
 
@@ -416,10 +429,18 @@ function fusionarPartidasDesdeArancel_() {
     if (!tbody || typeof window.logPartidasDesdeArancel !== "function") return;
     const tienen = {};
     tbody.querySelectorAll("[data-k=\"codigo\"]").forEach(function (el) {
-        const fmt = typeof window.logPartidaFmt === "function" ? window.logPartidaFmt(el.value) : el.value;
-        if (fmt) tienen[fmt] = true;
+        const fmt = arancelPartidaFmt_(el.value);
+        if (fmt) {
+            tienen[fmt] = true;
+            if (el.value !== fmt) el.value = fmt;
+        }
     });
-    const nuevas = window.logPartidasDesdeArancel().filter(function (p) { return p.codigo && !tienen[p.codigo]; });
+    const nuevas = window.logPartidasDesdeArancel().filter(function (p) {
+        const cod = arancelPartidaFmt_(p.codigo);
+        return cod && !tienen[cod];
+    }).map(function (p) {
+        return { codigo: arancelPartidaFmt_(p.codigo), nombre: p.nombre || "Partida" };
+    });
     if (!nuevas.length) return;
     const vacio = tbody.querySelector("td[colspan]");
     if (vacio) tbody.innerHTML = "";
@@ -856,17 +877,131 @@ function selBaseArancel_(val) {
     }).join("");
 }
 
+function arancelPartidaFmt_(raw) {
+    if (typeof window.logPartidaFmt === "function") return window.logPartidaFmt(raw);
+    const d = String(raw || "").replace(/\D/g, "");
+    if (d.length < 6) return String(raw || "").trim();
+    const p = d.length >= 10 ? d.slice(0, 10) : d.padEnd(10, "0");
+    return p.slice(0, 4) + "." + p.slice(4, 6) + "." + p.slice(6, 8) + "." + p.slice(8, 10);
+}
+
+function selPartidaArancel_(val) {
+    const actual = arancelPartidaFmt_(val || "");
+    const lista = typeof window.logListaPartidas === "function" ? window.logListaPartidas() : [];
+    let html = "<option value=\"\">Partida 0000.00.00.00</option>";
+    let esta = !actual;
+    lista.forEach(function (p) {
+        if (p.codigo === actual) esta = true;
+        html += "<option value=\"" + escHtml(p.codigo) + "\"" + (p.codigo === actual ? " selected" : "") + ">" +
+            escHtml(p.codigo + (p.nombre ? " · " + p.nombre : "")) + "</option>";
+    });
+    if (actual && !esta) {
+        html += "<option value=\"" + escHtml(actual) + "\" selected>" + escHtml(actual) + " (nueva)</option>";
+    }
+    return html;
+}
+
 function htmlFilaArancel_(f) {
     const pct = function (n) { return n == null || n === "" ? "" : n; };
+    const partida = arancelPartidaFmt_(f.partida || "");
     return "<tr data-desc=\"" + escHtml(f.descripcion || "") + "\">" +
         "<td><input data-k=\"pais\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.pais || "") + "\"></td>" +
-        "<td><input data-k=\"partida\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.partida || "") + "\"></td>" +
+        "<td><select data-k=\"partida\" class=\"form-select form-select-sm\">" + selPartidaArancel_(partida) + "</select></td>" +
         "<td><input data-k=\"dutiesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(f.dutiesPct) + "\"></td>" +
         "<td><select data-k=\"dutiesBase\" class=\"form-select form-select-sm\">" + selBaseArancel_(f.dutiesBase || "") + "</select></td>" +
         "<td><input data-k=\"taxesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(f.taxesPct) + "\"></td>" +
         "<td><select data-k=\"taxesBase\" class=\"form-select form-select-sm\">" + selBaseArancel_(f.taxesBase || "") + "</select></td>" +
-        "<td><input data-k=\"nota\" class=\"form-control form-control-sm\" maxlength=\"400\" placeholder=\"Observación\" value=\"" + escHtml(f.nota || "") + "\"></td>" +
-        "<td><button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-ar=\"quitar\" title=\"Quitar\">Quitar</button></td></tr>";
+        "<td><input data-k=\"nota\" class=\"form-control form-control-sm arancel-nota-tip\" maxlength=\"400\" placeholder=\"Observación\" data-tip=\"" + escHtml(f.nota || "") + "\" value=\"" + escHtml(f.nota || "") + "\"></td>" +
+        "<td class=\"text-nowrap\">" +
+        "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary me-1\" data-ar=\"dup\" title=\"Duplicar\"><i class=\"bi bi-copy\"></i></button>" +
+        "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-ar=\"quitar\" title=\"Quitar\">Quitar</button>" +
+        "</td></tr>";
+}
+
+var _arancelesUiFiltro = { q: "", pais: "", orden: "pais" };
+
+function arancelesNormTxt_(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
+function arancelesLlenarFiltroPais_() {
+    const sel = document.getElementById("logAraFiltroPais");
+    const body = document.getElementById("arancelesBody");
+    if (!sel || !body) return;
+    const vistos = {};
+    body.querySelectorAll("tr").forEach(function (tr) {
+        if (!tr.querySelector("[data-k=\"pais\"]")) return;
+        const p = String((tr.querySelector("[data-k=\"pais\"]") || {}).value || "").trim();
+        if (p) vistos[p] = true;
+    });
+    const actual = _arancelesUiFiltro.pais || sel.value;
+    let html = "<option value=\"\">País: todos</option>";
+    Object.keys(vistos).sort(function (a, b) { return arancelesNormTxt_(a).localeCompare(arancelesNormTxt_(b)); }).forEach(function (p) {
+        html += "<option value=\"" + escHtml(p) + "\"" + (p === actual ? " selected" : "") + ">" + escHtml(p) + "</option>";
+    });
+    sel.innerHTML = html;
+    if (actual && vistos[actual]) { sel.value = actual; _arancelesUiFiltro.pais = actual; }
+    else { sel.value = ""; _arancelesUiFiltro.pais = ""; }
+}
+
+/** Oculta/ordena filas en el DOM sin borrarlas (así Guardar no pierde datos filtrados). */
+function arancelesAplicarVista_() {
+    const body = document.getElementById("arancelesBody");
+    if (!body) return;
+    const q = arancelesNormTxt_(_arancelesUiFiltro.q);
+    const paisF = arancelesNormTxt_(_arancelesUiFiltro.pais);
+    const ord = _arancelesUiFiltro.orden || "pais";
+    const rows = [];
+    body.querySelectorAll("tr").forEach(function (tr) {
+        if (!tr.querySelector("[data-k=\"pais\"]")) return;
+        const f = leerFilaArancelUi_(tr);
+        let ok = true;
+        if (paisF && arancelesNormTxt_(f.pais) !== paisF) ok = false;
+        if (ok && q) {
+            const blob = arancelesNormTxt_([f.pais, f.partida, f.nota, f.descripcion, f.dutiesPct, f.taxesPct].join(" "));
+            if (blob.indexOf(q) < 0) ok = false;
+        }
+        tr.style.display = ok ? "" : "none";
+        rows.push({ tr: tr, f: f, ok: ok });
+    });
+    rows.sort(function (a, b) {
+        const fa = a.f, fb = b.f;
+        if (ord === "partida") return arancelesNormTxt_(fa.partida).localeCompare(arancelesNormTxt_(fb.partida)) || arancelesNormTxt_(fa.pais).localeCompare(arancelesNormTxt_(fb.pais));
+        if (ord === "duties") return (Number(fa.dutiesPct) || 0) - (Number(fb.dutiesPct) || 0);
+        if (ord === "taxes") return (Number(fa.taxesPct) || 0) - (Number(fb.taxesPct) || 0);
+        return arancelesNormTxt_(fa.pais).localeCompare(arancelesNormTxt_(fb.pais)) || arancelesNormTxt_(fa.partida).localeCompare(arancelesNormTxt_(fb.partida));
+    });
+    rows.forEach(function (r) { body.appendChild(r.tr); });
+    const vis = rows.filter(function (r) { return r.ok; }).length;
+    const cont = document.getElementById("logAraContador");
+    if (cont) cont.textContent = vis + " de " + rows.length + " fila" + (rows.length === 1 ? "" : "s");
+}
+
+function arancelesInitToolbar_() {
+    const buscar = document.getElementById("logAraBuscar");
+    const filtro = document.getElementById("logAraFiltroPais");
+    const orden = document.getElementById("logAraOrden");
+    if (buscar && !buscar._arOn) {
+        buscar._arOn = true;
+        buscar.addEventListener("input", function () {
+            _arancelesUiFiltro.q = buscar.value || "";
+            arancelesAplicarVista_();
+        });
+    }
+    if (filtro && !filtro._arOn) {
+        filtro._arOn = true;
+        filtro.addEventListener("change", function () {
+            _arancelesUiFiltro.pais = filtro.value || "";
+            arancelesAplicarVista_();
+        });
+    }
+    if (orden && !orden._arOn) {
+        orden._arOn = true;
+        orden.addEventListener("change", function () {
+            _arancelesUiFiltro.orden = orden.value || "pais";
+            arancelesAplicarVista_();
+        });
+    }
 }
 
 function leerFilaArancelUi_(tr) {
@@ -875,7 +1010,8 @@ function leerFilaArancelUi_(tr) {
         return el ? el.value : "";
     };
     return {
-        pais: g("pais"), partida: g("partida"),
+        pais: g("pais"),
+        partida: arancelPartidaFmt_(g("partida")),
         dutiesPct: g("dutiesPct"), dutiesBase: g("dutiesBase"),
         taxesPct: g("taxesPct"), taxesBase: g("taxesBase"),
         nota: g("nota"),
@@ -899,8 +1035,44 @@ function leerArancelesUI() {
 function arancelesMemoriaDesdeUi_() {
     const filas = leerArancelesUI();
     if (!filas || typeof logAranceles === "undefined") return;
-    logAranceles.filas = filas;
+    logAranceles.filas = filas.map(function (f) {
+        return Object.assign({}, f, { partida: arancelPartidaFmt_(f.partida) });
+    });
     logAranceles.pedido = true;
+    /* Mantener el maestro de partidas alineado con las tasas por país. */
+    if (typeof fusionarPartidasDesdeArancel_ === "function") fusionarPartidasDesdeArancel_();
+}
+
+function arancelesActivarTipObs_() {
+    const body = document.getElementById("arancelesBody");
+    if (!body || body._arTip) return;
+    body._arTip = true;
+    const tipFn = typeof logTarTip_ === "function" ? logTarTip_ : null;
+    const hideFn = typeof logTarTipOcultar_ === "function" ? logTarTipOcultar_ : null;
+    if (!tipFn || !hideFn) return;
+    body.addEventListener("mouseover", function (ev) {
+        const el = ev.target.closest("[data-k=\"nota\"]");
+        if (!el) return;
+        const txt = String(el.value || el.getAttribute("data-tip") || "");
+        if (!txt) { hideFn(); return; }
+        const corto = el.scrollWidth <= el.clientWidth + 2;
+        if (corto && txt.length < 24) { hideFn(); return; }
+        tipFn(txt, ev);
+    });
+    body.addEventListener("mousemove", function (ev) {
+        const tip = document.getElementById("mtxFloatTip");
+        if (!tip || tip.style.display !== "block") return;
+        if (!ev.target.closest("[data-k=\"nota\"]")) return;
+        tip.style.left = Math.min(ev.clientX + 12, window.innerWidth - 360) + "px";
+        tip.style.top = (ev.clientY + 16) + "px";
+    });
+    body.addEventListener("mouseout", function (ev) {
+        if (ev.target.closest("[data-k=\"nota\"]")) hideFn();
+    });
+    body.addEventListener("input", function (ev) {
+        const el = ev.target.closest("[data-k=\"nota\"]");
+        if (el) el.setAttribute("data-tip", el.value || "");
+    });
 }
 
 function pintarTablaAranceles() {
@@ -912,9 +1084,26 @@ function pintarTablaAranceles() {
         return;
     }
     body.removeAttribute("data-cargada");
+    arancelesInitToolbar_();
+    arancelesActivarTipObs_();
     if (!body._arClick) {
         body._arClick = true;
         body.addEventListener("click", function (ev) {
+            const dup = ev.target.closest("[data-ar=\"dup\"]");
+            if (dup) {
+                const tr = dup.closest("tr");
+                if (!tr) return;
+                const f = leerFilaArancelUi_(tr);
+                const vacio = body.querySelector("td[colspan]");
+                if (vacio) body.innerHTML = "";
+                body.insertAdjacentHTML("beforeend", htmlFilaArancel_(f));
+                arancelesMemoriaDesdeUi_();
+                arancelesLlenarFiltroPais_();
+                arancelesAplicarVista_();
+                const inp = body.querySelector("tr:last-child [data-k=\"partida\"]");
+                if (inp) { inp.focus(); inp.select(); }
+                return;
+            }
             const btn = ev.target.closest("[data-ar=\"quitar\"]");
             if (!btn) return;
             const tr = btn.closest("tr");
@@ -923,8 +1112,14 @@ function pintarTablaAranceles() {
                 body.innerHTML = "<tr><td colspan=\"8\">Sin filas. Agrega una o sincroniza desde Drive.</td></tr>";
             }
             arancelesMemoriaDesdeUi_();
+            arancelesLlenarFiltroPais_();
+            arancelesAplicarVista_();
         });
-        body.addEventListener("change", arancelesMemoriaDesdeUi_);
+        body.addEventListener("change", function () {
+            arancelesMemoriaDesdeUi_();
+            arancelesLlenarFiltroPais_();
+            if (typeof logAraSimLlenar_ === "function") logAraSimLlenar_();
+        });
     }
     return realizarPeticionBD({ action: "aranceles_consultar" }).then(function (data) {
         if (!data || !data.exito || !data.data || !Array.isArray(data.data.filas)) {
@@ -933,18 +1128,26 @@ function pintarTablaAranceles() {
             body.innerHTML = "<tr><td colspan=\"8\">No se pudo leer la hoja Aranceles.</td></tr>";
             return;
         }
-        const filas = data.data.filas;
+        const filas = (data.data.filas || []).map(function (f) {
+            return Object.assign({}, f, { partida: arancelPartidaFmt_(f.partida) });
+        });
         _arancelesHojaLista = true;
         _arancelesHojaFallo = false;
         body.setAttribute("data-cargada", "1");
-        body.innerHTML = filas.length
-            ? filas.map(htmlFilaArancel_).join("")
-            : "<tr><td colspan=\"8\">Sin filas. Agrega una o sincroniza desde Drive.</td></tr>";
         if (typeof logAranceles !== "undefined") {
             logAranceles.filas = filas;
             logAranceles.pedido = true;
         }
+        /* Primero fusionar al maestro (arriba), luego pintar selects de partida ligados a esa lista. */
         if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
+        if (typeof fusionarPartidasDesdeArancel_ === "function") fusionarPartidasDesdeArancel_();
+        body.innerHTML = filas.length
+            ? filas.map(htmlFilaArancel_).join("")
+            : "<tr><td colspan=\"8\">Sin filas. Agrega una o sincroniza desde Drive.</td></tr>";
+        arancelesLlenarFiltroPais_();
+        arancelesAplicarVista_();
+        if (typeof logAraSimLlenar_ === "function") logAraSimLlenar_();
+        if (typeof logPintarSelectPaisCliente === "function") logPintarSelectPaisCliente();
     }).catch(function () {
         _arancelesHojaLista = false;
         _arancelesHojaFallo = true;
@@ -962,7 +1165,11 @@ function agregarFilaArancelUI() {
     body.setAttribute("data-cargada", "1");
     const vacio = body.querySelector("td[colspan]");
     if (vacio) body.innerHTML = "";
-    body.insertAdjacentHTML("beforeend", htmlFilaArancel_({}));
+    const seed = { pais: _arancelesUiFiltro.pais || "" };
+    body.insertAdjacentHTML("beforeend", htmlFilaArancel_(seed));
+    arancelesMemoriaDesdeUi_();
+    arancelesLlenarFiltroPais_();
+    arancelesAplicarVista_();
     const inp = body.querySelector("tr:last-child [data-k=\"pais\"]");
     if (inp) inp.focus();
 }
@@ -1655,7 +1862,10 @@ function logAjustesVista(vista) {
     try { sessionStorage.setItem("logAjustesVista", id); } catch (e) {}
     if (id === "ciudades") logCiudadesPintar_();
     else {
-        if (id !== "aranceles") logTarPintar_();
+        if (id === "aranceles") {
+            arancelesInitToolbar_();
+            if (typeof logAraSimInit_ === "function") logAraSimInit_();
+        } else logTarPintar_();
         if (typeof logCiudadesBotonGuardar_ === "function") logCiudadesBotonGuardar_();
     }
 }
@@ -2194,6 +2404,22 @@ function logTarCartaProgreso_(out, paso, texto) {
         "<div class=\"progress log-tar-avance\"><div class=\"progress-bar progress-bar-striped progress-bar-animated\" style=\"width:" + pct + "%\"></div></div>";
 }
 
+function logTarCartaEsCongestion_(err) {
+    const m = String((err && err.message) || err || "");
+    return /tardó más|ocupado|Se cortó la conexión con Gemini|Failed to fetch|NetworkError|Load failed|AbortError/i.test(m);
+}
+
+async function logTarCartaGemini_(parts) {
+    /* Destino siempre en Flash (más barato). Sin switch PRO en esta pantalla. */
+    const data = await realizarPeticionBD(
+        { action: "gemini_analizar", modulo: "ajustes", forzarPro: false, parts: parts },
+        { timeoutMs: 240000 }
+    );
+    if (typeof pintarUsoGemini === "function") pintarUsoGemini(data && data.uso);
+    if (!data || !data.exito) throw new Error((data && data.mensaje) || "Gemini no respondió.");
+    return data;
+}
+
 async function logTarCartaLeer_() {
     const out = document.getElementById("logTarCartaOut");
     const btn = document.getElementById("logTarCartaBtn");
@@ -2212,17 +2438,24 @@ async function logTarCartaLeer_() {
     try {
         logTarFlush_();
         const leido = await logTarTextoCarta_(file[0]);
-        logTarCartaProgreso_(out, 2, "Cruzando los cargos de destino…");
+        logTarCartaProgreso_(out, 2, "Extrayendo cargos con Gemini Flash…");
         const actuales = typeof logTarDestinoDeRuta_ === "function" ? logTarDestinoDeRuta_(ruta.pais, ruta.ciudad, ruta.modalidad) : [];
         const prompt = logTarPromptDestino_(ruta, actuales, leido.texto);
         const parts = [{ text: prompt }];
         if (leido.parte) parts.push(leido.parte);
-        const data = await realizarPeticionBD({ action: "gemini_analizar", modulo: "ajustes", forzarPro: false, parts: parts }, { timeoutMs: 120000 });
-        if (typeof pintarUsoGemini === "function") pintarUsoGemini(data && data.uso);
-        if (!data || !data.exito) throw new Error((data && data.mensaje) || "Gemini no respondió.");
+        let data;
+        try {
+            data = await logTarCartaGemini_(parts);
+        } catch (e1) {
+            if (!logTarCartaEsCongestion_(e1)) throw e1;
+            logTarCartaProgreso_(out, 2, "Google sigue ocupado. Reintento automático en 20 s…");
+            await new Promise(function (r) { setTimeout(r, 20000); });
+            logTarCartaProgreso_(out, 2, "Reintentando extracción (Flash)…");
+            data = await logTarCartaGemini_(parts);
+        }
         const texto = (typeof textoGemini === "function") ? textoGemini(data) : "";
         const json = logTarJsonCarta_(texto);
-        if (!json || !Array.isArray(json.cargos)) throw new Error("Gemini no devolvió los cargos. Prueba de nuevo o con el PDF.");
+        if (!json || !Array.isArray(json.cargos)) throw new Error("Gemini no devolvió los cargos. Reintenta con el mismo PDF.");
         const norm = logTarNormalizarCarta_(json, ruta);
         if (!norm.filas.length) throw new Error("No encontré costos de destino con tarifa cerrada. No cambié la tabla.");
         const cruce = logTarDestinoCruzar_(ruta.pais, ruta.ciudad, ruta.modalidad, norm.filas);
@@ -2233,7 +2466,11 @@ async function logTarCartaLeer_() {
         if (out) out.innerHTML = logTarCartaHtml_(cruce, norm.fuera);
     } catch (e) {
         window.logTarCartaPendiente = null;
-        if (out) out.innerHTML = "<span class=\"text-danger\">" + escLogTar_(e.message || "No pude leer la cotización.") + "</span>";
+        let msg = e.message || "No pude leer la cotización.";
+        if (logTarCartaEsCongestion_(e)) {
+            msg = "Google sigue congestionado. Espera un minuto y pulsa otra vez «Leer cotización».";
+        }
+        if (out) out.innerHTML = "<span class=\"text-danger\">" + escLogTar_(msg) + "</span>";
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -2272,6 +2509,87 @@ function logTarSimularClick_() {
     }
     out.innerHTML = "<strong>" + r.total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " USD</strong><br>" +
         r.notas.map(function (t) { return escLogTar_(t); }).join("<br>");
+}
+
+function logAraSimLlenar_() {
+    const selP = document.getElementById("logAraSimPais");
+    const selH = document.getElementById("logAraSimPartida");
+    if (!selP || !selH) return;
+    const filas = (typeof logAranceles !== "undefined" && logAranceles.filas) ? logAranceles.filas
+        : (typeof leerArancelesUI === "function" ? (leerArancelesUI() || []) : []);
+    const paises = {};
+    filas.forEach(function (f) {
+        const p = String(f.pais || "").trim();
+        if (p) paises[p] = true;
+    });
+    const paisAct = selP.value;
+    let htmlP = "<option value=\"\">País</option>";
+    Object.keys(paises).sort(function (a, b) { return arancelesNormTxt_(a).localeCompare(arancelesNormTxt_(b)); }).forEach(function (p) {
+        htmlP += "<option value=\"" + escHtml(p) + "\">" + escHtml(p) + "</option>";
+    });
+    selP.innerHTML = htmlP;
+    if (paisAct && paises[paisAct]) selP.value = paisAct;
+    logAraSimLlenarPartidas_();
+}
+
+function logAraSimLlenarPartidas_() {
+    const selP = document.getElementById("logAraSimPais");
+    const selH = document.getElementById("logAraSimPartida");
+    if (!selH) return;
+    const pais = selP ? String(selP.value || "").trim() : "";
+    const lista = (typeof logListaPartidas === "function") ? logListaPartidas({ pais: pais }) : [];
+    const act = selH.value;
+    let html = "<option value=\"\">Partida</option>";
+    lista.forEach(function (p) {
+        html += "<option value=\"" + escHtml(p.codigo) + "\">" + escHtml(p.codigo + " · " + p.nombre) + "</option>";
+    });
+    selH.innerHTML = html;
+    if (act && lista.some(function (p) { return p.codigo === act; })) selH.value = act;
+}
+
+function logAraSimularClick_() {
+    const g = function (id) { const el = document.getElementById(id); return el ? el.value : ""; };
+    const r = typeof logAraSimular === "function" ? logAraSimular({
+        pais: g("logAraSimPais"),
+        partida: g("logAraSimPartida"),
+        exw: g("logAraSimExw"),
+        flete: g("logAraSimFlete"),
+        seguro: g("logAraSimSeguro"),
+        origen: g("logAraSimOrigen")
+    }) : (typeof logAraSimular_ === "function" ? logAraSimular_({
+        pais: g("logAraSimPais"),
+        partida: g("logAraSimPartida"),
+        exw: g("logAraSimExw"),
+        flete: g("logAraSimFlete"),
+        seguro: g("logAraSimSeguro"),
+        origen: g("logAraSimOrigen")
+    }) : { total: 0, notas: ["Simulador no disponible."], uso: 0 });
+    const out = document.getElementById("logAraSimOut");
+    if (!out) return;
+    if (!r.uso) {
+        out.innerHTML = "<span class=\"text-danger\">" + (r.notas || []).map(function (t) { return escHtml(t); }).join("<br>") + "</span>";
+        return;
+    }
+    const fmt = function (n) {
+        if (n == null) return "—";
+        return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " USD";
+    };
+    out.innerHTML = "<strong>Duties " + fmt(r.duties) + " · Taxes " + fmt(r.taxes) + " · Total " + fmt(r.total) + "</strong><br>" +
+        (r.notas || []).map(function (t) { return escHtml(t); }).join("<br>");
+}
+
+function logAraSimInit_() {
+    const btn = document.getElementById("logAraSimBtn");
+    if (btn && !btn._araOn) {
+        btn._araOn = true;
+        btn.addEventListener("click", logAraSimularClick_);
+    }
+    const selP = document.getElementById("logAraSimPais");
+    if (selP && !selP._araOn) {
+        selP._araOn = true;
+        selP.addEventListener("change", logAraSimLlenarPartidas_);
+    }
+    logAraSimLlenar_();
 }
 
 async function sincronizarArancelesUI() {
