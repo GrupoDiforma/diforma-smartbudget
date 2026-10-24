@@ -3,6 +3,7 @@ window._visorIdx = 0;
 window._pdfDoc = null;
 window._pdfPage = 1;
 window._pdfIdx = -1;
+window._visorZoom = 1;
 
 function asegurarAlcanceArchivo_(f) {
     if (!f) return f;
@@ -38,8 +39,46 @@ window.archivosParaIA = function () {
     return archivosVisiblesIA_().map(function (x) { return x.f; });
 };
 
-async function pdfAPartesGemini_(f, maxPaginas) {
-    maxPaginas = maxPaginas || 4;
+/** Páginas del PDF a rasterizar para Gemini: citadas + con pinta de medidas + portada. */
+async function pdfElegirPaginas_(pdf, forzarPaginas, maxPaginas) {
+    maxPaginas = Math.max(3, Math.min(10, Number(maxPaginas) || 8));
+    const total = pdf.numPages || 1;
+    const elegidas = {};
+    const add = function (n) {
+        n = Number(n);
+        if (n >= 1 && n <= total) elegidas[n] = 1;
+    };
+    (forzarPaginas || []).forEach(add);
+    add(1);
+    if (total >= 2) add(2);
+    if (total >= 3) add(3);
+    /* Buscar páginas con medidas (cm/mm/in / tablas A×F×H) más allá de la portada. */
+    const topeScan = Math.min(total, 24);
+    for (let i = 1; i <= topeScan && Object.keys(elegidas).length < maxPaginas; i++) {
+        if (elegidas[i]) continue;
+        try {
+            const page = await pdf.getPage(i);
+            const tc = await page.getTextContent();
+            const txt = (tc.items || []).map(function (it) { return it.str || ""; }).join(" ");
+            if (/\d+[.,]?\d*\s*(cm|mm|in|pulg)/i.test(txt) ||
+                /\d+[.,]?\d*\s*[x×]\s*\d+[.,]?\d*/i.test(txt) ||
+                /medida|dimensi|empaque|packag|ancho|alto|fondo|width|height|depth/i.test(txt)) {
+                add(i);
+            }
+        } catch (e) { /* página ilegible */ }
+    }
+    if (total > 3) add(total);
+    let lista = Object.keys(elegidas).map(Number).sort(function (a, b) { return a - b; });
+    if (lista.length > maxPaginas) {
+        const forz = (forzarPaginas || []).map(Number).filter(function (n) { return n >= 1 && n <= total; });
+        const resto = lista.filter(function (n) { return forz.indexOf(n) < 0; });
+        lista = forz.concat(resto).slice(0, maxPaginas).sort(function (a, b) { return a - b; });
+    }
+    return lista.length ? lista : [1];
+}
+
+async function pdfAPartesGemini_(f, maxPaginas, forzarPaginas) {
+    maxPaginas = maxPaginas || 8;
     if (!asegurarPdfJs_()) {
         if ((f.data || "").length < 3500000) {
             return [{ inlineData: { mimeType: "application/pdf", data: f.data } }];
@@ -47,9 +86,10 @@ async function pdfAPartesGemini_(f, maxPaginas) {
         return [];
     }
     const pdf = await pdfjsLib.getDocument({ data: bytesArchivoGema_(f) }).promise;
-    const n = Math.min(pdf.numPages, maxPaginas);
+    const pags = await pdfElegirPaginas_(pdf, forzarPaginas, maxPaginas);
     const parts = [];
-    for (let i = 1; i <= n; i++) {
+    for (let pi = 0; pi < pags.length; pi++) {
+        const i = pags[pi];
         const page = await pdf.getPage(i);
         const base = page.getViewport({ scale: 1 });
         const scale = Math.min(1.35, 1100 / Math.max(1, base.width));
@@ -60,16 +100,34 @@ async function pdfAPartesGemini_(f, maxPaginas) {
         await page.render({ canvasContext: canvas.getContext("2d"), viewport: viewport }).promise;
         const jpg = canvas.toDataURL("image/jpeg", 0.78);
         const m = String(jpg).match(/^data:([^;]+);base64,(.+)$/);
-        if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+        if (m) {
+            parts.push({ text: "[PDF " + (f.name || "archivo") + " · página " + i + " de " + pdf.numPages + "]" });
+            parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+        }
     }
     return parts;
 }
 
-/** Imágenes recortadas + primeras páginas de PDF. Evita mandar el archivo crudo (10–40 MB) a GAS/Gemini. */
+/** Invalida caché de páginas PDF y marca páginas a forzar (p. ej. «página 8»). */
+window.invalidarPartesGeminiPdf_ = function (paginas) {
+    const force = (paginas || []).map(Number).filter(function (n) { return n > 0; });
+    (window.archivosGemaBase64 || []).forEach(function (f) {
+        if (!mimeEsPdf_(f.mimeType, f.name)) return;
+        delete f._gParts;
+        if (force.length) {
+            const prev = f._gForcePages || [];
+            const set = {};
+            prev.concat(force).forEach(function (n) { set[n] = 1; });
+            f._gForcePages = Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+        }
+    });
+};
+
+/** Imágenes recortadas + páginas relevantes del PDF (no solo las primeras). */
 window.prepararPartesGemini = async function () {
     const files = typeof window.archivosParaIA === "function" ? window.archivosParaIA() : (window.archivosGemaBase64 || []);
     const parts = [];
-    const MAX = 6;
+    const MAX = 12;
     for (let i = 0; i < files.length && parts.length < MAX; i++) {
         const f = files[i];
         if (f._gParts && f._gParts.length) {
@@ -89,7 +147,7 @@ window.prepararPartesGemini = async function () {
                 }
             }
         } else if (mimeEsPdf_(f.mimeType, f.name)) {
-            try { made = await pdfAPartesGemini_(f, 4); } catch (e2) { made = []; }
+            try { made = await pdfAPartesGemini_(f, 8, f._gForcePages || []); } catch (e2) { made = []; }
         }
         f._gParts = made;
         made.forEach(function (p) { if (parts.length < MAX) parts.push(p); });
@@ -366,11 +424,15 @@ function pintarVisorArchivos_(vis) {
         } else {
             window._pdfDoc = null;
             window._pdfIdx = -1;
+            window._visorZoom = 1;
+            const zt = document.getElementById("visorZoomTxt");
+            if (zt) zt.textContent = "100%";
             lienzo.classList.remove("is-pdf");
             const pinLienzo = (typeof window.archivoEsPinCotizacion === "function" && window.archivoEsPinCotizacion(f))
                 ? '<span class="visor-lienzo-pin" title="Render de la cotización de esta pieza"><i class="bi bi-pin-angle-fill"></i></span>'
                 : "";
             lienzo.innerHTML = '<img alt="" src="' + urlArchivoGema_(f) + '">' + pinLienzo;
+            aplicarZoomImagenVisor_();
         }
     }
     const thumbs = document.getElementById("visorThumbs");
@@ -455,12 +517,37 @@ window.visorPdfPagina = function (delta) {
     renderPdfPaginaVisor_();
 };
 
+window.visorZoom_ = function (dir) {
+    let z = Number(window._visorZoom) || 1;
+    if (dir === 0) z = 1;
+    else if (dir > 0) z = Math.min(4, Math.round((z + 0.25) * 100) / 100);
+    else z = Math.max(0.5, Math.round((z - 0.25) * 100) / 100);
+    window._visorZoom = z;
+    const txt = document.getElementById("visorZoomTxt");
+    if (txt) txt.textContent = Math.round(z * 100) + "%";
+    if (window._pdfDoc) renderPdfPaginaVisor_();
+    else aplicarZoomImagenVisor_();
+};
+
+function aplicarZoomImagenVisor_() {
+    const img = document.querySelector("#visorLienzo img");
+    if (!img) return;
+    const z = Number(window._visorZoom) || 1;
+    img.style.maxWidth = z === 1 ? "100%" : "none";
+    img.style.maxHeight = z === 1 ? "min(52vh, 560px)" : "none";
+    img.style.width = z === 1 ? "auto" : (Math.round(100 * z) + "%");
+    img.style.transform = "";
+}
+
 function cargarPdfVisor_(f, idx) {
     const lienzo = document.getElementById("visorLienzo");
     if (!lienzo) return;
     window._pdfDoc = null;
     window._pdfPage = 1;
     window._pdfIdx = idx;
+    window._visorZoom = 1;
+    const zt = document.getElementById("visorZoomTxt");
+    if (zt) zt.textContent = "100%";
     lienzo.classList.add("is-pdf");
     if (!asegurarPdfJs_()) {
         lienzo.innerHTML = '<p class="text-white-50 small p-3 mb-0">No cargó el visor PDF. Recarga la página.</p>';
@@ -487,14 +574,16 @@ function renderPdfPaginaVisor_() {
     const canvas = document.getElementById("visorPdfCanvas");
     const txt = document.getElementById("visorPdfPaginaTxt");
     if (!pdf || !canvas) return;
+    const zoom = Number(window._visorZoom) || 1;
     pdf.getPage(window._pdfPage).then(function (page) {
         const wrap = canvas.parentElement;
         const base = page.getViewport({ scale: 1 });
         const w = Math.max(280, (wrap && wrap.clientWidth) || canvas.parentElement.clientWidth || 480);
-        const scale = w / base.width;
+        const scale = (w / base.width) * zoom;
         const viewport = page.getViewport({ scale: scale });
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+        canvas.style.maxWidth = zoom > 1 ? "none" : "100%";
         const ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         return page.render({ canvasContext: ctx, viewport: viewport }).promise;
@@ -631,10 +720,239 @@ function fichaComercialVacia() {
         empAlto: "",
         empUnd: "",
         empPeso: "",
+        empCajas: [fichaEmpCajaVacia_()],
         um: umFichaActual(),
         partida: ""
     };
 }
+
+function fichaEmpCajaVacia_() {
+    return { nombre: "", ancho: "", fondo: "", alto: "", und: "", peso: "", porPieza: "" };
+}
+
+/** Normaliza empCajas desde ficha nueva o campos planos legacy. */
+function fichaEmpCajasDe_(f) {
+    f = f || {};
+    if (Array.isArray(f.empCajas) && f.empCajas.length) {
+        return f.empCajas.map(function (c) {
+            return {
+                nombre: c.nombre != null ? String(c.nombre) : "",
+                ancho: c.ancho != null && c.ancho !== "" ? c.ancho : (c.empAncho || ""),
+                fondo: c.fondo != null && c.fondo !== "" ? c.fondo : (c.empFondo || ""),
+                alto: c.alto != null && c.alto !== "" ? c.alto : (c.empAlto || ""),
+                und: c.und != null && c.und !== "" ? c.und : (c.unidades != null ? c.unidades : ""),
+                peso: c.peso != null && c.peso !== "" ? c.peso : "",
+                porPieza: c.porPieza != null && c.porPieza !== "" ? c.porPieza : (c.cajasPorPieza != null ? c.cajasPorPieza : "")
+            };
+        });
+    }
+    if (f.empAncho || f.empFondo || f.empAlto || f.empUnd || f.empPeso) {
+        return [{
+            nombre: "",
+            ancho: f.empAncho || "",
+            fondo: f.empFondo || "",
+            alto: f.empAlto || "",
+            und: f.empUnd || "",
+            peso: f.empPeso || "",
+            porPieza: ""
+        }];
+    }
+    return [fichaEmpCajaVacia_()];
+}
+
+function fichaSincronizarLegacyEmp_() {
+    const cajas = leerEmpCajasUI_();
+    const c0 = cajas[0] || fichaEmpCajaVacia_();
+    const set = function (id, val) {
+        const el = document.getElementById(id);
+        if (el) el.value = val == null || val === "" ? "" : val;
+    };
+    set("fichaEmpAncho", c0.ancho);
+    set("fichaEmpFondo", c0.fondo);
+    set("fichaEmpAlto", c0.alto);
+    set("fichaEmpUnd", c0.und);
+    set("fichaEmpPeso", c0.peso);
+}
+
+function leerEmpCajasUI_() {
+    const box = document.getElementById("fichaEmpCajas");
+    if (!box) {
+        return fichaEmpCajasDe_({
+            empAncho: (document.getElementById("fichaEmpAncho") || {}).value,
+            empFondo: (document.getElementById("fichaEmpFondo") || {}).value,
+            empAlto: (document.getElementById("fichaEmpAlto") || {}).value,
+            empUnd: (document.getElementById("fichaEmpUnd") || {}).value,
+            empPeso: (document.getElementById("fichaEmpPeso") || {}).value
+        });
+    }
+    const rows = box.querySelectorAll(".ficha-emp-caja");
+    if (!rows.length) return [fichaEmpCajaVacia_()];
+    return [].map.call(rows, function (row) {
+        const v = function (k) {
+            const el = row.querySelector("[data-emp=\"" + k + "\"]");
+            return el && el.value !== "" && el.value != null ? el.value : "";
+        };
+        return {
+            nombre: v("nombre"),
+            ancho: v("ancho"),
+            fondo: v("fondo"),
+            alto: v("alto"),
+            und: v("und"),
+            peso: v("peso"),
+            porPieza: v("porPieza")
+        };
+    });
+}
+
+function fichaEmpResumenTxt_(cajas) {
+    const lista = (cajas && cajas.length) ? cajas : leerEmpCajasUI_();
+    const conMed = lista.filter(function (c) {
+        return Number(c.ancho) > 0 && Number(c.fondo) > 0 && Number(c.alto) > 0;
+    });
+    if (!conMed.length) {
+        const vacias = lista.length > 1 ? (lista.length + " tipos (sin medidas)") : "Sin medidas de caja";
+        return vacias;
+    }
+    const um = umFichaActual();
+    const f = um === "in" ? 0.0254 : 0.01;
+    let m3 = 0;
+    let kg = 0;
+    let tiposOk = 0;
+    conMed.forEach(function (c) {
+        const vol = Number(c.ancho) * f * Number(c.fondo) * f * Number(c.alto) * f;
+        const und = Number(c.und);
+        const por = Number(c.porPieza);
+        const n = und > 0 ? 1 : (por > 0 ? por : 1); /* resumen por 1 producto */
+        m3 += vol * n;
+        const p = Number(c.peso);
+        if (p > 0) kg += p * n;
+        tiposOk += 1;
+    });
+    const c0 = conMed[0];
+    const med0 = Number(c0.ancho) + "×" + Number(c0.fondo) + "×" + Number(c0.alto);
+    const nom0 = String(c0.nombre || "Caja").trim() || "Caja";
+    const bits = [];
+    bits.push(tiposOk === 1 ? "1 tipo" : (tiposOk + " tipos"));
+    if (m3 > 0) bits.push("~" + (m3 >= 1 ? m3.toFixed(2) : m3.toFixed(3)).replace(".", ",") + " m³");
+    if (kg > 0) {
+        const imperial = localeProyectoActual().sistema === "imperial";
+        bits.push(Math.round(kg * 10) / 10 + (imperial ? " lb" : " kg"));
+    }
+    bits.push(nom0 + " " + med0 + (tiposOk > 1 ? " +" + (tiposOk - 1) : ""));
+    return bits.join(" · ");
+}
+
+function fichaEmpActualizarResumen_() {
+    const el = document.getElementById("fichaEmpResumen");
+    if (el) el.textContent = fichaEmpResumenTxt_();
+}
+
+function fichaEmpEstaAbierto_() {
+    const btn = document.getElementById("btnFichaEmpToggle");
+    return !!(btn && btn.classList.contains("is-open"));
+}
+
+function fichaEmpSetAbierto_(on) {
+    const btn = document.getElementById("btnFichaEmpToggle");
+    const panel = document.getElementById("fichaEmpPanel");
+    const addWrap = document.getElementById("fichaEmpAddWrap");
+    const chev = btn && btn.querySelector(".ficha-emp-chev");
+    if (!btn || !panel) return;
+    btn.classList.toggle("is-open", !!on);
+    btn.setAttribute("aria-expanded", on ? "true" : "false");
+    panel.classList.toggle("d-none", !on);
+    if (addWrap) addWrap.classList.toggle("d-none", !on);
+    if (chev) chev.textContent = on ? "▾" : "▸";
+}
+
+function fichaEmpEnlazarToggle_() {
+    const btn = document.getElementById("btnFichaEmpToggle");
+    if (!btn || btn.getAttribute("data-on") === "1") return;
+    btn.setAttribute("data-on", "1");
+    btn.addEventListener("click", function (ev) {
+        if (ev.target && ev.target.closest && ev.target.closest("#btnFichaAddCaja")) return;
+        fichaEmpSetAbierto_(!fichaEmpEstaAbierto_());
+    });
+    const add = document.getElementById("btnFichaAddCaja");
+    if (add && add.getAttribute("data-on") !== "1") {
+        add.setAttribute("data-on", "1");
+        const go = function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            fichaAgregarCaja_();
+        };
+        add.addEventListener("click", go);
+        add.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" || ev.key === " ") go(ev);
+        });
+    }
+}
+
+function pintarEmpCajasUI_(cajas) {
+    const box = document.getElementById("fichaEmpCajas");
+    if (!box) return;
+    fichaEmpEnlazarToggle_();
+    const lista = (cajas && cajas.length) ? cajas : [fichaEmpCajaVacia_()];
+    const umPeso = localeProyectoActual().sistema === "imperial" ? "lb" : "kg";
+    const esc = function (s) {
+        return String(s == null ? "" : s).replace(/"/g, "&quot;");
+    };
+    const head =
+        "<div class=\"ficha-emp-head\" aria-hidden=\"true\">" +
+        "<span>Nombre</span><span>Ancho</span><span>Fondo</span><span>Alto</span>" +
+        "<span>Und/caja</span><span>Cajas/pza</span><span>Peso " + umPeso + "</span><span></span></div>";
+    box.innerHTML = head + lista.map(function (c, i) {
+        const quitar = lista.length > 1
+            ? "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-emp-del title=\"Quitar esta caja\"><i class=\"bi bi-trash\"></i></button>"
+            : "<span></span>";
+        return "<div class=\"ficha-emp-caja\" data-emp-i=\"" + i + "\">" +
+            "<input type=\"text\" class=\"form-control form-control-sm\" data-emp=\"nombre\" maxlength=\"40\" placeholder=\"Base, anaquel…\" value=\"" + esc(c.nombre) + "\" title=\"Nombre del tipo de caja\">" +
+            "<input type=\"number\" step=\"0.1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"ancho\" value=\"" + esc(c.ancho) + "\" title=\"Ancho\">" +
+            "<input type=\"number\" step=\"0.1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"fondo\" value=\"" + esc(c.fondo) + "\" title=\"Fondo\">" +
+            "<input type=\"number\" step=\"0.1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"alto\" value=\"" + esc(c.alto) + "\" title=\"Alto\">" +
+            "<input type=\"number\" step=\"1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"und\" value=\"" + esc(c.und) + "\" title=\"Productos por caja de este tipo\">" +
+            "<input type=\"number\" step=\"1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"porPieza\" value=\"" + esc(c.porPieza) + "\" title=\"Cajas de este tipo por cada producto\">" +
+            "<input type=\"number\" step=\"0.01\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"peso\" value=\"" + esc(c.peso) + "\" title=\"Peso de una caja\">" +
+            quitar +
+            "</div>";
+    }).join("");
+    box.querySelectorAll("[data-emp-del]").forEach(function (btn) {
+        btn.onclick = function () {
+            const row = btn.closest(".ficha-emp-caja");
+            if (!row || box.querySelectorAll(".ficha-emp-caja").length <= 1) return;
+            row.remove();
+            fichaSincronizarLegacyEmp_();
+            fichaEmpActualizarResumen_();
+            if (typeof pintarFichaEquivalencia === "function") pintarFichaEquivalencia();
+            if (typeof logisticaTrasPresupuesto_ === "function") logisticaTrasPresupuesto_();
+            if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        };
+    });
+    const onEmp = function () {
+        fichaSincronizarLegacyEmp_();
+        fichaEmpActualizarResumen_();
+        if (typeof pintarFichaEquivalencia === "function") pintarFichaEquivalencia();
+        if (typeof logisticaTrasPresupuesto_ === "function") logisticaTrasPresupuesto_();
+        if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+    };
+    box.querySelectorAll("input").forEach(function (inp) {
+        inp.addEventListener("input", onEmp);
+        inp.addEventListener("change", onEmp);
+    });
+    fichaSincronizarLegacyEmp_();
+    fichaEmpActualizarResumen_();
+    /* Abrir solo si hay varias cajas o el panel ya estaba abierto. */
+    if (lista.length > 1) fichaEmpSetAbierto_(true);
+    else if (!fichaEmpEstaAbierto_()) fichaEmpSetAbierto_(false);
+}
+
+window.fichaAgregarCaja_ = function () {
+    const cur = leerEmpCajasUI_();
+    cur.push(fichaEmpCajaVacia_());
+    fichaEmpSetAbierto_(true);
+    pintarEmpCajasUI_(cur);
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+};
 
 function leerFichaComercialUI() {
     const n = function (id) {
@@ -643,17 +961,20 @@ function leerFichaComercialUI() {
         const v = el.value;
         return v === "" || v == null ? "" : v;
     };
+    const cajas = leerEmpCajasUI_();
+    const c0 = cajas[0] || fichaEmpCajaVacia_();
     return {
         titulo: n("fichaTitulo"),
         descripcion: n("fichaDesc"),
         dimAncho: n("fichaDimAncho"),
         dimFondo: n("fichaDimFondo"),
         dimAlto: n("fichaDimAlto"),
-        empAncho: n("fichaEmpAncho"),
-        empFondo: n("fichaEmpFondo"),
-        empAlto: n("fichaEmpAlto"),
-        empUnd: n("fichaEmpUnd"),
-        empPeso: n("fichaEmpPeso"),
+        empAncho: c0.ancho,
+        empFondo: c0.fondo,
+        empAlto: c0.alto,
+        empUnd: c0.und,
+        empPeso: c0.peso,
+        empCajas: cajas,
         um: umFichaActual(),
         partida: n("fichaPartida")
     };
@@ -748,11 +1069,7 @@ function pintarFichaComercial(ficha) {
     set("fichaDimAncho", ficha.dimAncho);
     set("fichaDimFondo", ficha.dimFondo);
     set("fichaDimAlto", ficha.dimAlto);
-    set("fichaEmpAncho", ficha.empAncho);
-    set("fichaEmpFondo", ficha.empFondo);
-    set("fichaEmpAlto", ficha.empAlto);
-    set("fichaEmpUnd", ficha.empUnd);
-    set("fichaEmpPeso", ficha.empPeso);
+    pintarEmpCajasUI_(fichaEmpCajasDe_(ficha));
     if (typeof window.logPintarSelectPartida === "function") window.logPintarSelectPartida(ficha.partida);
     else set("fichaPartida", ficha.partida);
     pintarLocaleProyecto();
@@ -787,17 +1104,45 @@ function aplicarFichaComercial(ficha, opts) {
         }
         return "";
     };
+    let empCajas = null;
+    if (Array.isArray(emp.cajas) && emp.cajas.length) {
+        empCajas = emp.cajas.map(function (c) {
+            return {
+                nombre: pick(c.nombre, c.name, ""),
+                ancho: pick(c.ancho, c.width, ""),
+                fondo: pick(c.fondo, c.largo, c.depth, ""),
+                alto: pick(c.alto, c.height, ""),
+                und: pick(c.unidades, c.und, c.und_por_caja, ""),
+                peso: pick(c.peso, c.weight, ""),
+                porPieza: pick(c.porPieza, c.cajasPorPieza, c.cajas_por_pieza, "")
+            };
+        });
+    } else if (Array.isArray(src.empCajas) && src.empCajas.length) {
+        empCajas = fichaEmpCajasDe_(src);
+    } else {
+        empCajas = [{
+            nombre: pick(emp.nombre, ""),
+            ancho: pick(emp.ancho, src.empAncho, cur.empAncho),
+            fondo: pick(emp.fondo, emp.largo, src.empFondo, cur.empFondo),
+            alto: pick(emp.alto, src.empAlto, cur.empAlto),
+            und: pick(emp.unidades, emp.und, emp.und_por_caja, emp.unidadesPorCaja, emp.qty, src.empUnd, src.undPorCaja, cur.empUnd),
+            peso: pick(emp.peso, emp.weight, emp.peso_caja, src.empPeso, cur.empPeso),
+            porPieza: pick(emp.porPieza, emp.cajasPorPieza, "")
+        }];
+    }
+    const c0 = empCajas[0] || fichaEmpCajaVacia_();
     pintarFichaComercial({
         titulo: pick(src.titulo, src.title, cur.titulo),
         descripcion: pick(src.descripcion, src.description, cur.descripcion),
         dimAncho: pick(dims.ancho, src.dimAncho, cur.dimAncho),
         dimFondo: pick(dims.fondo, dims.largo, src.dimFondo, cur.dimFondo),
         dimAlto: pick(dims.alto, src.dimAlto, cur.dimAlto),
-        empAncho: pick(emp.ancho, src.empAncho, cur.empAncho),
-        empFondo: pick(emp.fondo, emp.largo, src.empFondo, cur.empFondo),
-        empAlto: pick(emp.alto, src.empAlto, cur.empAlto),
-        empUnd: pick(emp.unidades, emp.und, emp.und_por_caja, emp.unidadesPorCaja, emp.qty, src.empUnd, src.undPorCaja, cur.empUnd),
-        empPeso: pick(emp.peso, emp.weight, emp.peso_caja, src.empPeso, cur.empPeso),
+        empAncho: c0.ancho,
+        empFondo: c0.fondo,
+        empAlto: c0.alto,
+        empUnd: c0.und,
+        empPeso: c0.peso,
+        empCajas: empCajas,
         um: umFichaActual(),
         partida: (typeof window.logPartidaFmt === "function" ? window.logPartidaFmt(pick(src.partida, cur.partida)) : pick(src.partida, cur.partida))
     });
@@ -812,8 +1157,20 @@ window.aplicarLocaleProyecto = aplicarLocaleProyecto;
 window.cambiarLocaleProyecto = cambiarLocaleProyecto;
 window.aplicarFichaComercial = aplicarFichaComercial;
 window.fichaComercialVacia = fichaComercialVacia;
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", enlazarFichaEquivalencia_);
-else enlazarFichaEquivalencia_();
+window.fichaEmpCajasDe_ = fichaEmpCajasDe_;
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+        enlazarFichaEquivalencia_();
+        if (document.getElementById("fichaEmpCajas") && !document.getElementById("fichaEmpCajas").children.length) {
+            pintarEmpCajasUI_([fichaEmpCajaVacia_()]);
+        }
+    });
+} else {
+    enlazarFichaEquivalencia_();
+    if (document.getElementById("fichaEmpCajas") && !document.getElementById("fichaEmpCajas").children.length) {
+        pintarEmpCajasUI_([fichaEmpCajaVacia_()]);
+    }
+}
 
 function aplicarMercado(tipo) {
     const t = String(tipo || "NACIONAL").toUpperCase().includes("EXPORT") ? "EXPORTACION" : "NACIONAL";

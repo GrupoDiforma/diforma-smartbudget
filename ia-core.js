@@ -9,7 +9,7 @@ Actúa como especialista senior en costeo industrial y presupuestos técnicos de
 PERFIL
 - Experto POP: metalmecánica, carpintería, melamina, acrílicos, PS, impresión y acabados.
 - Cubicación exacta: mermas y fraccionamiento de insumos comerciales.
-- Preguntas: SOLO las que cambian el costo de forma material. Nunca preguntes lo obvio si ya se ve en el render/PDF. Máximo 3 a 5 preguntas en el primer turno. Si el PDF ya trae medidas o cantidades creíbles para POP, úsalas; confirma solo si parecen irreales.
+- Preguntas: SOLO las que cambian el costo de forma material. Nunca preguntes lo obvio si ya se ve en el render/PDF. Máximo 3 a 5 preguntas en el primer turno. Si el PDF ya trae medidas o cantidades creíbles para POP, úsalas; confirma solo si parecen irreales. Las imágenes del PDF vienen etiquetadas por página: revisa TODAS (no solo la portada) antes de preguntar ancho/fondo/alto o empaque.
 
 FUENTES DE PRECIO (prioridad estricta)
 1. [Tarifa Fija] si el concepto es un proceso interno de la lista del panel (impresión, CNC, pintura, flete, herrajes de articulación).
@@ -730,6 +730,7 @@ MODO ACTUAL: FASE 1 ENTREVISTA.
 Responde SIEMPRE en español, breve. Aunque el proyecto sea exportación o el Brief esté en inglés. PROHIBIDO JSON, arrays de ítems o costos. NO desgloses la matriz.
 Aunque el analista dé todos los datos, SOLO continúa el diálogo. El costeo ocurre únicamente en FASE 2.
 Pregunta solo lo no obvio. Incluye rangos si no están en los archivos. Medidas en ${localeProyectoActual && localeProyectoActual().sistema === "imperial" ? "pulgadas (in)" : "centímetros (cm)"}.
+Las páginas del PDF llegan como imágenes etiquetadas («página N de M»). Busca medidas y empaque en todas antes de preguntarlas. Si el analista cita una página, priorízala.
 Si ya hay una matriz en pantalla o un historial previo, NO reinicies la entrevista: confirma lo pendiente y pide que pulse Generar matriz.
 Cuando el costeo ya puede salir, invita a pulsar Generar matriz y menciona que, si quiere resultados más confiables, active Gemini PRO antes (la entrevista puede seguir en Flash).`;
     }
@@ -747,10 +748,10 @@ ${bloqueCubicacionMuebleParaPrompt()}
 MODO ACTUAL: FASE 2 GENERAR COTIZACIÓN.
 El analista confirmó. Usa rangos que haya dicho; si no hay, [1, 50, 100].
 Primero un párrafo corto EN ESPAÑOL (chat interno). AL FINAL un único JSON (sin markdown) con esta forma:
-{"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0}},"items":[{"fuente":"[Estimado IA]","nombre":"PS Cal.60 frente — planta 60,3x7,9; h 3,0; paredes 2x3,0; pestaña 2 cm/lado = 64,3x15,9 cm = 0,102 m2","categoria":"Materias Primas","cantidad":0.102,"um":"m2","costoUnitario":0,"es_global":false}]}
+{"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0,"cajas":[{"nombre":"Master","ancho":0,"fondo":0,"alto":0,"unidades":200,"porPieza":0,"peso":0}]}},"items":[{"fuente":"[Estimado IA]","nombre":"PS Cal.60 frente — planta 60,3x7,9; h 3,0; paredes 2x3,0; pestaña 2 cm/lado = 64,3x15,9 cm = 0,102 m2","categoria":"Materias Primas","cantidad":0.102,"um":"m2","costoUnitario":0,"es_global":false}]}
 nombre de cada ítem: título + cuenta con cifras (pieza, tolerancia, merma, tiras de 6 m). ficha.titulo y ficha.descripcion en ${langF}. descripcion de ficha: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo). La receta de costo va en items.nombre, no en la ficha.
 Medidas de ficha SOLO en ${umF}, tomadas del PDF/render o de lo que confirmó el analista. PROHIBIDO copiar dim_diseno u otras medidas del Lead Odoo.
-empaque: caja un poco MAYOR que la pieza (holgura 2–8 cm por lado) si viaja armada. empaque.alto >= dimensiones.alto. PROHIBIDO caja más baja que el mueble (ej. pieza 185 y caja 100) salvo KD declarado. empaque.unidades = und. por caja, OBLIGATORIO si hay caja (si el analista dijo 200U, unidades=200; no lo dejes 0 ni lo omitas). empaque.peso = peso de UNA caja, en kg si las medidas son cm o en lb si son in. Llénalo solo si el analista, el PDF o el chat lo dijeron. Si dieron el peso de una pieza y las unidades por caja, multiplica. PROHIBIDO estimarlo por el render o por los m² de lámina. Si no está dicho, 0.
+empaque: una caja (campos planos ancho/fondo/alto/unidades/peso) O varias si el producto es modular: empaque.cajas:[{nombre,ancho,fondo,alto,unidades,porPieza,peso}]. Caja un poco MAYOR que la pieza si va armada. PROHIBIDO caja más baja que el mueble salvo KD. unidades = productos por esa caja; porPieza = cajas de ese tipo por cada producto (modular). Una de las dos. peso = de UNA caja, kg si cm / lb si in; solo si lo dijeron; si no, 0. PROHIBIDO estimarlo por el render.
 costoUnitario en COP sin IVA. Para es_global true, costoUnitario es el costo del LOTE (o por cada cantidad del lote), NO por producto. No rellenes costos[] en ítems globales: la app hace costoUnitario/Q. PROHIBIDO poner el valor de una caja o un flete en cada unidad del rango (ej. 5.000 cenefas).`;
     }
     return `${base}
@@ -761,11 +762,13 @@ ${bloqueGrupalParaPrompt()}
 
 ${bloqueCubicacionMuebleParaPrompt()}
 
-MODO ACTUAL: FASE 3 AJUSTES sobre la matriz ya listada.
-Responde SIEMPRE en español, breve. Si modificas ítems o el analista pide regenerar/rehacer la matriz, AL FINAL el JSON completo {"rangos":[...],"ficha":{...},"items":[...]} sin markdown. Incluye ficha si cambian título, texto o medidas. Cada items.nombre debe conservar la cuenta (cifras, merma, tiras 6 m, tolerancia de termoformado).
-Si solo aclaras, no envíes JSON.
+MODO ACTUAL: FASE 3 — conversación sobre el proyecto YA costeado.
+Responde SIEMPRE en español, breve. Por defecto SOLO diálogo: aclara dudas, explica ítems, sugiere mejoras. PROHIBIDO enviar JSON de items/rangos si el analista solo pregunta o comenta.
+JSON con {"rangos":[...],"ficha":{...},"items":[...]} SOLO si el analista pide EXPLÍCITAMENTE cambiar la matriz, un ítem, un costo, regenerar o rehacer el costeo. Incluye ficha en ese JSON si también cambian título, texto o medidas. Cada items.nombre debe conservar la cuenta (cifras, merma, tiras 6 m, tolerancia de termoformado).
+Si solo aclara o discute: texto, sin JSON.
+Si pide cambiar solo ficha/medidas/empaque (sin tocar costos): puedes devolver solo {"ficha":{...}} al final.
 Puede adjuntar archivos extra: úsalos. No pidas recargar la página.
-Al rellenar costos: flete, cajas máster, elaboración de troquel (dado) y setup van con es_global true y costoUnitario = COP del lote (o por caja del lote). NO copies esos valores a costos[] ni los pongas como precio de cada producto. La app diluye Costo/Q. PROHIBIDO asignar una caja o un flete entero a cada unidad del rango (ej. 5.000 cenefas). Troquelado por golpe y materiales por pieza: es_global false.
+Al rellenar costos (solo si pidió ajustar matriz): flete, cajas máster, elaboración de troquel (dado) y setup van con es_global true y costoUnitario = COP del lote (o por caja del lote). NO copies esos valores a costos[] ni los pongas como precio de cada producto. La app diluye Costo/Q. PROHIBIDO asignar una caja o un flete entero a cada unidad del rango (ej. 5.000 cenefas). Troquelado por golpe y materiales por pieza: es_global false.
 
 === FICHA ACTUAL ===
 ${JSON.stringify(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : {})}
@@ -1003,10 +1006,15 @@ window.procesarPlanoIA = async function() {
     window.historialChatIA.push({ role: 'user', text: reanudar ? 'Reanalizar archivos (continuar)' : 'Analizar archivos adjuntos' });
     const typingId = marcarEsperaIA_("Preparando archivos…");
     try {
+        /* Regenerar páginas del PDF (medidas / citadas), no reusar solo las 4 primeras cacheadas. */
+        if (typeof window.invalidarPartesGeminiPdf_ === "function") {
+            const citadas = paginasCitadasEnTexto_(historialComoTexto());
+            window.invalidarPartesGeminiPdf_(citadas);
+        }
         esperaIATexto_("Consultando a Gemini…");
         const extra = reanudar
             ? `\nYa hay matriz y/o chat. NO reinicies la entrevista. Resume el análisis. Si el costeo está listo, pide que pulse Generar matriz.\n=== MATRIZ ACTUAL ===\n${JSON.stringify({ rangos: (typeof lotesSimulacion !== "undefined" ? lotesSimulacion.map(function (l) { return l.q; }) : [1]), items: (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto : []) })}\n=== HISTORIAL ===\n${historialComoTexto()}`
-            : "\nInicia la Fase 1.";
+            : "\nInicia la Fase 1. Revisa todas las páginas del PDF etiquetadas antes de preguntar medidas.";
         const promptTexto = `${instruccionesFase(hayItems ? "ajustes" : "entrevista")}\n\nEl analista acaba de cargar ${archivosActivosIA_().length} archivo(s) de esta vista.${extra}`;
         const data = await llamarGeminiConImagenes(promptTexto, 240000, { forzarPro: false });
         if (!data.exito) throw new Error(data.mensaje);
@@ -1043,20 +1051,41 @@ window.enviarMensajeChat = async function() {
     }
 
     const modo = modoConversacion();
-    const msgEspera = modo === "ajustes" ? "La IA está ajustando la matriz…" : "La IA está respondiendo…";
+    const quiereMatriz = modo === "ajustes" && pideAjusteMatriz_(msg);
+    const quiereFicha = pideAjusteFicha_(msg);
+    const msgEspera = quiereMatriz
+        ? "La IA está ajustando la matriz…"
+        : (modo === "ajustes" ? "La IA está respondiendo…" : "La IA está respondiendo…");
     bloquearChatIA_(true);
     const typingId = marcarEsperaIA_(msgEspera);
 
     try {
-        const promptTexto = `${instruccionesFase(modo)}\n\n=== HISTORIAL ===\n${historialComoTexto()}\n\n=== ÚLTIMO MENSAJE DEL ANALISTA ===\n${msg}`;
-        const data = await llamarGeminiChat(promptTexto, 90000);
+        const paginasMsg = paginasCitadasEnTexto_(msg);
+        if (paginasMsg.length && typeof window.invalidarPartesGeminiPdf_ === "function") {
+            window.invalidarPartesGeminiPdf_(paginasMsg);
+        }
+        let extraPag = "";
+        if (paginasMsg.length) {
+            extraPag = "\nEl analista citó la(s) página(s) " + paginasMsg.join(", ") +
+                " del PDF. Léelas con prioridad (van en las imágenes adjuntas) antes de preguntar medidas o materiales.";
+        }
+        const promptTexto = `${instruccionesFase(modo)}\n\n=== HISTORIAL ===\n${historialComoTexto()}\n\n=== ÚLTIMO MENSAJE DEL ANALISTA ===\n${msg}${extraPag}` +
+            (modo === "ajustes" && !quiereMatriz
+                ? "\n\nRECUERDO: este turno es solo diálogo. No envíes JSON de items salvo que el mensaje pida cambiar la matriz."
+                : "");
+        /* Con archivos (o página citada) reenviar vision; el chat de texto solo no ve el PDF. */
+        const hayArchivos = archivosActivosIA_().length > 0;
+        const data = (hayArchivos || paginasMsg.length)
+            ? await llamarGeminiConImagenes(promptTexto, 120000)
+            : await llamarGeminiChat(promptTexto, 90000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         const cotizacion = extraerCotizacionIA(texto);
-        if (cotizacion && Array.isArray(cotizacion.items) && modo === 'ajustes') {
+        if (cotizacion && Array.isArray(cotizacion.items) && cotizacion.items.length && modo === "ajustes" && quiereMatriz) {
             esperaIATexto_("Aplicando la matriz…");
             await aplicarCotizacionEnUI(cotizacion);
-        } else if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
+        } else if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function" &&
+            (quiereFicha || (modo !== "ajustes" && !cotizacion.items))) {
             rellenarEmpUndDesdeChat_(cotizacion.ficha);
             rellenarEmpPesoDesdeChat_(cotizacion.ficha);
             aplicarFichaComercial(cotizacion.ficha);
@@ -1079,6 +1108,36 @@ function pideRegenerarMatriz(msg) {
     return /genera\w*.{0,48}matriz|matriz.{0,28}(nuevamente|de nuevo|otra vez)|vuelve a (generar|armar|costear)|reprocesa|regenera|rehacer.{0,24}matriz/i.test(String(msg || ""));
 }
 
+/** El analista pide cambiar costos/ítems (no solo charlar). */
+function pideAjusteMatriz_(msg) {
+    if (pideRegenerarMatriz(msg)) return true;
+    return /(?:ajusta|cambia|modifica|actualiza|corrige|quita|elimina|borra|agrega|a[nñ]ade|sube|baja|reemplaza)\w*.{0,48}(?:matriz|\b[ií]tems?\b|costos?|precios?|cantidad(?:es)?|merma|material)/i.test(String(msg || "")) ||
+        /(?:matriz|\b[ií]tems?\b).{0,28}(?:ajusta|cambia|modifica|actualiza|corrige)/i.test(String(msg || ""));
+}
+
+function pideAjusteFicha_(msg) {
+    return /ficha|medida|empaque|caja|dimensi|t[ií]tulo comercial|descripci[oó]n|partida arancel|ancho|alto|fondo|peso\s*(de\s*)?(la\s*)?caja/i.test(String(msg || ""));
+}
+
+function paginasCitadasEnTexto_(texto) {
+    const out = {};
+    String(texto || "").replace(/\bp[aá]g(?:ina)?s?\s*(?:n[oº°.]?\s*)?(\d{1,3})(?:\s*(?:y|,|\/|-|a|–|—)\s*(\d{1,3}))?/gi, function (_, a, b) {
+        const n = Number(a);
+        if (n > 0 && n < 500) out[n] = 1;
+        if (b) {
+            const m = Number(b);
+            if (m > 0 && m < 500) {
+                const lo = Math.min(n, m);
+                const hi = Math.max(n, m);
+                if (hi - lo <= 12) for (let i = lo; i <= hi; i++) out[i] = 1;
+                else out[m] = 1;
+            }
+        }
+        return _;
+    });
+    return Object.keys(out).map(Number).sort(function (a, b) { return a - b; });
+}
+
 function promptSoloFichaComercial() {
     const umF = (typeof umFichaActual === "function") ? umFichaActual() : "cm";
     const langF = (typeof localeProyectoActual === "function" && localeProyectoActual().idioma === "en") ? "English" : "español";
@@ -1090,9 +1149,8 @@ ${bloqueGrupalParaPrompt()}
 TAREA: rellenar SOLO la ficha comercial. NO toques costos ni matriz.
 Párrafo del chat: español. Idioma de titulo/descripcion de la ficha: ${langF}. Medidas SOLO en ${umF}.
 titulo corto (como en cotización). descripcion 3–4 líneas: qué es, uso en PDV, materiales visibles. Sin receta de costo.
-dimensiones del mueble (ancho × fondo × alto) del PDF/render o del chat. empaque de la caja un poco MAYOR que la pieza (no más baja). Si va desarmada, dilo en descripcion.
-empaque.unidades = und. por caja: si el analista dijo «caja con 200U», unidades=200. No lo dejes vacío.
-empaque.peso = peso de UNA caja, en kg si las medidas son cm o en lb si son in. Solo si el analista, el PDF o el chat lo dijeron. Si no está dicho, 0. No lo estimes.
+dimensiones del mueble (ancho × fondo × alto) del PDF/render o del chat. Empaque: una caja o varias (modular) en empaque.cajas[{nombre,ancho,fondo,alto,unidades,porPieza,peso}]. Caja un poco MAYOR que la pieza; si va desarmada, dilo en descripcion.
+unidades = und. por caja; porPieza = cajas de ese tipo por producto. peso de UNA caja (kg/lb según um). Solo si lo dijeron; si no, 0.
 partida: elige UNA de esta lista (solo partidas configuradas en Ajustes→Logística→Aranceles para el país del cliente). Formato 9403.20.00.00. Si no hay ninguna que encaje o la lista está vacía, deja partida vacía y en el párrafo del chat invita a configurar la partida faltante en Ajustes → Logística → Aranceles para ese país. País del cliente: ${(typeof logPaisCliente === "function" ? logPaisCliente() : "") || (typeof localeProyectoActual === "function" ? (localeProyectoActual().pais || "sin país") : "sin país")}. Lista: ${((typeof logListaPartidas === "function" ? logListaPartidas({ pais: (typeof logPaisCliente === "function" ? logPaisCliente() : "") }) : []).map(function (p) { return p.codigo + " " + p.nombre; }).join("; ") || "(vacía: no hay partidas de Aranceles para este país)")}.
 PROHIBIDO inventar una partida que no esté en la lista. PROHIBIDO copiar medidas del Lead Odoo si el archivo o el chat ya dieron otras.
 
@@ -1100,7 +1158,7 @@ Ficha actual (puedes completar huecos, no borres lo que ya esté bien):
 ${JSON.stringify(fichaHoy)}
 
 Responde un párrafo corto y AL FINAL un único JSON sin markdown:
-{"ficha":{"titulo":"...","descripcion":"...","partida":"9403.20.00.00","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0}}}`;
+{"ficha":{"titulo":"...","descripcion":"...","partida":"9403.20.00.00","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0,"cajas":[{"nombre":"","ancho":0,"fondo":0,"alto":0,"unidades":200,"porPieza":0,"peso":0}]}}}`;
 }
 
 window.completarFichaIA = async function () {

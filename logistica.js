@@ -2915,15 +2915,31 @@ function logHayEnvios_() {
     return (logQuote.filas || []).some(logEsEnvio_);
 }
 
-/** Volumen de una caja de empaque en m³. Null si faltan las 3 medidas. */
+/** Volumen de una caja de empaque en m³. Null si faltan las 3 medidas. Acepta ficha plana o {ancho,fondo,alto,um}. */
 function logVolCajaM3_(ficha) {
     if (!ficha) return null;
-    const w = Number(ficha.empAncho);
-    const d = Number(ficha.empFondo);
-    const h = Number(ficha.empAlto);
+    const w = Number(ficha.empAncho != null ? ficha.empAncho : ficha.ancho);
+    const d = Number(ficha.empFondo != null ? ficha.empFondo : ficha.fondo);
+    const h = Number(ficha.empAlto != null ? ficha.empAlto : ficha.alto);
     if (!(w > 0 && d > 0 && h > 0)) return null;
     const f = ficha.um === "in" ? 0.0254 : 0.01;
     return w * f * d * f * h * f;
+}
+
+/** Lista de tipos de caja de una ficha (multi-caja o legado de 1). */
+function logEmpCajasDeFicha_(ficha) {
+    if (typeof window.fichaEmpCajasDe_ === "function") return window.fichaEmpCajasDe_(ficha || {});
+    const f = ficha || {};
+    if (Array.isArray(f.empCajas) && f.empCajas.length) return f.empCajas;
+    return [{
+        nombre: "",
+        ancho: f.empAncho,
+        fondo: f.empFondo,
+        alto: f.empAlto,
+        und: f.empUnd,
+        peso: f.empPeso,
+        porPieza: ""
+    }];
 }
 
 function logFmtM3_(n, idioma) {
@@ -2941,12 +2957,12 @@ function logKgVolDivisor_(escId) {
     return null;
 }
 
-/** Medidas de la caja en cm. La ficha puede estar en pulgadas. */
+/** Medidas de la caja en cm. La ficha puede estar en pulgadas. Acepta plana o tipo de caja. */
 function logCajaCm_(ficha) {
     if (!ficha) return null;
-    const w = Number(ficha.empAncho);
-    const d = Number(ficha.empFondo);
-    const h = Number(ficha.empAlto);
+    const w = Number(ficha.empAncho != null ? ficha.empAncho : ficha.ancho);
+    const d = Number(ficha.empFondo != null ? ficha.empFondo : ficha.fondo);
+    const h = Number(ficha.empAlto != null ? ficha.empAlto : ficha.alto);
     if (!(w > 0 && d > 0 && h > 0)) return null;
     const f = ficha.um === "in" ? 2.54 : 1;
     return { w: w * f, d: d * f, h: h * f };
@@ -2955,7 +2971,7 @@ function logCajaCm_(ficha) {
 /** Peso real de una caja, en kg. La ficha lo guarda en kg (cm) o lb (in). */
 function logPesoCajaKg_(ficha) {
     if (!ficha) return null;
-    const n = Number(ficha.empPeso);
+    const n = Number(ficha.empPeso != null ? ficha.empPeso : ficha.peso);
     if (!(n > 0)) return null;
     return ficha.um === "in" ? n / 2.2046226218 : n;
 }
@@ -2983,15 +2999,57 @@ function logCubicajeFila_(fila, idioma, escId) {
     const v = logFilaValores_(fila, idioma, escId);
     const qty = Number(v.qty);
     if (!(qty > 0) || v.excl) return null;
-    const und = Number(f.empUnd);
-    const vol = logVolCajaM3_(f);
-    const cajas = und > 0 ? Math.ceil(qty / und) : null;
-    const m3 = cajas != null && vol != null ? cajas * vol : null;
-    const kgCaja = logKgVolCaja_(f);
-    const kgVol = cajas != null && kgCaja != null ? cajas * kgCaja : null;
-    const pesoCaja = logPesoCajaKg_(f);
-    const peso = cajas != null && pesoCaja != null ? cajas * pesoCaja : null;
-    return { qty: qty, und: und, cajas: cajas, volCaja: vol, m3: m3, kgVol: kgVol, pesoKg: peso };
+    const tipos = logEmpCajasDeFicha_(f);
+    let totalCajas = 0;
+    let m3 = 0;
+    let kgVol = 0;
+    let peso = 0;
+    let undRef = null;
+    let volRef = null;
+    let alguna = false;
+    tipos.forEach(function (caja) {
+        const tipo = {
+            ancho: caja.ancho, fondo: caja.fondo, alto: caja.alto,
+            peso: caja.peso, um: f.um
+        };
+        const vol = logVolCajaM3_(tipo);
+        const und = Number(caja.und);
+        const porPieza = Number(caja.porPieza);
+        let nCajas = null;
+        if (und > 0) nCajas = Math.ceil(qty / und);
+        else if (porPieza > 0) nCajas = qty * porPieza;
+        if (nCajas == null || !(nCajas > 0) || vol == null) return;
+        alguna = true;
+        totalCajas += nCajas;
+        m3 += nCajas * vol;
+        if (undRef == null && und > 0) undRef = und;
+        if (volRef == null) volRef = vol;
+        const kgCaja = logKgVolCaja_(tipo);
+        if (kgCaja != null) kgVol += nCajas * kgCaja;
+        const pesoCaja = logPesoCajaKg_(tipo);
+        if (pesoCaja != null) peso += nCajas * pesoCaja;
+    });
+    if (!alguna) {
+        /* Legado: una sola caja en campos planos. */
+        const und = Number(f.empUnd);
+        const vol = logVolCajaM3_(f);
+        const cajas = und > 0 ? Math.ceil(qty / und) : null;
+        const m3L = cajas != null && vol != null ? cajas * vol : null;
+        const kgCaja = logKgVolCaja_(f);
+        const kgVolL = cajas != null && kgCaja != null ? cajas * kgCaja : null;
+        const pesoCaja = logPesoCajaKg_(f);
+        const pesoL = cajas != null && pesoCaja != null ? cajas * pesoCaja : null;
+        return { qty: qty, und: und, cajas: cajas, volCaja: vol, m3: m3L, kgVol: kgVolL, pesoKg: pesoL };
+    }
+    return {
+        qty: qty,
+        und: undRef,
+        cajas: totalCajas,
+        volCaja: volRef,
+        m3: m3,
+        kgVol: kgVol > 0 ? kgVol : null,
+        pesoKg: peso > 0 ? peso : null
+    };
 }
 
 function logCubicajeAuto_(idioma, escId) {
@@ -3488,8 +3546,20 @@ function logFilaValores_(fila, idioma, escId) {
         v.titulo = nomElem ? (f.titulo && f.titulo !== nomElem ? nomElem + " — " + f.titulo : nomElem) : (f.titulo || nombreProy);
         v.desc = f.descripcion || "";
         v.dimTxt = logFmtMedidasFicha_(logConvertirUm_([f.dimAncho, f.dimFondo, f.dimAlto], umFicha, umDoc), umDoc, idioma);
-        v.empTxt = logFmtMedidasFicha_(logConvertirUm_([f.empAncho, f.empFondo, f.empAlto], umFicha, umDoc), umDoc, idioma);
-        if (v.empTxt && Number(f.empUnd) > 0) v.empTxt += " · " + Number(f.empUnd) + " " + T.undEmp;
+        const tiposEmp = logEmpCajasDeFicha_(f);
+        const bitsEmp = tiposEmp.map(function (c) {
+            const med = logFmtMedidasFicha_(logConvertirUm_([c.ancho, c.fondo, c.alto], umFicha, umDoc), umDoc, idioma);
+            if (!med) return "";
+            let t = (c.nombre ? String(c.nombre) + " " : "") + med;
+            if (Number(c.und) > 0) t += " · " + Number(c.und) + " " + T.undEmp;
+            else if (Number(c.porPieza) > 0) t += " · " + Number(c.porPieza) + (idioma === "en" ? " box/pc" : " caja/pza");
+            return t;
+        }).filter(Boolean);
+        if (bitsEmp.length) v.empTxt = bitsEmp.join(" · ");
+        else {
+            v.empTxt = logFmtMedidasFicha_(logConvertirUm_([f.empAncho, f.empFondo, f.empAlto], umFicha, umDoc), umDoc, idioma);
+            if (v.empTxt && Number(f.empUnd) > 0) v.empTxt += " · " + Number(f.empUnd) + " " + T.undEmp;
+        }
         if (esc) {
             v.qty = esc.q;
             v.unit = logQuote.moneda === "USD" ? esc.puCop / (logTrm_() || pr.trm || 1) : esc.puCop;
@@ -3719,7 +3789,12 @@ function logFirmaCargaLog_() {
         const f = logFichaVersion_(fila.ver, fila.elem) || {};
         const pr = logPreciosVersion_(fila.ver, fila.elem);
         const qs = (pr && pr.escalas) ? pr.escalas.map(function (e) { return e.id + ":" + e.q; }).join(",") : "";
-        bits.push([fila.uid, f.um || sis, f.dimAncho, f.dimFondo, f.dimAlto, f.empAncho, f.empFondo, f.empAlto, f.empUnd, f.empPeso, qs].join("~"));
+        const empKey = Array.isArray(f.empCajas) && f.empCajas.length
+            ? f.empCajas.map(function (c) {
+                return [c.nombre, c.ancho, c.fondo, c.alto, c.und, c.peso, c.porPieza].join(",");
+            }).join("|")
+            : [f.empAncho, f.empFondo, f.empAlto, f.empUnd, f.empPeso].join(",");
+        bits.push([fila.uid, f.um || sis, f.dimAncho, f.dimFondo, f.dimAlto, empKey, qs].join("~"));
     });
     return bits.join("||");
 }
