@@ -1267,22 +1267,23 @@
                   <div class="row g-3">
                     <div class="col-md-3 admin-field"><label>Límite mensual COP (Google)</label><input type="number" id="cfgGeminiCupoCop" class="form-control" min="1" step="1000" value="50000"></div>
                     <div class="col-md-3 admin-field"><label>Presupuesto USD / mes (respaldo)</label><input type="number" id="cfgGeminiCupoUsd" class="form-control" min="1" step="1" value="20"></div>
-                    <div class="col-md-3 admin-field"><label>USD / 1M entrada · Pro</label><input type="number" id="cfgGeminiUsdIn" class="form-control" min="0" step="0.01" value="1.25"></div>
-                    <div class="col-md-3 admin-field"><label>USD / 1M salida · Pro</label><input type="number" id="cfgGeminiUsdOut" class="form-control" min="0" step="0.01" value="10"></div>
-                    <div class="col-md-3 admin-field"><label>USD / 1M entrada · Flash</label><input type="number" id="cfgGeminiUsdInFlash" class="form-control" min="0" step="0.01" value="0.30"></div>
-                    <div class="col-md-3 admin-field"><label>USD / 1M salida · Flash</label><input type="number" id="cfgGeminiUsdOutFlash" class="form-control" min="0" step="0.01" value="2.50"></div>
+                    <div class="col-md-3 admin-field"><label>USD / 1M entrada · Pro (Gemini 3+)</label><input type="number" id="cfgGeminiUsdIn" class="form-control" min="0" step="0.01" value="2"></div>
+                    <div class="col-md-3 admin-field"><label>USD / 1M salida · Pro (Gemini 3+)</label><input type="number" id="cfgGeminiUsdOut" class="form-control" min="0" step="0.01" value="12"></div>
+                    <div class="col-md-3 admin-field"><label>USD / 1M entrada · Flash (Gemini 3+)</label><input type="number" id="cfgGeminiUsdInFlash" class="form-control" min="0" step="0.01" value="0.75"></div>
+                    <div class="col-md-3 admin-field"><label>USD / 1M salida · Flash (Gemini 3+)</label><input type="number" id="cfgGeminiUsdOutFlash" class="form-control" min="0" step="0.01" value="3.75"></div>
                     <div class="col-md-3 admin-field"><label>Tope tokens (respaldo)</label><input type="number" id="cfgGeminiCupo" class="form-control" min="100000" step="100000" value="2000000"></div>
                   </div>
+                  <p class="small text-muted mb-0 mt-2">List price oct 2026: Flash 3.x = 0,75 / 3,75 · Pro 3.x = 2 / 12. Si Ajustes aún tiene 0,30 / 2,50 (Flash 2.5), el backend ya no las aplica a modelos Gemini 3+.</p>
                   <div class="row g-3 mt-1 pt-3 border-top">
                     <div class="col-md-4 admin-field">
-                      <label>Saldo que te resta según Google (COP)</label>
-                      <input type="number" id="cfgGeminiSaldoReal" class="form-control" min="0" step="0.01" placeholder="Ej: 10108.58">
+                      <label>Gasto de la barra de Google (COP del mes)</label>
+                      <input type="number" id="cfgGeminiGastoReal" class="form-control" min="0" step="0.01" placeholder="Ej: 42656.81">
                     </div>
                     <div class="col-md-3 d-flex align-items-end">
                       <button type="button" class="btn admin-btn admin-btn-primary" id="btnCalibrarGemini" onclick="calibrarGeminiUI()"><i class="bi bi-crosshair me-1"></i>Calibrar ahora</button>
                     </div>
                     <div class="col-md-5 d-flex align-items-end">
-                      <p class="small text-muted mb-0" id="geminiCalibracionEstado">Sin calibrar este mes. Escribe el saldo exacto que muestra Google (límite mensual menos lo gastado) y pulsa Calibrar ahora: desde ese instante la app descuenta su propio consumo sobre ese saldo. Calibrar actúa al momento, no espera el Guardar de Ajustes. La calibración vence al cambiar de mes.</p>
+                      <p class="small text-muted mb-0" id="geminiCalibracionEstado">Sin calibrar este mes. Copia el gasto de la barra superior de Google AI Studio (p. ej. 42.656,81 de 50.000), no el «costo total» de 28 días. Calibrar actúa al momento. Vence al cambiar de mes; entre calibraciones el medidor estima y puede desviarse un poco.</p>
                     </div>
                   </div>
                 </div>
@@ -1555,12 +1556,12 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.79"></script>
+  <script src="admin.js?v=1.0.80"></script>
     <script src="seguridad.js?v=1.0.26"></script>
     <script src="app.js?v=1.0.57"></script>
   <script src="engine.js?v=1.0.40"></script>
   <script src="connectors.js?v=1.0.46"></script>
-  <script src="ia-core.js?v=1.0.48"></script>
+  <script src="ia-core.js?v=1.0.49"></script>
   <script src="export-excel.js?v=1.0.33"></script>
   <script src="logistica.js?v=1.0.180"></script>
 </body>

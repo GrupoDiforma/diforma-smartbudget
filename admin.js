@@ -696,10 +696,17 @@ function pintarFormularioAjustes_() {
     setVal('cfgGeminiCupo', d.geminiCupoTokens != null ? d.geminiCupoTokens : 2000000);
     setVal('cfgGeminiCupoUsd', d.geminiCupoUsd != null ? d.geminiCupoUsd : 20);
     setVal('cfgGeminiCupoCop', d.geminiCupoCop != null ? d.geminiCupoCop : 50000);
-    setVal('cfgGeminiUsdIn', d.geminiUsdPor1MIn != null ? d.geminiUsdPor1MIn : 1.25);
-    setVal('cfgGeminiUsdOut', d.geminiUsdPor1MOut != null ? d.geminiUsdPor1MOut : 10);
-    setVal('cfgGeminiUsdInFlash', d.geminiUsdPor1MInFlash != null ? d.geminiUsdPor1MInFlash : 0.30);
-    setVal('cfgGeminiUsdOutFlash', d.geminiUsdPor1MOutFlash != null ? d.geminiUsdPor1MOutFlash : 2.50);
+    /* Migrar tarifas 2.5 guardadas → list price Gemini 3+ (oct 2026). */
+    let usdIn = d.geminiUsdPor1MIn != null ? Number(d.geminiUsdPor1MIn) : 2;
+    let usdOut = d.geminiUsdPor1MOut != null ? Number(d.geminiUsdPor1MOut) : 12;
+    let usdInF = d.geminiUsdPor1MInFlash != null ? Number(d.geminiUsdPor1MInFlash) : 0.75;
+    let usdOutF = d.geminiUsdPor1MOutFlash != null ? Number(d.geminiUsdPor1MOutFlash) : 3.75;
+    if (usdIn === 1.25 && usdOut === 10) { usdIn = 2; usdOut = 12; }
+    if (usdInF === 0.3 && usdOutF === 2.5) { usdInF = 0.75; usdOutF = 3.75; }
+    setVal('cfgGeminiUsdIn', usdIn);
+    setVal('cfgGeminiUsdOut', usdOut);
+    setVal('cfgGeminiUsdInFlash', usdInF);
+    setVal('cfgGeminiUsdOutFlash', usdOutF);
     if (typeof pintarEstadoCalibracionGemini_ === "function") pintarEstadoCalibracionGemini_();
     setVal('cfgComisiones', typeof d.comisiones === 'string' ? d.comisiones : JSON.stringify(d.comisiones || []));
     
@@ -1322,38 +1329,46 @@ function pintarEstadoCalibracionGemini_() {
     const ahora = new Date();
     const periodo = ahora.getFullYear() + "-" + String(ahora.getMonth() + 1).padStart(2, "0");
     if (cal && String(cal.periodo || "") === periodo) {
-        el.innerHTML = "Calibrado el <strong>" + escHtml(String(cal.fecha || "")) + "</strong>: Google marcaba gasto " + fmtCopAdmin_(cal.gastoCop) + " y saldo " + fmtCopAdmin_(cal.saldoCop) + ". Desde ahí la app descuenta su consumo estimado. Si la consola de Google ya avanzó, escribe el saldo nuevo y vuelve a calibrar.";
+        el.innerHTML = "Calibrado el <strong>" + escHtml(String(cal.fecha || "")) + "</strong>: Google marcaba gasto " + fmtCopAdmin_(cal.gastoCop) + " y saldo " + fmtCopAdmin_(cal.saldoCop) + ". Desde ahí la app descuenta su consumo estimado. Si la barra de Google ya avanzó, escribe el gasto nuevo y vuelve a calibrar.";
     } else if (cal) {
-        el.textContent = "La calibración de " + String(cal.periodo || "ese mes") + " ya venció (Google restablece el límite cada mes). Escribe el saldo actual de Google y pulsa Calibrar ahora.";
+        el.textContent = "La calibración de " + String(cal.periodo || "ese mes") + " ya venció (Google restablece el límite cada mes). Escribe el gasto actual de la barra de Google y pulsa Calibrar ahora.";
     } else {
-        el.textContent = "Sin calibrar este mes. Escribe el saldo exacto que muestra Google (límite mensual menos lo gastado) y pulsa Calibrar ahora: desde ese instante la app descuenta su propio consumo sobre ese saldo. Calibrar actúa al momento, no espera el Guardar de Ajustes. La calibración vence al cambiar de mes.";
+        el.textContent = "Sin calibrar este mes. Escribe el gasto de la barra superior de Google AI Studio (no el costo total de 28 días) y pulsa Calibrar ahora. Actúa al momento; vence al cambiar de mes.";
     }
 }
 
 async function calibrarGeminiUI() {
-    const input = document.getElementById("cfgGeminiSaldoReal");
+    const inputGasto = document.getElementById("cfgGeminiGastoReal");
+    const inputSaldo = document.getElementById("cfgGeminiSaldoReal");
     const btn = document.getElementById("btnCalibrarGemini");
-    const saldo = input ? parseFloat(input.value) : NaN;
-    if (!isFinite(saldo) || saldo < 0) {
-        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Escribe el saldo que te resta según Google (COP).", "danger");
-        if (input) input.focus();
+    const gasto = inputGasto ? parseFloat(inputGasto.value) : NaN;
+    const saldo = inputSaldo ? parseFloat(inputSaldo.value) : NaN;
+    const payload = { action: "gemini_calibrar", email: localStorage.getItem("smartbudget_email") };
+    if (isFinite(gasto) && gasto >= 0) payload.gastoCop = gasto;
+    else if (isFinite(saldo) && saldo >= 0) payload.saldoCop = saldo;
+    else {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Escribe el gasto de la barra de Google (COP del mes).", "danger");
+        if (inputGasto) inputGasto.focus();
         return;
     }
-    const email = localStorage.getItem("smartbudget_email");
     const original = btn ? btn.innerHTML : "";
     if (btn) { btn.disabled = true; btn.innerHTML = "<span class=\"spinner-border spinner-border-sm me-1\"></span>Calibrando…"; }
     try {
-        const data = await realizarPeticionBD({ action: "gemini_calibrar", email: email, saldoCop: saldo });
+        const data = await realizarPeticionBD(payload);
         if (!data || !data.exito) throw new Error((data && data.mensaje) || "No se pudo calibrar.");
         if (data.data && data.data.calibracion) {
             CONFIG_GLOBAL = CONFIG_GLOBAL || {};
             CONFIG_GLOBAL.geminiCalibracion = Object.assign({}, data.data.calibracion, { periodo: data.data.periodo });
         }
-        if (input) input.value = "";
+        if (inputGasto) inputGasto.value = "";
+        if (inputSaldo) inputSaldo.value = "";
         pintarEstadoCalibracionGemini_();
         if (typeof mostrarNotificacion === "function") {
-            const resta = data.data && data.data.saldoCop != null ? data.data.saldoCop : saldo;
-            mostrarNotificacion("Contador calibrado con Google. Te restan " + fmtCopAdmin_(resta) + " y desde ahora se descuenta el consumo de la app.", "success");
+            const resta = data.data && data.data.saldoCop != null ? data.data.saldoCop : (isFinite(saldo) ? saldo : NaN);
+            const msg = isFinite(resta)
+                ? ("Contador calibrado con Google. Te restan " + fmtCopAdmin_(resta) + ".")
+                : "Contador calibrado con Google.";
+            mostrarNotificacion(msg, "success");
         }
         if (typeof window.refrescarUsoGemini === "function") await window.refrescarUsoGemini();
     } catch (e) {
@@ -3281,10 +3296,10 @@ async function guardarConfiguracion() {
         geminiCupoTokens: Math.max(100000, getVal('cfgGeminiCupo') || 2000000),
         geminiCupoUsd: Math.max(1, getVal('cfgGeminiCupoUsd') || 20),
         geminiCupoCop: Math.max(1, getVal('cfgGeminiCupoCop') || 50000),
-        geminiUsdPor1MIn: getVal('cfgGeminiUsdIn') || 1.25,
-        geminiUsdPor1MOut: getVal('cfgGeminiUsdOut') || 10,
-        geminiUsdPor1MInFlash: (function () { const el = document.getElementById('cfgGeminiUsdInFlash'); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : 0.30; })(),
-        geminiUsdPor1MOutFlash: (function () { const el = document.getElementById('cfgGeminiUsdOutFlash'); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : 2.50; })(),
+        geminiUsdPor1MIn: getVal('cfgGeminiUsdIn') || 2,
+        geminiUsdPor1MOut: getVal('cfgGeminiUsdOut') || 12,
+        geminiUsdPor1MInFlash: (function () { const el = document.getElementById('cfgGeminiUsdInFlash'); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : 0.75; })(),
+        geminiUsdPor1MOutFlash: (function () { const el = document.getElementById('cfgGeminiUsdOutFlash'); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : 3.75; })(),
         comisiones: JSON.stringify((typeof leerComisionesUI === "function") ? leerComisionesUI() : []),
         partidas: JSON.stringify(partidasParaGuardar_()),
         logTrm: getVal('cfgLogTrm') || 0,

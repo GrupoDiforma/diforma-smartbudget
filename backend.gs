@@ -2816,7 +2816,8 @@ function esErrorCupoGemini_(msg) {
 }
 
 function tarifasGeminiConfig_() {
-  var out = { cupoTokens: 2000000, cupoUsd: 20, cupoCop: 50000, usdIn: 1.25, usdOut: 10, usdInFlash: 0.30, usdOutFlash: 2.50, trmCop: 4150, calibracion: null };
+  /* Defecto = tarifas Gemini 3.x (oct 2026). Flash 2.5 queda como respaldo si el modelo no es gen ≥ 3. */
+  var out = { cupoTokens: 2000000, cupoUsd: 20, cupoCop: 50000, usdIn: 2.00, usdOut: 12, usdInFlash: 0.75, usdOutFlash: 3.75, usdInFlash25: 0.30, usdOutFlash25: 2.50, usdInPro25: 1.25, usdOutPro25: 10, trmCop: 4150, calibracion: null };
   try {
     var cfg = obtenerConfiguracionGlobal();
     if (cfg.exito && cfg.data) {
@@ -2834,10 +2835,39 @@ function tarifasGeminiConfig_() {
   return out;
 }
 
-function tarifaGeminiModelo_(modelo, t) {
+/** Generación del modelo (2, 3, 4…). Sin número → 2. */
+function genModeloGemini_(modelo) {
   var m = String(modelo || "").toLowerCase();
-  if (m.indexOf("flash") !== -1) return { usdIn: t.usdInFlash, usdOut: t.usdOutFlash };
-  return { usdIn: t.usdIn, usdOut: t.usdOut };
+  var vm = m.match(/gemini-(\d+)/);
+  return vm ? (parseInt(vm[1], 10) || 2) : 2;
+}
+
+/**
+ * Tarifa por modelo. Gemini 3+ Flash/Pro tienen list price distinto al 2.5;
+ * si se cobraba todo a tarifa 2.5 el medidor quedaba por debajo de Google.
+ * List price 3.x (oct 2026, intro Flash hasta dic-2026) va fijo para no heredar
+ * un Ajustes viejo con 0.30/2.50; Ajustes solo ajusta el respaldo 2.5 / overrides explícitos ≥ 3.
+ */
+function tarifaGeminiModelo_(modelo, t) {
+  t = t || tarifasGeminiConfig_();
+  var m = String(modelo || "").toLowerCase();
+  var gen = genModeloGemini_(m);
+  var esFlash = m.indexOf("flash") !== -1;
+  if (esFlash) {
+    if (gen >= 3) {
+      var in3 = Number(t.usdInFlash), out3 = Number(t.usdOutFlash);
+      /* Si Ajustes aún tiene el par 2.5, no usarlo para modelos 3.x. */
+      if (in3 === 0.3 && out3 === 2.5) return { usdIn: 0.75, usdOut: 3.75 };
+      return { usdIn: in3 || 0.75, usdOut: out3 || 3.75 };
+    }
+    return { usdIn: t.usdInFlash25, usdOut: t.usdOutFlash25 };
+  }
+  if (gen >= 3) {
+    var inP = Number(t.usdIn), outP = Number(t.usdOut);
+    if (inP === 1.25 && outP === 10) return { usdIn: 2, usdOut: 12 };
+    return { usdIn: inP || 2, usdOut: outP || 12 };
+  }
+  return { usdIn: t.usdInPro25, usdOut: t.usdOutPro25 };
 }
 
 function costoGeminiUsd_(tokensIn, tokensOutFacturable, modelo, t) {
@@ -3062,16 +3092,31 @@ function costoEstimadoMesGemini_(t, o, diario) {
 function calibrarUsoGemini(params, email) {
   if (!esAdmin_(email)) return { exito: false, mensaje: "Permisos insuficientes." };
   try {
-    var saldo = Number(params && params.saldoCop);
     var t = tarifasGeminiConfig_();
-    if (!isFinite(saldo) || saldo < 0) return { exito: false, mensaje: "Escribe el saldo que te resta según Google (COP)." };
+    var gastoIn = Number(params && params.gastoCop);
+    var saldoIn = Number(params && params.saldoCop);
+    var saldo, gasto;
+    /* Preferir el gasto de la barra de Google (foto): evita confundir saldo con costo total 28 días. */
+    if (isFinite(gastoIn) && gastoIn >= 0) {
+      gasto = gastoIn;
+      saldo = t.cupoCop - gasto;
+    } else if (isFinite(saldoIn) && saldoIn >= 0) {
+      saldo = saldoIn;
+      gasto = t.cupoCop - saldo;
+    } else {
+      return { exito: false, mensaje: "Escribe el gasto de la barra de Google (COP) o el saldo que te resta." };
+    }
+    if (gasto < 0) return { exito: false, mensaje: "El gasto no puede ser negativo." };
+    if (t.cupoCop > 0 && gasto > t.cupoCop * 1.05) {
+      return { exito: false, mensaje: "El gasto supera el límite mensual (" + t.cupoCop + " COP). Revisa el número o el límite en Ajustes." };
+    }
     if (t.cupoCop > 0 && saldo > t.cupoCop) return { exito: false, mensaje: "El saldo no puede superar el límite mensual (" + t.cupoCop + " COP)." };
     var o = leerUsoGemini_();
     var est = costoEstimadoMesGemini_(t, o, leerUsoDiario_(o.periodo));
     var cal = {
       periodo: o.periodo,
       saldoCop: Math.round(saldo * 100) / 100,
-      gastoCop: Math.round((t.cupoCop - saldo) * 100) / 100,
+      gastoCop: Math.round(gasto * 100) / 100,
       cupoCop: t.cupoCop,
       baseCostoUsd: Math.round(est.costoUsd * 1000000) / 1000000,
       fecha: ahoraBogota_(),

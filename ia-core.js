@@ -929,9 +929,9 @@ function pintarDetalleUsoGemini_(uso) {
     const saldoUso = uso.saldoCop != null ? Number(uso.saldoCop) : (cupoCop > 0 ? cupoCop - cop : null);
     if (saldoUso != null) {
         if (uso.calibrado && uso.calibracion) {
-            h += "<div class='border rounded p-2 mt-2 small' style='background:#f0fdf4;'>Sincronizado con Google el <strong>" + String(uso.calibracion.fecha || "") + "</strong>: al calibrar restaban <strong>" + fmtCop(uso.calibracion.saldoCop) + "</strong> · consumo de la app desde entonces: <strong>" + fmtCop(uso.costoDesdeCalibracionCop || 0) + "</strong> · <strong>te restan " + fmtCop(saldoUso) + "</strong>.</div>";
+            h += "<div class='border rounded p-2 mt-2 small' style='background:#f0fdf4;'>Sincronizado con Google el <strong>" + String(uso.calibracion.fecha || "") + "</strong>: al calibrar el gasto era <strong>" + fmtCop(uso.calibracion.gastoCop) + "</strong> (restaban <strong>" + fmtCop(uso.calibracion.saldoCop) + "</strong>) · consumo estimado de la app desde entonces: <strong>" + fmtCop(uso.costoDesdeCalibracionCop || 0) + "</strong> · <strong>te restan " + fmtCop(saldoUso) + "</strong>. Si la barra de Google ya no cuadra, recalibra con ese gasto.</div>";
         } else {
-            h += "<div class='border rounded p-2 mt-2 small text-muted'>Saldo estimado (sin calibrar): te restan <strong>" + fmtCop(saldoUso) + "</strong>. Para sincronizarlo con Google: Ajustes → Prompts IA → Presupuesto Gemini → Calibrar ahora.</div>";
+            h += "<div class='border rounded p-2 mt-2 small text-muted'>Saldo estimado (sin calibrar): te restan <strong>" + fmtCop(saldoUso) + "</strong>. Para anclarlo a la barra de Google: Ajustes → Prompts IA → Presupuesto Gemini → pegar el gasto del mes → Calibrar ahora.</div>";
         }
     }
     h += tablaUsoHtml_("Por módulo (mes)", porModulo, trm, "Sin detalle por módulo todavía: llega con la próxima llamada tras publicar el backend nuevo.");
