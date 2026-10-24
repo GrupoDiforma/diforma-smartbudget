@@ -561,7 +561,12 @@ function logisticaDatosDoc_(idioma) {
         cliente: pick("cliente", demo ? "CLIENTE DE EJEMPLO S.A." : ((sigue ? p.cliente : "") || (od && od.cliente) || "")),
         contacto: pick("contacto", demo ? "Nombre del Contacto" : (con.nombre || "")),
         cargoContacto: pick("cargoContacto", demo ? "Cargo del Contacto" : (con.cargo || "")),
-        codigo: pick("codigo", demo ? "17999-A-V1" : (logCodigoPrimeraFila_() || (p.codigo + (p.version ? "-" + p.version : "")))),
+        codigo: (function () {
+            const auto = demo ? "17999-A-V1" : (logCodigoPrimeraFila_() || (p.codigo + (p.version ? "-" + p.version : "")) || "");
+            /* Consolidado: el # del encabezado sigue siempre la 1.ª fila (no el cab guardado ni el de Costos). */
+            if (logTipoDoc_(idioma) === "CONS") return auto;
+            return pick("codigo", auto);
+        })(),
         firmaNombre: pick("firmaNombre", demo ? f.nombre : (com.nombre || (sigue ? p.comercial : "") || "")),
         firmaCargo: pick("firmaCargo", demo ? f.cargo : (com.cargo || "")),
         firmaCorreo: pick("firmaCorreo", demo ? f.correo : (com.correo || "")),
@@ -618,23 +623,43 @@ function logCodigoEnHoja_() {
     return "";
 }
 
+/** Código de proyecto sin sufijo -V1 / -V2 (para buscar en el historial de Costos). */
+function logCodigoProyectoBase_(s) {
+    return String(s || "").trim().replace(/-V\d+$/i, "");
+}
+
 function logisticaAvisoProyectoCostos_() {
     const el = document.getElementById("logAvisoProyecto");
     if (!el) return;
     const p = logisticaLeerProyecto_();
     const hoja = logCodigoEnHoja_();
-    const distinto = !!(p.hayProyecto && hoja && logNormCod_(p.codigo) !== logNormCod_(hoja));
-    if (!distinto) {
+    const a = logQuote && logQuote.abierta;
+    const codCotiz = logCodigoProyectoBase_(logCodigoPrimeraFila_() || hoja) || logCodigoProyectoBase_(hoja);
+    const distinto = !!(p.hayProyecto && hoja && logNormCod_(logCodigoProyectoBase_(p.codigo)) !== logNormCod_(logCodigoProyectoBase_(hoja)));
+    if (!distinto && !(a && codCotiz && !p.hayProyecto)) {
         el.className = "d-none";
         el.innerHTML = "";
         return;
     }
-    const a = logQuote && logQuote.abierta;
     const cual = a ? (a.numero || a.id || hoja) : hoja;
-    const extra = (logQuote && logQuote.sucio) || a ? " Cotizar el de Costos deja esta hoja." : "";
+    const btns = [];
+    if (distinto) {
+        btns.push("<button type=\"button\" class=\"btn btn-sm btn-primary\" onclick=\"logisticaTomarProyectoCostos_()\" title=\"Cierra esta cotización y arma una nueva con el proyecto abierto en Costos\">Cotizar " + logEsc_(p.codigo) + "</button>");
+    }
+    if (codCotiz) {
+        btns.push("<button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"logisticaAbrirProyectoCotizacionEnCostos_()\" title=\"Abre en Costos el presupuesto de esta cotización (1.ª fila / título)\">Abrir " + logEsc_(codCotiz) + " en Costos</button>");
+    }
+    let texto;
+    if (distinto) {
+        texto = "<i class=\"bi bi-exclamation-triangle me-1\"></i>En <b>Costos</b> tienes abierto <b>" + logEsc_(p.codigo) + "</b>, pero esta pestaña sigue con la cotización <b>" + logEsc_(cual) + "</b>. "
+            + "<span class=\"d-block small mt-1 mb-0\">Si pulsas «Cotizar " + logEsc_(p.codigo) + "», se cierra esta cotización y se empieza una nueva con el proyecto de Costos. "
+            + "Si quieres trabajar el presupuesto de esta cotización, usa «Abrir " + logEsc_(codCotiz || "…") + " en Costos».</span>";
+    } else {
+        texto = "<i class=\"bi bi-info-circle me-1\"></i>Cotización <b>" + logEsc_(cual) + "</b> sin proyecto abierto en Costos. Puedes abrir <b>" + logEsc_(codCotiz) + "</b> en Presupuestos.";
+    }
     el.className = "alert alert-warning py-2 px-3 mb-2 d-flex flex-wrap align-items-center justify-content-between gap-2";
-    el.innerHTML = "<div><i class=\"bi bi-exclamation-triangle me-1\"></i>En Costos está abierto <b>" + logEsc_(p.codigo) + "</b>. Esta cotización sigue en <b>" + logEsc_(cual) + "</b>." + extra + "</div>"
-        + "<button type=\"button\" class=\"btn btn-sm btn-primary\" onclick=\"logisticaTomarProyectoCostos_()\">Cotizar " + logEsc_(p.codigo) + "</button>";
+    el.innerHTML = "<div class=\"flex-grow-1\">" + texto + "</div>"
+        + (btns.length ? "<div class=\"d-flex flex-wrap gap-2\">" + btns.join("") + "</div>" : "");
 }
 
 function logisticaTomarProyectoCostos_() {
@@ -650,6 +675,53 @@ function logisticaTomarProyectoCostos_() {
         mostrarNotificacion(p.codigo ? ("Cotización armada con " + p.codigo + ".") : "Cotización armada con el proyecto de Costos.", "success");
     }
 }
+
+/** Abre en Ingeniería de Costos el presupuesto ligado a esta cotización (código de la 1.ª fila). */
+async function logisticaAbrirProyectoCotizacionEnCostos_() {
+    const bruto = logCodigoPrimeraFila_() || logCodigoEnHoja_();
+    const codigo = logCodigoProyectoBase_(bruto);
+    if (!codigo) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No hay código de proyecto en esta cotización.", "warning");
+        return;
+    }
+    if (typeof listaHistorialCostos_ !== "function" || typeof cargarProyectoBD !== "function") {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo abrir el historial de Costos.", "danger");
+        return;
+    }
+    if (typeof mostrarEsperaNube === "function") mostrarEsperaNube("Buscando " + codigo + " en Costos…");
+    try {
+        const lista = await listaHistorialCostos_();
+        const filas = (lista && lista.filas) || [];
+        let hit = typeof proyectoGuardadoPorCodigo_ === "function" ? proyectoGuardadoPorCodigo_(filas, codigo) : null;
+        if (!hit && typeof normCodigoProyecto_ === "function") {
+            const n = normCodigoProyecto_(codigo);
+            hit = filas.find(function (p) {
+                const np = normCodigoProyecto_(p.noProyecto || p.id || "");
+                return np === n || np.indexOf(n) === 0 || n.indexOf(np) === 0;
+            }) || null;
+        }
+        if (!hit || !hit.id) {
+            if (typeof mostrarNotificacion === "function") {
+                mostrarNotificacion("No encontré el presupuesto " + codigo + " en el historial de Costos.", "warning");
+            }
+            return;
+        }
+        if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+        await cargarProyectoBD(hit.id);
+        const tab = document.getElementById("tabBtnIngenieria");
+        if (tab) tab.click();
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Proyecto " + (hit.noProyecto || codigo) + " abierto en Costos.", "success");
+        }
+    } catch (err) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("No se pudo abrir el proyecto: " + ((err && err.message) || err), "danger");
+        }
+    } finally {
+        if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+    }
+}
+window.logisticaAbrirProyectoCotizacionEnCostos_ = logisticaAbrirProyectoCotizacionEnCostos_;
 
 /** Textos candidatos para cruzar una fila congelada con un elemento del grupal. */
 function logTextosIdentidadFila_(fila) {
@@ -1129,6 +1201,7 @@ function logEtiquetaGranTotal_(T, mon, esEn) {
 
 const LOG_MODALIDADES_ = ["courier", "aerea", "fcl", "lcl", "terrestre"];
 const LOG_INCOTERM_MATRIZ_ = {
+    /* EXW (Ex Works): sin costos logísticos del vendedor. */
     EXW: { o: 0, i: 0, p: 0, s: 0, d: 0, du: 0, tx: 0, sea: 0 },
     FCA: { o: 1, i: 1, p: 0, s: 0, d: 0, du: 0, tx: 0, sea: 0 },
     FAS: { o: 1, i: 1, p: 0, s: 0, d: 0, du: 0, tx: 0, sea: 1 },
@@ -1208,9 +1281,25 @@ function logEnvEscNorm_(src, base) {
     const s = src && typeof src === "object" ? src : {};
     const b = base || {};
     const emb = parseInt(s.embarques != null ? s.embarques : b.embarques, 10);
+    const modRaw = String(s.modalidad != null ? s.modalidad : (b.modalidad || "aerea"));
+    const modalidad = LOG_MODALIDADES_.indexOf(modRaw) >= 0 ? modRaw : (b.modalidad || "aerea");
+    let incoterm = String(s.incoterm != null ? s.incoterm : (b.incoterm || "EXW")).toUpperCase();
+    if (!LOG_INCOTERM_MATRIZ_[incoterm]) incoterm = b.incoterm || "EXW";
+    if (logEnvIncotermsDe_(modalidad).indexOf(incoterm) < 0) {
+        const avail = logEnvIncotermsDe_(modalidad);
+        /* Aérea/terrestre no admiten FAS/FOB/…: preferir CIP (común) antes que EXW vacío de filas. */
+        incoterm = avail.indexOf("CIP") >= 0 ? "CIP" : (avail[0] || "EXW");
+    }
     const out = {
         /* Incluir logística en esta opción (independiente del switch global). Defecto: sí. */
         activo: s.activo === false ? false : true,
+        /* Cada opción puede tener su modalidad / Incoterm / destino. */
+        modalidad: modalidad,
+        incoterm: incoterm,
+        destinoCiudad: String(s.destinoCiudad != null ? s.destinoCiudad : (b.destinoCiudad || "")).trim(),
+        destinoPais: logPaisEnEspanol_(String(s.destinoPais != null ? s.destinoPais : (b.destinoPais || "")).trim()),
+        destinoCodigo: String(s.destinoCodigo != null ? s.destinoCodigo : (b.destinoCodigo || "")).trim().toUpperCase(),
+        destinoPuerto: String(s.destinoPuerto != null ? s.destinoPuerto : (b.destinoPuerto || "")).trim(),
         contenedores: logContenedoresNorm_(s.contenedores || b.contenedores),
         contenedoresManual: s.contenedoresManual != null ? !!s.contenedoresManual : !!b.contenedoresManual,
         embarques: isFinite(emb) && emb > 0 ? emb : 1,
@@ -1219,10 +1308,43 @@ function logEnvEscNorm_(src, base) {
         cubKgVol: logCubNum_(s.cubKgVol != null ? s.cubKgVol : b.cubKgVol),
         valores: {}, fuentes: {}, notas: {}, pcts: {}
     };
+    if (!out.destinoCodigo && out.destinoPais) out.destinoCodigo = logEnvCodigoDePais_(out.destinoPais) || "";
     ["valores", "fuentes", "notas", "pcts"].forEach(function (k) {
         if (s[k] && typeof s[k] === "object") Object.keys(s[k]).forEach(function (id) { out[k][id] = s[k][id]; });
     });
     return out;
+}
+
+/** Vista efectiva de envío para una opción (o el global si no hay escId). */
+function logEnvVistaEsc_(escId) {
+    const e = logEnv_();
+    if (!escId) {
+        return {
+            modalidad: e.modalidad,
+            incoterm: e.incoterm,
+            destinoCiudad: e.destinoCiudad,
+            destinoPais: e.destinoPais,
+            destinoCodigo: e.destinoCodigo,
+            destinoPuerto: e.destinoPuerto
+        };
+    }
+    const st = logEnvEscDe_(e, escId) || logEnvEscSemilla_(e);
+    return {
+        modalidad: st.modalidad || e.modalidad,
+        incoterm: st.incoterm || e.incoterm,
+        destinoCiudad: st.destinoCiudad || e.destinoCiudad,
+        destinoPais: st.destinoPais || e.destinoPais,
+        destinoCodigo: st.destinoCodigo || e.destinoCodigo,
+        destinoPuerto: st.destinoPuerto || e.destinoPuerto
+    };
+}
+
+function logEnvModalidad_(escId) {
+    return logEnvVistaEsc_(escId).modalidad;
+}
+
+function logEnvIncoterm_(escId) {
+    return logEnvVistaEsc_(escId).incoterm;
 }
 function logEnvEscSemilla_(e) {
     const out = logEnvEscNorm_(null, e || {});
@@ -1844,7 +1966,10 @@ function logEnvNormalizar_(src) {
     d.modalidad = LOG_MODALIDADES_.indexOf(mod) >= 0 ? mod : "aerea";
     const inc = String(e.incoterm || "EXW").toUpperCase();
     d.incoterm = LOG_INCOTERM_MATRIZ_[inc] ? inc : "EXW";
-    if (logEnvIncotermsDe_(d.modalidad).indexOf(d.incoterm) < 0) d.incoterm = "EXW";
+    if (logEnvIncotermsDe_(d.modalidad).indexOf(d.incoterm) < 0) {
+        const avail = logEnvIncotermsDe_(d.modalidad);
+        d.incoterm = avail.indexOf("CIP") >= 0 ? "CIP" : (avail[0] || "EXW");
+    }
     d.destinoCiudad = String(e.destinoCiudad || "").trim();
     d.destinoPais = logPaisEnEspanol_(String(e.destinoPais || "").trim());
     d.destinoCodigo = String(e.destinoCodigo || "").trim().toUpperCase();
@@ -1907,12 +2032,13 @@ function logEnv_() {
 
 function logEnvDetalleFlete_(esEn, escId) {
     const e = logEnv_();
-    if (e.modalidad === "fcl") {
+    const mod = logEnvModalidad_(escId);
+    if (mod === "fcl") {
         const st = escId ? logEnvEscDe_(e, escId) : null;
         const txt = logContenedoresTexto_(logContenedoresNorm_(st ? st.contenedores : e.contenedores));
         return txt ? ("FCL " + txt) : "";
     }
-    if (e.modalidad === "lcl") {
+    if (mod === "lcl") {
         const m3 = Number(logCubicajeTotal_(esEn ? "en" : "es", escId).m3) || 0;
         if (!(m3 > 0)) return "";
         return "LCL " + logFmtM3_(m3, esEn ? "en" : "es");
@@ -1928,7 +2054,7 @@ function logEnvFilasImpresas_(lineas, esEn, escId) {
     const juntos = duties.length && taxes.length;
     lineas.forEach(function (ln) {
         if (ln.tipo !== "duties" && ln.tipo !== "taxes") {
-            let label = ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn);
+            let label = ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnvModalidad_(escId), esEn);
             if (ln.tipo === "flete_principal") {
                 const det = logEnvDetalleFlete_(esEn, escId);
                 if (det && label.toUpperCase().indexOf(det.toUpperCase()) < 0) label += " (" + det + ")";
@@ -1942,7 +2068,7 @@ function logEnvFilasImpresas_(lineas, esEn, escId) {
             out.push({ label: esEn ? "Duties and Taxes" : "Duties y Taxes", grupo: duties.concat(taxes) });
             return;
         }
-        out.push({ label: ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnv_().modalidad, esEn), ln: ln });
+        out.push({ label: ln.concepto || logEnvEtiquetaTipo_(ln.tipo, logEnvModalidad_(escId), esEn), ln: ln });
     });
     return out;
 }
@@ -1992,31 +2118,35 @@ function logEnvFirma_(e, exterior) {
     return (exterior ? "x" : "n") + "|" + e.modalidad + "|" + e.incoterm;
 }
 
-function logEnvAsegurarLineas_(esEn, forzar) {
+function logEnvAsegurarLineas_(esEn, forzar, escId) {
     const e = logEnv_();
     const exterior = logEsCotizacionExterior_();
-    const firma = logEnvFirma_(e, exterior);
-    if (!forzar && e.plantilla === firma) {
+    const vista = logEnvVistaEsc_(escId || (logEscList_().length ? logOpcionUiAsegurar_() : ""));
+    const firma = (exterior ? "x" : "n") + "|" + vista.modalidad + "|" + vista.incoterm;
+    /* Si plantilla coincide pero no hay filas, hay que reconstruir (bug al cambiar de opción/Incoterm). */
+    if (!forzar && e.plantilla === firma && (e.lineas || []).length) {
         e.lineas.forEach(function (ln) {
             if (ln.tipo === "libre" || ln.conceptoManual) return;
-            ln.concepto = logEnvEtiquetaTipo_(ln.tipo, e.modalidad, esEn);
+            ln.concepto = logEnvEtiquetaTipo_(ln.tipo, vista.modalidad, esEn);
         });
         return e.lineas;
     }
     const prev = e.lineas || [];
-    const tipos = logEnvTiposActivos_(e.modalidad, e.incoterm, exterior);
-    const libres = prev.filter(function (ln) { return ln.tipo === "libre"; });
+    const tipos = logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior);
+    /* EXW: ningún concepto (tampoco filas libres). */
+    const esExw = exterior && String(vista.incoterm || "").toUpperCase() === "EXW";
+    const libres = esExw ? [] : prev.filter(function (ln) { return ln.tipo === "libre"; });
     const usados = {};
     let n = 0;
     prev.forEach(function (ln) { n = Math.max(n, parseInt(String(ln.id).replace(/\D/g, ""), 10) || 0); });
-    e.lineas = tipos.map(function (tipo) {
+    e.lineas = esExw ? [] : tipos.map(function (tipo) {
         const old = prev.find(function (ln) { return ln.tipo === tipo && !usados[ln.id]; });
         if (old) usados[old.id] = true;
         n += 1;
         return {
             id: old ? old.id : ("c" + n),
             tipo: tipo,
-            concepto: logEnvEtiquetaTipo_(tipo, e.modalidad, esEn),
+            concepto: logEnvEtiquetaTipo_(tipo, vista.modalidad, esEn),
             conceptoManual: false,
             valor: old ? old.valor : null,
             pct: old ? old.pct : null,
@@ -2030,6 +2160,38 @@ function logEnvAsegurarLineas_(esEn, forzar) {
     }).concat(libres);
     e.plantilla = firma;
     return e.lineas;
+}
+
+/** Líneas de costo para una opción (tipos según su modalidad/Incoterm), sin mutar el global. */
+function logEnvLineasDeEsc_(escId, esEn) {
+    const e = logEnv_();
+    const exterior = logEsCotizacionExterior_();
+    const vista = logEnvVistaEsc_(escId);
+    if (exterior && String(vista.incoterm || "").toUpperCase() === "EXW") return [];
+    const tipos = logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior);
+    const prev = e.lineas || [];
+    const usados = {};
+    let n = 0;
+    prev.forEach(function (ln) { n = Math.max(n, parseInt(String(ln.id).replace(/\D/g, ""), 10) || 0); });
+    const tipadas = tipos.map(function (tipo) {
+        const old = prev.find(function (ln) { return ln.tipo === tipo && !usados[ln.id]; });
+        if (old) usados[old.id] = true;
+        n += 1;
+        return {
+            id: old ? old.id : ("c" + n),
+            tipo: tipo,
+            concepto: (old && old.conceptoManual) ? old.concepto : logEnvEtiquetaTipo_(tipo, vista.modalidad, esEn),
+            conceptoManual: !!(old && old.conceptoManual),
+            valor: old ? old.valor : null,
+            pct: old ? old.pct : null,
+            notas: old ? old.notas : "",
+            fuente: old ? old.fuente : "",
+            base: old ? old.base : "",
+            arancelManual: !!(old && old.arancelManual)
+        };
+    });
+    const libres = prev.filter(function (ln) { return ln.tipo === "libre"; });
+    return tipadas.concat(libres);
 }
 
 function logMargenEmpresa_() {
@@ -2349,8 +2511,9 @@ async function logCargarAranceles_() {
 
 /**
  * ¿Sale logística en la hoja?
- * - Sin escId: switch global (#logCostosOn).
- * - Con escId: global AND porEsc[escId].activo (así se puede apagar Opción 1 sin tocar Opción 2).
+ * Un solo switch #logCostosOn:
+ * - Sin opciones: e.activo.
+ * - Con opciones: porEsc[escId].activo (e.activo=false legado apaga todas).
  */
 function logEnvActivo_(escId) {
     const e = logEnv_();
@@ -2364,7 +2527,10 @@ function logEnvSuma_(baseProd, escId) {
     if (!logEnvActivo_(escId)) return 0;
     let s = 0;
     let alguna = false;
-    logEnv_().lineas.forEach(function (ln) {
+    const lineas = escId
+        ? logEnvLineasDeEsc_(escId, (typeof logisticaLeerOpciones_ === "function" && logisticaLeerOpciones_().idioma === "en"))
+        : (logEnv_().lineas || []);
+    lineas.forEach(function (ln) {
         const v = logEnvValorLinea_(ln, baseProd, escId);
         if (v == null) return;
         s += v;
@@ -2381,8 +2547,9 @@ function logSufijoMon_(txt, mon) {
     return (t.replace(/\s+/g, " ").trim() + marca).trim();
 }
 
-function logEnvTitulo_(cual, T, mon, esEn) {
+function logEnvTitulo_(cual, T, mon, esEn, escId) {
     const e = logEnv_();
+    const vista = logEnvVistaEsc_(escId || "");
     let custom = cual === "prod" ? e.titSubProd : (cual === "log" ? e.titSubLog : e.titGran);
     const viejos = [
         "PRECIO TOTAL (ANTES DE IVA) (" + mon + ")",
@@ -2410,12 +2577,12 @@ function logEnvTitulo_(cual, T, mon, esEn) {
     const cabeza = esEn ? "GRAND TOTAL" : "GRAN TOTAL";
     let frase = String(custom || "").trim().replace(new RegExp("\\s*\\(" + mon + "\\)\\s*$", "i"), "").trim();
     frase = frase.replace(/^(GRAND TOTAL|GRAN TOTAL)\s+/i, "").trim();
-    const ciudad = (e.destinoCiudad || "").trim().toUpperCase();
-    const cod = (e.destinoCodigo || "").trim().toUpperCase();
+    const ciudad = (vista.destinoCiudad || "").trim().toUpperCase();
+    const cod = (vista.destinoCodigo || "").trim().toUpperCase();
     const esc_ = function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
     if (ciudad) frase = frase.replace(new RegExp("\\s+" + esc_(ciudad) + (cod ? "(?:\\s+" + esc_(cod) + ")?" : "") + "\\s*$", "i"), "").trim();
     if (cod) frase = frase.replace(new RegExp("\\s+" + esc_(cod) + "\\s*$", "i"), "").trim();
-    const incNow = String(e.incoterm || "EXW").toUpperCase();
+    const incNow = String(vista.incoterm || "EXW").toUpperCase();
     const mInc = /^(EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b\s*(.*)$/i.exec(frase);
     if (!frase) frase = incNow;
     else if (mInc && mInc[1].toUpperCase() !== incNow) frase = incNow;
@@ -2424,11 +2591,11 @@ function logEnvTitulo_(cual, T, mon, esEn) {
     return conMoneda_(cabeza + " " + frase + (ciudad ? " " + ciudad : "") + (cod ? " " + cod : ""));
 }
 
-function logEnvLineaPdf_(T, esEn) {
+function logEnvLineaPdf_(T, esEn, escId) {
     if (!logEsCotizacionExterior_()) return "";
-    const e = logEnv_();
-    const dest = [e.destinoCiudad, e.destinoCodigo || e.destinoPais].filter(Boolean).join(", ");
-    let s = (T.incoterm || "Incoterm") + ": " + e.incoterm;
+    const vista = logEnvVistaEsc_(escId || "");
+    const dest = [vista.destinoCiudad, vista.destinoCodigo || vista.destinoPais].filter(Boolean).join(", ");
+    let s = (T.incoterm || "Incoterm") + ": " + vista.incoterm;
     if (dest) s += " · " + (T.destino || (esEn ? "Destination" : "Destino")) + ": " + dest;
     return s;
 }
@@ -2474,6 +2641,8 @@ function logFilasDeEsc_(escId) {
 /**
  * Migra cotizaciones viejas (excl/opc en una sola fila) al modelo contenedor:
  * una copia por opción donde no estaba excluida.
+ * Importante: clonar opc/lote ANTES de mutar la fila; si no, la 1.ª opción
+ * borra opc y las demás heredan la cantidad de la opción 1.
  */
 function logMigrarFilasAContenedores_() {
     const escs = logQuote.escenarios || [];
@@ -2488,13 +2657,26 @@ function logMigrarFilasAContenedores_() {
         if (logEsEnvio_(fila)) { out.push(fila); return; }
         const destinos = escs.filter(function (e) { return !(fila.excl && fila.excl[e.id]); });
         if (!destinos.length) destinos.push(escs[0]);
+        const opc = (fila.opc && typeof fila.opc === "object") ? Object.assign({}, fila.opc) : {};
+        const loteBase = fila.lote || "";
+        const escalas = logEscalasFila_(fila) || [];
+        let ini = escalas.findIndex(function (s) { return s.id === loteBase; });
+        if (ini < 0) ini = 0;
         destinos.forEach(function (e, i) {
-            const copia = i === 0 ? fila : JSON.parse(JSON.stringify(fila));
+            const copia = JSON.parse(JSON.stringify(fila));
             if (i > 0) copia.uid = logNuevoUid_();
             copia.escId = e.id;
-            if (fila.opc && fila.opc[e.id]) copia.lote = fila.opc[e.id];
+            if (Object.prototype.hasOwnProperty.call(opc, e.id) && opc[e.id]) {
+                copia.lote = opc[e.id];
+            } else if (escalas.length) {
+                /* Mismo criterio que logOpcCompletar_: escala siguiente por índice de opción. */
+                const s = escalas[Math.min(ini + i, Math.max(0, escalas.length - 1))];
+                if (s) copia.lote = s.id;
+            }
             delete copia.excl;
             delete copia.opc;
+            /* Overrides del modelo viejo eran unit:eId; el unit suelto era de la ficha y no salía en el PDF. */
+            logNormalizarOverTrasMigrar_(copia, e.id);
             out.push(copia);
             cambio = true;
         });
@@ -2502,6 +2684,49 @@ function logMigrarFilasAContenedores_() {
     if (!cambio) return false;
     logQuote.filas = out;
     return true;
+}
+
+/** Tras migrar a contenedor: deja solo el override de esa opción (claves planas). */
+function logNormalizarOverTrasMigrar_(fila, escId) {
+    if (!fila) return;
+    const ov = (fila.over && typeof fila.over === "object") ? fila.over : {};
+    const unitEsc = Object.prototype.hasOwnProperty.call(ov, "unit:" + escId) ? ov["unit:" + escId] : null;
+    const qtyEsc = Object.prototype.hasOwnProperty.call(ov, "qty:" + escId) ? ov["qty:" + escId] : null;
+    Object.keys(ov).forEach(function (k) {
+        if (k === "unit" || k === "qty" || k.indexOf("unit:") === 0 || k.indexOf("qty:") === 0) delete ov[k];
+    });
+    if (unitEsc != null) ov.unit = unitEsc;
+    if (qtyEsc != null) ov.qty = qtyEsc;
+    fila.over = ov;
+    if (unitEsc == null && typeof logQuedanPreciosFijos_ === "function" && !logQuedanPreciosFijos_(fila)) delete fila.puFijo;
+}
+
+/**
+ * Cotizaciones ya migradas con over.unit clonado a todas las opciones (no coincidía con el PDF).
+ * Si el mismo unit/qty está en todas las copias del producto, se quita y manda el snap/escala.
+ */
+function logRepararOverClonadoLegado_() {
+    const grupos = {};
+    (logQuote.filas || []).forEach(function (f) {
+        if (!f || !f.escId || f.tipo !== "item") return;
+        const k = String(f.proy || "") + "|" + String(f.ver || "") + "|" + String(f.elem || "");
+        (grupos[k] = grupos[k] || []).push(f);
+    });
+    Object.keys(grupos).forEach(function (k) {
+        const g = grupos[k];
+        if (g.length < 2) return;
+        ["unit", "qty"].forEach(function (campo) {
+            const vals = g.map(function (f) {
+                return f.over && Object.prototype.hasOwnProperty.call(f.over, campo) ? f.over[campo] : null;
+            });
+            if (vals.some(function (v) { return v == null; })) return;
+            if (!vals.every(function (v) { return v === vals[0]; })) return;
+            g.forEach(function (f) {
+                delete f.over[campo];
+                if (typeof logQuedanPreciosFijos_ === "function" && !logQuedanPreciosFijos_(f)) delete f.puFijo;
+            });
+        });
+    });
 }
 
 function logDuplicarFilaEnEsc_(uid, escIdDest) {
@@ -2569,6 +2794,8 @@ function logisticaPintarOpcTabs_(boxId, onExtraHtml_) {
 function logisticaOnOpcTabClick_(ev) {
     const b = ev.target && ev.target.closest ? ev.target.closest("[data-opctab]") : null;
     if (!b) return;
+    /* Guarda la opción que se estaba editando antes de cambiar de pestaña. */
+    try { logisticaLeerEnvUi_(); } catch (err) { /* ok */ }
     logOpcionUiSel_ = b.getAttribute("data-opctab") || "";
     logEnvEscSel_ = logOpcionUiSel_;
     logisticaPintarEnv_(true);
@@ -2576,6 +2803,7 @@ function logisticaOnOpcTabClick_(ev) {
     logisticaPintarDescuento_();
     logisticaPintarPago_();
     logisticaPintarOpcTabsTodas_();
+    if (typeof logisticaActualizarVista === "function") logisticaActualizarVista({ sinFilas: true });
 }
 
 function logisticaPintarOpcTabsTodas_() {
@@ -2591,14 +2819,7 @@ function logisticaPintarOpcTabsTodas_() {
     const idioma = logisticaLeerOpciones_().idioma;
     const esEn = idioma === "en";
     const sel = logOpcionUiSel_;
-    const st = logEnvEscDe_(logEnv_(), sel);
-    const logOn = st && st.activo !== false;
-    const extraCostos = "<label class=\"form-check form-switch log-esc-log-on mb-0\" title=\"" +
-        (esEn ? "Logistics for this option only" : "Logística solo de esta opción") + "\">" +
-        "<input class=\"form-check-input\" type=\"checkbox\" role=\"switch\" id=\"logCostosOnEsc\" data-op=\"" + logEsc_(sel) + "\" data-campo=\"activo\"" +
-        (logOn ? " checked" : "") + ">" +
-        "<span class=\"form-check-label\">" + (esEn ? "Include in this option" : "Incluir en esta opción") + "</span></label>";
-    logisticaPintarOpcTabs_("logEnvEscTabs", function () { return extraCostos; });
+    logisticaPintarOpcTabs_("logEnvEscTabs", null);
     const persoBtn_ = function (kind, hay) {
         if (!hay) return "";
         return "<span class=\"log-opc-perso\">" + (esEn ? "Custom" : "Personalizado") + "</span>" +
@@ -2639,9 +2860,9 @@ function logFmtM3_(n, idioma) {
 }
 
 /** Aérea: cm³/6.000. Courier: cm³/5.000. El resto de modalidades no tiene kg vol. */
-function logKgVolDivisor_() {
+function logKgVolDivisor_(escId) {
     if (typeof logEsCotizacionExterior_ === "function" && !logEsCotizacionExterior_()) return null;
-    const mod = logEnv_().modalidad;
+    const mod = logEnvModalidad_(escId || (logEscList_().length ? logOpcionUiSel_ : ""));
     if (mod === "aerea") return 6000;
     if (mod === "courier") return 5000;
     return null;
@@ -2960,6 +3181,7 @@ function logisticaInitContenedoresSortable_() {
                 if (logEsEnvio_(f) && out.indexOf(f) < 0) out.push(f);
             });
             logQuote.filas = out.filter(function (f, i, a) { return a.indexOf(f) === i; });
+            if (logCab.over) delete logCab.over.codigo;
             logMarcarSucio_();
             logisticaRefrescarTabla_();
         }
@@ -3008,6 +3230,7 @@ function logisticaInitContenedoresSortable_() {
                 });
                 const env = logQuote.filas.filter(logEsEnvio_);
                 logQuote.filas = libre.concat(enOpc).concat(env);
+                if (logCab.over) delete logCab.over.codigo;
                 logMarcarSucio_();
                 logisticaRefrescarTabla_();
             }
@@ -3135,15 +3358,18 @@ function logAsegurarFilas_() {
 function logFilaValores_(fila, idioma, escId) {
     const ov = fila.over || {};
     const has = function (k) { return Object.prototype.hasOwnProperty.call(ov, k); };
-    const ek = escId ? ":" + escId : "";
-    /* Contenedor: con escId de opción, solo esa opción. Sin escId ("") = valores propios de la ficha (no excluir). */
+    /* Contenedor (fila.escId): la ficha ya es de una opción → overrides en claves planas.
+     * Legado (una fila, varias opciones): overrides unit:eId / qty:eId. */
+    const enContenedor = !!fila.escId;
+    const escEfec = escId || fila.escId || "";
+    const ek = (!enContenedor && escEfec) ? (":" + escEfec) : "";
     let fuera = false;
     if (escId) {
         if (fila.escId) fuera = fila.escId !== escId;
         else fuera = true; /* zona libre no entra en totales de una opción */
     }
     let loteSel = fila.lote;
-    if (!fila.escId && escId && fila.opc && Object.prototype.hasOwnProperty.call(fila.opc, escId)) loteSel = fila.opc[escId];
+    if (!fila.escId && escEfec && fila.opc && Object.prototype.hasOwnProperty.call(fila.opc, escEfec)) loteSel = fila.opc[escEfec];
     if (!loteSel && fila.tipo === "item" && !fila.snap) {
         const pr0 = logPreciosVersion_(fila.ver, fila.elem);
         if (pr0 && pr0.escalas && pr0.escalas[0]) loteSel = pr0.escalas[0].id;
@@ -3199,10 +3425,16 @@ function logFilaValores_(fila, idioma, escId) {
         }
     }
     ["cod", "titulo", "desc"].forEach(function (k) { if (has(k)) v[k] = ov[k]; });
-    /* lo escrito a mano: por escenario; en filas libres, si no hay dato propio del escenario, vale el general */
+    /* lo escrito a mano: contenedor = claves planas; legado multi-opción = unit:eId */
     const ovDe = function (k) {
-        if (has(k + ek)) return { v: ov[k + ek] };
-        if (escId && fila.tipo !== "item" && has(k)) return { v: ov[k] };
+        if (enContenedor) {
+            if (has(k)) return { v: ov[k] };
+            if (fila.escId && has(k + ":" + fila.escId)) return { v: ov[k + ":" + fila.escId] };
+            return null;
+        }
+        if (ek && has(k + ek)) return { v: ov[k + ek] };
+        if (escEfec && fila.tipo !== "item" && has(k)) return { v: ov[k] };
+        if (!escEfec && has(k)) return { v: ov[k] };
         return null;
     };
     const oq = ovDe("qty");
@@ -3755,14 +3987,14 @@ function logisticaTablaHTML_(idioma) {
         const enviosK = logOnK ? enviosAll.filter(function (fila) {
             return !logFilaValores_(fila, idioma, k).excl;
         }) : [];
-        const envLineasK = logOnK ? logEnv_().lineas.filter(function (ln) {
+        const envLineasK = logOnK ? logEnvLineasDeEsc_(k, esEn).filter(function (ln) {
             if (ln.tipo === "libre" && !String(ln.concepto || "").trim() && ln.valor == null) return false;
             return true;
         }) : [];
         const hayLogK = enviosK.length || envLineasK.length;
         const descOnK = logDescuentoActivo_(k);
         if (hayLogK || (descOnK && logQuote.filas.length)) {
-            h += filaMonto1_("tot tot-sub tot-prod", "prod", edTit("titSubProd", logEnvTitulo_("prod", T, mon, esEn)), pres.prod[k], k);
+            h += filaMonto1_("tot tot-sub tot-prod", "prod", edTit("titSubProd", logEnvTitulo_("prod", T, mon, esEn, k)), pres.prod[k], k);
         }
         if (descOnK && logQuote.filas.length) {
             h += filaMonto1_("tot tot-desc", "desc", edTit("titDesc", logDescuentoEtiqueta_(esEn)) + logDescuentoNotaHtml_(), (pres.desc || {})[k], k);
@@ -3775,7 +4007,7 @@ function logisticaTablaHTML_(idioma) {
             h += "<tr class=\"sec-gap\"><td colspan=\"" + n + "\"></td></tr>";
             h += "<tr class=\"sec\"><td colspan=\"" + n + "\">" + logEsc_(titLog) + "</td></tr>";
             if (logEnv_().modoCosto === "resumen") {
-                h += filaMonto1_("it it-env", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn)), pres.env[k], k);
+                h += filaMonto1_("it it-env", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn, k)), pres.env[k], k);
             } else {
                 enviosK.forEach(function (fila) {
                     const v0 = logFilaValores_(fila, idioma, k);
@@ -3799,12 +4031,12 @@ function logisticaTablaHTML_(idioma) {
                     h += filaMonto1_("it it-env", "env", logEsc_(item.label), monto, k);
                 });
                 if (envLineasK.length + enviosK.length > 1) {
-                    h += filaMonto1_("tot tot-sub tot-log", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn)), pres.env[k], k);
+                    h += filaMonto1_("tot tot-sub tot-log", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn, k)), pres.env[k], k);
                 }
             }
         }
         if (mostrarGran) {
-            h += filaMonto1_("tot gran", "gran", edTit("titGran", logEnvTitulo_("gran", T, mon, esEn)), pres.gran[k], k);
+            h += filaMonto1_("tot gran", "gran", edTit("titGran", logEnvTitulo_("gran", T, mon, esEn, k)), pres.gran[k], k);
             if (typeof logPagoAsegurar_ === "function") {
                 const pago = logPagoDeEsc_(k);
                 if (pago.iva || pago.anticipo) {
@@ -5367,7 +5599,8 @@ function logPrecioMostradoABase_(fila, n) {
 function logEscribirPrecioFila_(fila, txt, escId) {
     if (!fila.over) fila.over = {};
     const idioma = logisticaLeerOpciones_().idioma;
-    const clave = escId ? "unit:" + escId : "unit";
+    /* Contenedor: precio propio de la ficha. Legado multi-opción: unit:eId. */
+    const clave = fila.escId ? "unit" : (escId ? "unit:" + escId : "unit");
     const limpio = String(txt == null ? "" : txt).trim();
     if (!limpio) {
         delete fila.over[clave];
@@ -5378,7 +5611,7 @@ function logEscribirPrecioFila_(fila, txt, escId) {
     if (n == null) return false;
     const previo = fila.over[clave];
     delete fila.over[clave];
-    const auto = logFilaValores_(fila, idioma, escId || "");
+    const auto = logFilaValores_(fila, idioma, fila.escId || escId || "");
     const tol = logDecimales_() === 0 ? 0.51 : 0.02;
     if (auto.unit != null && Math.abs(n - Number(auto.unit)) <= tol) {
         if (!logQuedanPreciosFijos_(fila)) delete fila.puFijo;
@@ -5464,7 +5697,7 @@ function logHtmlTarjetaFila_(fila, idioma, vers, p, escs) {
         const escalas = pr && pr.escalas.length ? pr.escalas : [];
         if (escalas.length) campos += logHtmlCampo_("Cantidad", logHtmlSelectCantidad_(fila, escalas, "lote", ""));
     }
-    campos += logHtmlPrecioCampo_(fila, idioma, "");
+    campos += logHtmlPrecioCampo_(fila, idioma, fila.escId || "");
     const identidad = img + "<span class=\"log-fila-id\"><span class=\"badge " + (fila.tipo === "item" ? "text-bg-primary" : "text-bg-light border") + "\">" +
         (fila.tipo === "item" ? "Proyecto" : "Libre") + "</span>" +
         "<span class=\"log-fila-tit\"><b>" + logEsc_(v.cod) + "</b> " + logEsc_(v.titulo) +
@@ -6248,7 +6481,16 @@ function logPrefijoArchivo_(idioma) {
 /** Código del primer ítem de la lista (el usuario lo define arrastrando esa fila arriba). */
 function logCodigoPrimeraFila_() {
     logAsegurarFilas_();
-    const fila = logQuote.filas.find(function (f) { return f.tipo === "item" && (f.proy || f.ver); });
+    const esItem_ = function (f) { return f && f.tipo === "item" && (f.proy || f.ver); };
+    let fila = null;
+    const escs = logEscList_();
+    if (escs.length) {
+        /* Con opciones: 1.ª fila de la 1.ª opción (como en el PDF); si está vacía, zona libre. */
+        const deOp = (typeof logFilasDeEsc_ === "function" ? logFilasDeEsc_(escs[0].id) : []).filter(esItem_);
+        fila = deOp[0] || (logQuote.filas || []).find(function (f) { return esItem_(f) && !f.escId; }) || null;
+    } else {
+        fila = (logQuote.filas || []).find(esItem_) || null;
+    }
     if (fila) {
         const codigo = String(fila.proy || "").trim();
         const ver = String(fila.ver || "").trim();
@@ -6379,6 +6621,8 @@ function logisticaSerializar_(idioma) {
         const c = { uid: fila.uid, tipo: fila.tipo, proy: fila.proy || "", ver: fila.ver || "", lote: fila.lote || "", over: clon(fila.over || {}) };
         if (fila.elem) c.elem = fila.elem;
         if (fila.puFijo) c.puFijo = true;
+        /* Contenedor de opción: sin esto, al reabrir todo cae en Rangos. */
+        if (fila.escId) c.escId = String(fila.escId);
         if (fila.opc && Object.keys(fila.opc).length) c.opc = clon(fila.opc);
         if (fila.excl && Object.keys(fila.excl).length) c.excl = clon(fila.excl);
         if (fila.demo != null) c.demo = fila.demo;
@@ -6877,12 +7121,15 @@ async function logisticaAbrirGuardada_(id, rev) {
     logQuote.escenarios.forEach(function (e) { logQuote.escUid = Math.max(logQuote.escUid, parseInt(String(e.id).replace(/\D/g, ""), 10) || 0); });
     logSincronizarModoDesdeEscenarios_();
     if ((logQuote.escenarios || []).length) logMigrarFilasAContenedores_();
+    if ((logQuote.escenarios || []).length) logRepararOverClonadoLegado_();
     logLayout = {
         cols: (g.layout && g.layout.cols && g.layout.cols.length ? g.layout.cols : LOG_COLUMNAS_DEMO).map(function (c) { return { k: c.k, w: c.w }; }),
         filaAlto: (g.layout && g.layout.filaAlto) || {}
     };
     logCab.codigo = clave;
-    logCab.over = g.cab || {};
+    logCab.over = g.cab ? JSON.parse(JSON.stringify(g.cab)) : {};
+    /* Cotizaciones viejas guardaban en cab.codigo el proyecto de Costos; en consolidado manda la 1.ª fila. */
+    if (logCab.over && logTipoDoc_(g.idioma === "en" ? "en" : "es") === "CONS") delete logCab.over.codigo;
     logCab.idiomaPara = clave;
     const setv = function (idEl, val) { const el = document.getElementById(idEl); if (el && val != null) el.value = val; };
     setv("logIdioma", g.idioma === "en" ? "en" : "es");
@@ -7079,6 +7326,7 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".firma.has-img .nom{margin-top:.04in}" +
         /* pantalla */
         "@media screen{" +
+        "html,body{overflow:hidden}" +
         "body{background:#fff}" +
         /* campos editables directo sobre la hoja (solo pantalla) */
         ".ed{border-radius:2px;outline:1px dashed transparent;outline-offset:1px;cursor:text;min-width:1ch}" +
@@ -7242,13 +7490,35 @@ function logisticaLeerEnvUi_() {
     const prev = logEnv_();
     const mod = ((document.getElementById("logModalidad") || {}).value) || prev.modalidad;
     const inc = String(((document.getElementById("logIncoterm") || {}).value) || prev.incoterm).toUpperCase();
-    prev.modalidad = LOG_MODALIDADES_.indexOf(mod) >= 0 ? mod : prev.modalidad;
-    prev.incoterm = LOG_INCOTERM_MATRIZ_[inc] ? inc : prev.incoterm;
-    if (logEnvIncotermsDe_(prev.modalidad).indexOf(prev.incoterm) < 0) prev.incoterm = "EXW";
-    prev.destinoCiudad = ((document.getElementById("logDestCiudad") || {}).value || "").trim();
-    prev.destinoPais = ((document.getElementById("logDestPais") || {}).value || "").trim();
-    prev.destinoCodigo = ((document.getElementById("logDestCodigo") || {}).value || "").trim().toUpperCase();
-    prev.destinoPuerto = ((document.getElementById("logDestPuerto") || {}).value || "").trim();
+    let modalidad = LOG_MODALIDADES_.indexOf(mod) >= 0 ? mod : prev.modalidad;
+    let incoterm = LOG_INCOTERM_MATRIZ_[inc] ? inc : prev.incoterm;
+    if (logEnvIncotermsDe_(modalidad).indexOf(incoterm) < 0) {
+        const avail = logEnvIncotermsDe_(modalidad);
+        incoterm = avail.indexOf("CIP") >= 0 ? "CIP" : (avail[0] || "EXW");
+    }
+    const destinoCiudad = ((document.getElementById("logDestCiudad") || {}).value || "").trim();
+    const destinoPais = ((document.getElementById("logDestPais") || {}).value || "").trim();
+    const destinoCodigo = ((document.getElementById("logDestCodigo") || {}).value || "").trim().toUpperCase();
+    const destinoPuerto = ((document.getElementById("logDestPuerto") || {}).value || "").trim();
+    /* Con opciones: modalidad/Incoterm/destino van a la opción activa; el global refleja esa opción. */
+    const escAct = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
+    if (escAct) {
+        if (!prev.porEsc || typeof prev.porEsc !== "object") prev.porEsc = {};
+        if (!prev.porEsc[escAct]) prev.porEsc[escAct] = logEnvEscSemilla_(prev);
+        const st = prev.porEsc[escAct];
+        st.modalidad = modalidad;
+        st.incoterm = incoterm;
+        st.destinoCiudad = destinoCiudad;
+        st.destinoPais = destinoPais;
+        st.destinoCodigo = destinoCodigo;
+        st.destinoPuerto = destinoPuerto;
+    }
+    prev.modalidad = modalidad;
+    prev.incoterm = incoterm;
+    prev.destinoCiudad = destinoCiudad;
+    prev.destinoPais = destinoPais;
+    prev.destinoCodigo = destinoCodigo;
+    prev.destinoPuerto = destinoPuerto;
     prev.contenedores = logContenedoresNorm_({
         c20: (document.getElementById("logC20") || {}).value,
         c40: (document.getElementById("logC40") || {}).value,
@@ -7262,7 +7532,18 @@ function logisticaLeerEnvUi_() {
     const modo = document.querySelector("input[name=\"logModoCosto\"]:checked");
     prev.modoCosto = modo && modo.value === "resumen" ? "resumen" : "detalle";
     const sw = document.getElementById("logCostosOn");
-    if (sw) prev.activo = !!sw.checked;
+    if (sw) {
+        const escSw = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
+        if (escSw) {
+            /* Un solo Incluir: con opciones escribe en la opción activa. */
+            prev.activo = true;
+            if (!prev.porEsc || typeof prev.porEsc !== "object") prev.porEsc = {};
+            if (!prev.porEsc[escSw]) prev.porEsc[escSw] = logEnvEscSemilla_(prev);
+            prev.porEsc[escSw].activo = !!sw.checked;
+        } else {
+            prev.activo = !!sw.checked;
+        }
+    }
     const mer = document.getElementById("logMercado");
     if (mer && (mer.value === "EXPORTACION" || mer.value === "NACIONAL")) prev.mercado = mer.value;
     const pct = Number((document.getElementById("logResumenPct") || {}).value);
@@ -7606,6 +7887,10 @@ function logFaltasAnalisis_() {
     }
     const clavesF = logEscList_().length ? logEscList_().map(function (x) { return x.id; }) : [""];
     clavesF.forEach(function (k, idx) {
+        const vista = typeof logEnvVistaEsc_ === "function" ? logEnvVistaEsc_(k) : { modalidad: e.modalidad, incoterm: inc };
+        const tiposK = typeof logEnvTiposActivos_ === "function"
+            ? logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior)
+            : tipos;
         const cub = typeof logCubicajeTotal_ === "function" ? logCubicajeTotal_("es", k) : { m3: 0, pesoKg: 0, kgVol: 0 };
         const kg = Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0);
         const m3 = Number(cub.m3) || 0;
@@ -7613,23 +7898,28 @@ function logFaltasAnalisis_() {
         const cont = stF ? stF.contenedores : (e.contenedores || {});
         const nCont = (Number(cont.c20) || 0) + (Number(cont.c40) || 0) + (Number(cont.c40hc) || 0);
         const op = k ? (logEscNombre_(logEscList_()[idx] || {}, idx, "es") + ": ") : "";
-        if (tipos.indexOf("flete_principal") >= 0 && e.modalidad === "aerea" && !(kg > 0)) {
+        if (tiposK.indexOf("flete_principal") >= 0 && vista.modalidad === "aerea" && !(kg > 0)) {
             faltas.push({ id: "logCubPeso", msg: op + "Falta el peso real o el volumétrico. Complétalo en el cubicaje o en el empaque de la ficha." });
             faltas.push({ id: "logCubKgVol" });
         }
-        if (tipos.indexOf("flete_principal") >= 0 && e.modalidad === "lcl" && !(m3 > 0) && !(Number(cub.pesoKg) > 0)) {
+        if (tiposK.indexOf("flete_principal") >= 0 && vista.modalidad === "lcl" && !(m3 > 0) && !(Number(cub.pesoKg) > 0)) {
             faltas.push({ id: "logCubM3", msg: op + "Falta el volumen o el peso para el flete LCL." });
             faltas.push({ id: "logCubPeso" });
         }
-        if (e.modalidad === "fcl" && (tipos.indexOf("flete_principal") >= 0 || tipos.indexOf("flete_interno") >= 0) && !(nCont > 0) && !(m3 > 0) && !(kg > 0)) {
+        if (vista.modalidad === "fcl" && (tiposK.indexOf("flete_principal") >= 0 || tiposK.indexOf("flete_interno") >= 0) && !(nCont > 0) && !(m3 > 0) && !(kg > 0)) {
             faltas.push({ id: "logCubM3", msg: op + "Falta el volumen, el peso o la cantidad de contenedores." });
             faltas.push({ id: "logCubPeso" });
             faltas.push({ id: "logC20" });
             faltas.push({ id: "logC40" });
             faltas.push({ id: "logC40hc" });
         }
-        if (tipos.indexOf("seguro") >= 0 && !(typeof logTarValorMercancia_ === "function" && logTarValorMercancia_(k) > 0)) {
-            faltas.push({ id: "", msg: op + "Falta el precio de los proyectos para calcular el seguro." });
+        if (tiposK.indexOf("seguro") >= 0) {
+            const exw = typeof logTarExwCotizacion_ === "function" ? logTarExwCotizacion_(k) : { monto: 0, moneda: "USD" };
+            if (!(exw.monto > 0)) {
+                faltas.push({ id: "", msg: op + "Falta el precio de los proyectos para calcular el seguro." });
+            } else if (exw.moneda !== "USD" && !(typeof logTarTrm_ === "function" && logTarTrm_() > 0)) {
+                faltas.push({ id: "logTRM", msg: op + "Falta la TRM (en Documento o en Ajustes → Logística) para pasar el valor a USD y calcular el seguro." });
+            }
         }
     });
     return faltas;
@@ -7648,7 +7938,7 @@ function logAplicarFaltasAnalisis_() {
     try { faltas = logFaltasAnalisis_(); } catch (e) { faltas = []; }
     const ids = {};
     faltas.forEach(function (f) { if (f && f.id) ids[f.id] = 1; });
-    ["logDestCiudad", "logDestPais", "logDestPuerto", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc"].forEach(function (id) {
+    ["logDestCiudad", "logDestPais", "logDestPuerto", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc", "logTRM"].forEach(function (id) {
         const el = document.getElementById(id);
         if (el) el.classList.toggle("log-req", !!ids[id]);
     });
@@ -7724,47 +8014,52 @@ function logisticaPintarEscEnv_() {
         logEnvEscSel_ = "";
         return;
     }
-    logOpcionUiAsegurar_();
+    const sel = logOpcionUiAsegurar_();
+    logEnvEscSel_ = sel;
     if (contWrap) contWrap.classList.add("d-none");
     if (embWrap) embWrap.classList.add("d-none");
     if (cubWrap) cubWrap.classList.add("d-none");
-    /* Las pestañas Opción N + Incluir viven en Costos logísticos (logisticaPintarOpcTabsTodas_). */
     if (!box) return;
     if (document.activeElement && box.contains(document.activeElement)) return;
     box.classList.remove("d-none");
-    const esFcl = e.modalidad === "fcl";
+    /* Solo la opción activa (las pestañas ya eligen cuál). Evita duplicar Opción 1 + Opción 2. */
+    const x = escs.find(function (o) { return o.id === sel; }) || escs[0];
+    const i = escs.indexOf(x);
+    const st = logEnvEsc_(x.id);
+    const vista = logEnvVistaEsc_(x.id);
+    const esFcl = vista.modalidad === "fcl";
     const esEn = idioma === "en";
+    const cub = logCubicajeTotal_(idioma, x.id);
+    const auto = cub.auto || cub;
+    const sug = esFcl ? logSugerirContenedores_(cub.m3, Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0)) : null;
+    const ph = function (n) { return Number(n) > 0 ? String(Math.round(Number(n) * 1000) / 1000) : "0"; };
+    const op = logEsc_(x.id);
     let h = esFcl ? "<div class=\"log-esc-calc-title\">" + (esEn ? "Container calculation" : "Cálculo de contenedores") + "</div>" : "";
-    escs.forEach(function (x, i) {
-        const st = logEnvEscDe_(e, x.id);
-        const cub = logCubicajeTotal_(idioma, x.id);
-        const auto = cub.auto || cub;
-        const sug = esFcl ? logSugerirContenedores_(cub.m3, Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0)) : null;
-        const ph = function (n) { return Number(n) > 0 ? String(Math.round(Number(n) * 1000) / 1000) : "0"; };
-        const op = logEsc_(x.id);
-        h += "<div class=\"log-esc-card\">" +
-            "<div class=\"log-esc-card-h\">" +
-            "<b>" + logEsc_(logEscNombre_(x, i, idioma)) + "</b>" +
-            "<span>" + (auto.cajas || 0) + (esEn ? " boxes" : " cajas") + "</span>";
-        if (esFcl) {
-            h += "<button type=\"button\" class=\"btn btn-sm btn-outline-primary log-esc-cont-calc\" data-esc-calc=\"" + op + "\" title=\"" + (esEn ? "Recalculate containers for this option" : "Recalcular contenedores de esta opción") + "\">" + (esEn ? "Calculate" : "Calcular") + "</button>";
-        }
-        h += "</div>";
-        if (esFcl && sug) {
-            h += "<div class=\"log-esc-sug text-muted\">" + (esEn ? "Suggested: " : "Sugerido: ") + logEsc_(logContenedoresTexto_(sug)) + "</div>";
-        }
-        h += "<div class=\"log-esc-fields" + (esFcl ? " log-esc-fields-fcl" : "") + "\">" +
-            "<label>m³<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.001\" data-op=\"" + op + "\" data-campo=\"cubM3\" placeholder=\"" + ph(auto.m3) + "\" value=\"" + (st.cubM3 == null ? "" : st.cubM3) + "\"></label>" +
-            "<label>" + (esEn ? "Weight kg" : "Peso kg") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.01\" data-op=\"" + op + "\" data-campo=\"cubPeso\" placeholder=\"" + ph(auto.pesoKg) + "\" value=\"" + (st.cubPeso == null ? "" : st.cubPeso) + "\"></label>";
-        if (esFcl) {
-            h += "<label>20'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c20\" data-cont=\"1\" value=\"" + (st.contenedores.c20 || "") + "\"></label>" +
-                "<label>40'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c40\" data-cont=\"1\" value=\"" + (st.contenedores.c40 || "") + "\"></label>" +
-                "<label>40HC<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c40hc\" data-cont=\"1\" value=\"" + (st.contenedores.c40hc || "") + "\"></label>";
-        }
-        h += "<label>" + (esEn ? "Shipments" : "Embarques") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"1\" step=\"1\" data-op=\"" + op + "\" data-campo=\"embarques\" value=\"" + (st.embarques || 1) + "\"></label>";
-        h += "</div></div>";
-    });
-    box.innerHTML = h + "<div class=\"text-muted log-esc-nota\">" + (esEn ? "Blank m³ and weight use each option's packaging. Containers are calculated per option and you can correct them." : "m³ y peso vacíos usan el empaque de cada opción. Los contenedores se calculan por opción y puedes corregirlos.") + "</div>";
+    h += "<div class=\"log-esc-card\">" +
+        "<div class=\"log-esc-card-h\">" +
+        "<b>" + logEsc_(logEscNombre_(x, i, idioma)) + "</b>" +
+        "<span>" + (auto.cajas || 0) + (esEn ? " boxes" : " cajas") + "</span>";
+    if (esFcl) {
+        h += "<button type=\"button\" class=\"btn btn-sm btn-outline-primary log-esc-cont-calc\" data-esc-calc=\"" + op + "\" title=\"" + (esEn ? "Recalculate containers for this option" : "Recalcular contenedores de esta opción") + "\">" + (esEn ? "Calculate" : "Calcular") + "</button>";
+    }
+    h += "</div>";
+    if (esFcl && sug) {
+        h += "<div class=\"log-esc-sug text-muted\">" + (esEn ? "Suggested: " : "Sugerido: ") + logEsc_(logContenedoresTexto_(sug)) + "</div>";
+    }
+    h += "<div class=\"log-esc-fields" + (esFcl ? " log-esc-fields-fcl" : "") + "\">" +
+        "<label>m³<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.001\" data-op=\"" + op + "\" data-campo=\"cubM3\" placeholder=\"" + ph(auto.m3) + "\" value=\"" + (st.cubM3 == null ? "" : st.cubM3) + "\"></label>" +
+        "<label>" + (esEn ? "Weight kg" : "Peso kg") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.01\" data-op=\"" + op + "\" data-campo=\"cubPeso\" placeholder=\"" + ph(auto.pesoKg) + "\" value=\"" + (st.cubPeso == null ? "" : st.cubPeso) + "\"></label>";
+    if (esFcl) {
+        h += "<label>20'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c20\" data-cont=\"1\" value=\"" + (st.contenedores.c20 || "") + "\"></label>" +
+            "<label>40'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c40\" data-cont=\"1\" value=\"" + (st.contenedores.c40 || "") + "\"></label>" +
+            "<label>40HC<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c40hc\" data-cont=\"1\" value=\"" + (st.contenedores.c40hc || "") + "\"></label>";
+    }
+    h += "<label>" + (esEn ? "Shipments" : "Embarques") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"1\" step=\"1\" data-op=\"" + op + "\" data-campo=\"embarques\" value=\"" + (st.embarques || 1) + "\"></label>";
+    h += "</div></div>";
+    box.innerHTML = h + "<div class=\"text-muted log-esc-nota\">" + (esEn
+        ? "This card is for the selected option only. Switch tabs to edit another option’s modality, Incoterm and cubicage."
+        : "Esta ficha es solo de la opción seleccionada. Cambia de pestaña para editar modalidad, Incoterm y cubicaje de otra.") + "</div>";
+    void e;
 }
 let logDestinoPaisTocado_ = false;
 let logDestinoCiudadTocado_ = false;
@@ -7883,9 +8178,23 @@ function logisticaPintarEnv_(forzar) {
     const esEn = idioma === "en";
     const exterior = logEsCotizacionExterior_();
     logAplicarPaisCliente_();
-    logEnvAsegurarLineas_(esEn);
+    const escUi = logEscList_().length ? logOpcionUiAsegurar_() : "";
+    logEnvEscSel_ = escUi;
+    /* Refleja la opción activa en el global (para código que aún lee env.modalidad) y asegura sus líneas. */
+    if (escUi) {
+        const st = logEnvEsc_(escUi);
+        const e0 = logEnv_();
+        e0.modalidad = st.modalidad || e0.modalidad;
+        e0.incoterm = st.incoterm || e0.incoterm;
+        e0.destinoCiudad = st.destinoCiudad != null ? st.destinoCiudad : e0.destinoCiudad;
+        e0.destinoPais = st.destinoPais != null ? st.destinoPais : e0.destinoPais;
+        e0.destinoCodigo = st.destinoCodigo != null ? st.destinoCodigo : e0.destinoCodigo;
+        e0.destinoPuerto = st.destinoPuerto != null ? st.destinoPuerto : e0.destinoPuerto;
+    }
+    logEnvAsegurarLineas_(esEn, false, escUi);
     logAplicarAranceles_();
     const e = logEnv_();
+    const vista = logEnvVistaEsc_(escUi);
     const modSel = document.getElementById("logModalidad");
     if (modSel) {
         const opts = [
@@ -7896,35 +8205,42 @@ function logisticaPintarEnv_(forzar) {
             ["terrestre", esEn ? "Land" : "Terrestre"]
         ];
         const html = opts.map(function (o) {
-            return "<option value=\"" + o[0] + "\"" + (o[0] === e.modalidad ? " selected" : "") + ">" + o[1] + "</option>";
+            return "<option value=\"" + o[0] + "\"" + (o[0] === vista.modalidad ? " selected" : "") + ">" + o[1] + "</option>";
         }).join("");
         const tienen = [].map.call(modSel.options, function (o) { return o.value; }).join(",");
         if (tienen !== opts.map(function (o) { return o[0]; }).join(",")) modSel.innerHTML = html;
-        logSetSiNoFoco_("logModalidad", e.modalidad);
+        logSetSiNoFoco_("logModalidad", vista.modalidad);
     }
     const incSel = document.getElementById("logIncoterm");
     if (incSel) {
-        const incs = logEnvIncotermsDe_(e.modalidad);
+        const incs = logEnvIncotermsDe_(vista.modalidad);
         const html = incs.map(function (k) {
-            return "<option value=\"" + k + "\"" + (k === e.incoterm ? " selected" : "") + ">" + k + "</option>";
+            return "<option value=\"" + k + "\"" + (k === vista.incoterm ? " selected" : "") + ">" + k + "</option>";
         }).join("");
         const tienen = [].map.call(incSel.options, function (o) { return o.value; }).join(",");
         if (tienen !== incs.join(",")) incSel.innerHTML = html;
-        logSetSiNoFoco_("logIncoterm", e.incoterm);
+        logSetSiNoFoco_("logIncoterm", vista.incoterm);
     }
-    const paisElegido = logPintarSelectPais_(e.destinoPais);
-    const ciudadElegida = logPintarSelectCiudad_(e.destinoCiudad, paisElegido || e.destinoPais);
-    const puertoElegido = logPintarSelectPuerto_(e.destinoPuerto, paisElegido || e.destinoPais);
-    logSetSiNoFoco_("logDestCiudad", ciudadElegida || e.destinoCiudad);
-    logSetSiNoFoco_("logDestCodigo", e.destinoCodigo || logEnvCodigoDePais_(paisElegido || e.destinoPais));
-    logSetSiNoFoco_("logDestPuerto", puertoElegido || e.destinoPuerto);
+    const paisElegido = logPintarSelectPais_(vista.destinoPais);
+    const ciudadElegida = logPintarSelectCiudad_(vista.destinoCiudad, paisElegido || vista.destinoPais);
+    const puertoElegido = logPintarSelectPuerto_(vista.destinoPuerto, paisElegido || vista.destinoPais);
+    logSetSiNoFoco_("logDestCiudad", ciudadElegida || vista.destinoCiudad);
+    logSetSiNoFoco_("logDestCodigo", vista.destinoCodigo || logEnvCodigoDePais_(paisElegido || vista.destinoPais));
+    logSetSiNoFoco_("logDestPuerto", puertoElegido || vista.destinoPuerto);
     logSetSiNoFoco_("logResumenPct", e.resumenPct);
+    const costosOn = escUi ? logEnvActivo_(escUi) : (e.activo !== false);
     const swOn = document.getElementById("logCostosOn");
-    if (swOn && document.activeElement !== swOn) swOn.checked = e.activo !== false;
+    if (swOn && document.activeElement !== swOn) swOn.checked = costosOn;
     const cuerpo = document.getElementById("logCostosCuerpo");
     const tools = document.getElementById("logCostosTools");
-    if (cuerpo) cuerpo.classList.toggle("d-none", e.activo === false);
-    if (tools) tools.classList.toggle("d-none", e.activo === false);
+    if (cuerpo) cuerpo.classList.toggle("d-none", !costosOn);
+    if (tools) tools.classList.toggle("d-none", !costosOn);
+    const esExwUi = exterior && String(vista.incoterm || "").toUpperCase() === "EXW";
+    const btnLibre = document.getElementById("btnLogEnvLibre");
+    const btnReset = document.getElementById("btnLogEnvReset");
+    if (btnLibre) btnLibre.classList.toggle("d-none", esExwUi);
+    if (btnReset) btnReset.classList.toggle("d-none", esExwUi);
+    /* Con costos apagados se ocultan Detalle/margen/filas; las pestañas de opción siguen visibles arriba. */
     document.querySelectorAll("input[name=\"logModoCosto\"]").forEach(function (r) { r.checked = r.value === e.modoCosto; });
     const selMer = document.getElementById("logMercado");
     if (selMer && document.activeElement !== selMer) selMer.value = exterior ? "EXPORTACION" : "NACIONAL";
@@ -7937,28 +8253,32 @@ function logisticaPintarEnv_(forzar) {
     const margenWrap = document.getElementById("logMargenWrap");
     if (margenWrap) margenWrap.classList.toggle("d-none", !exterior);
     logSetSiNoFoco_("logMargenLog", e.margenPct);
-    const cont = e.contenedores || { c20: 0, c40: 0, c40hc: 0 };
+    const contEsc = escUi ? (logEnvEscDe_(e, escUi) || {}) : e;
+    const cont = (contEsc.contenedores || e.contenedores) || { c20: 0, c40: 0, c40hc: 0 };
     logSetSiNoFoco_("logC20", cont.c20 || "");
     logSetSiNoFoco_("logC40", cont.c40 || "");
     logSetSiNoFoco_("logC40hc", cont.c40hc || "");
     const contWrap = document.getElementById("logContenedores");
-    if (contWrap) contWrap.classList.toggle("d-none", e.modalidad !== "fcl");
-    logSetSiNoFoco_("logEmbarques", e.embarques || 1);
+    if (contWrap) contWrap.classList.toggle("d-none", vista.modalidad !== "fcl" || !!escUi);
+    logSetSiNoFoco_("logEmbarques", (contEsc.embarques != null ? contEsc.embarques : e.embarques) || 1);
     const embWrap = document.getElementById("logEmbarquesWrap");
-    if (embWrap) embWrap.classList.toggle("d-none", !exterior);
+    if (embWrap) embWrap.classList.toggle("d-none", !exterior || !!escUi);
     const contNota = document.getElementById("logContNota");
     if (contNota) {
-        const cubNota = typeof logCubicajeTotal_ === "function" ? logCubicajeTotal_("es") : { m3: 0, pesoKg: 0, kgVol: 0 };
+        const cubNota = typeof logCubicajeTotal_ === "function" ? logCubicajeTotal_("es", escUi || undefined) : { m3: 0, pesoKg: 0, kgVol: 0 };
         const sugNota = logSugerirContenedores_(cubNota.m3, Math.max(Number(cubNota.pesoKg) || 0, Number(cubNota.kgVol) || 0));
         const escrito = logContenedoresTexto_(cont);
         const calc = logContenedoresTexto_(sugNota);
-        if (e.contenedoresManual && escrito) contNota.textContent = "Escrito: " + escrito + (calc && calc !== escrito ? ". El cálculo da " + calc + "." : ".");
+        const manual = contEsc.contenedoresManual != null ? contEsc.contenedoresManual : e.contenedoresManual;
+        if (manual && escrito) contNota.textContent = "Escrito: " + escrito + (calc && calc !== escrito ? ". El cálculo da " + calc + "." : ".");
         else if (escrito) contNota.textContent = "Calculado: " + escrito + ". Útiles: 20' 28 m³, 40' 58 m³, 40HC 68 m³.";
         else if (calc) contNota.textContent = "Sugerido: " + calc + ". El análisis lo escribe aquí.";
         else contNota.textContent = "Falta el volumen o el peso para calcular contenedores.";
     }
     logisticaPintarEscEnv_();
     if (typeof logisticaPintarOpcTabsTodas_ === "function") logisticaPintarOpcTabsTodas_();
+    /* Tras pintar pestañas, asegurar otra vez por si cambió la opción activa. */
+    if (!(e.lineas || []).length) logEnvAsegurarLineas_(esEn, true, escUi);
     const box = document.getElementById("logEnvLineas");
     if (!forzar && box && document.activeElement && box.contains(document.activeElement)) {
         logisticaPintarCubicaje_();
@@ -7966,7 +8286,9 @@ function logisticaPintarEnv_(forzar) {
         return;
     }
     if (box) {
-        box.innerHTML = e.lineas.map(function (ln) {
+        const lineasUi = (e.lineas && e.lineas.length) ? e.lineas : logEnvLineasDeEsc_(escUi || "", esEn);
+        if ((!e.lineas || !e.lineas.length) && lineasUi.length) e.lineas = lineasUi;
+        box.innerHTML = lineasUi.map(function (ln) {
             const claveNal = logMargenClaveNal_(ln.tipo);
             const pct = (ln.tipo === "duties" || ln.tipo === "taxes")
                 ? "<input class=\"form-control form-control-sm\" data-lp type=\"number\" step=\"0.01\" placeholder=\"%\" title=\"" + logEsc_(ln.base ? ("Interno. No sale en el PDF. Base " + ln.base + ".") : "Interno. No sale en el PDF. Si no hay valor, el % se aplica al precio de los proyectos sin la comisión de esta cotización.") + "\" value=\"" + (ln.pct == null ? "" : ln.pct) + "\">"
@@ -7986,7 +8308,11 @@ function logisticaPintarEnv_(forzar) {
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-ldup title=\"Duplicar\"><i class=\"bi bi-copy\"></i></button>" +
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-ldel title=\"Quitar\"><i class=\"bi bi-trash\"></i></button>" +
                 "</div>";
-        }).join("") || "<div class=\"text-muted small\">Sin filas para este Incoterm. Usa Restaurar o la fila libre.</div>";
+        }).join("") || ("<div class=\"text-muted small\">" + (
+            esExwUi
+                ? (esEn ? "EXW (Ex Works) has no logistics cost lines." : "EXW (Ex Works) no incluye conceptos de costos logísticos.")
+                : (esEn ? "No rows for this Incoterm. Use Restore or the free row." : "Sin filas para este Incoterm. Usa Restaurar o la fila libre.")
+        ) + "</div>");
         logActivarTipConcepto_();
         logisticaOrdenEnv_();
     }
@@ -8085,15 +8411,25 @@ function logisticaOnEnvUi_(ev) {
     if (accion && accion.id === "btnLogEnvReset") {
         const e = logEnv_();
         e.plantilla = "";
-        logEnvAsegurarLineas_((document.getElementById("logIdioma") || {}).value === "en", true);
+        e.lineas = [];
+        const escR = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
+        logEnvAsegurarLineas_((document.getElementById("logIdioma") || {}).value === "en", true, escR);
         logMarcarSucio_();
         logisticaPintarEnv_(true);
         logisticaRefrescarTabla_();
         return;
     }
     if (accion && accion.id === "btnLogEnvLibre") {
+        const escL = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
+        if (logEsCotizacionExterior_() && String(logEnvVistaEsc_(escL).incoterm || "").toUpperCase() === "EXW") return;
         const e = logEnv_();
-        e.activo = true;
+        if (escL) {
+            const st = logEnvEsc_(escL);
+            if (st) st.activo = true;
+            e.activo = true;
+        } else {
+            e.activo = true;
+        }
         e.lineas.push({ id: "c" + Date.now(), tipo: "libre", concepto: "", valor: null, pct: null, notas: "" });
         logMarcarSucio_();
         logisticaPintarEnv_(true);
@@ -8177,20 +8513,17 @@ function logisticaAplicarZoom_() {
     if (!pages || !stage || !f) return;
     const page = pages.querySelector(".page");
     const bar = stage.querySelector(".log-zoom");
-    const topNow = Math.max(0, stage.getBoundingClientRect().top);
-    const altoEsc = Math.max(360, window.innerHeight - topNow - 10);
-    stage.style.height = altoEsc + "px";
-    stage.style.maxHeight = altoEsc + "px";
+    /* No forzar height en línea: pelea con el grid y crea una 2ª scrollbar. */
+    stage.style.height = "";
+    stage.style.maxHeight = "";
     const previo = pages.style.zoom;
     pages.style.zoom = "1";
     const pw = (page && page.offsetWidth) || 816;
     const ph = (page && page.offsetHeight) || 1056;
     pages.style.zoom = previo || "1";
-    const st = stage.getBoundingClientRect();
-    const visibleH = Math.max(280, Math.min(st.bottom, window.innerHeight) - Math.max(st.top, 0));
     const barH = (bar ? bar.offsetHeight : 32) + 8;
     const roomW = Math.max(200, f.clientWidth || (stage.clientWidth - 20));
-    const roomH = Math.max(240, visibleH - barH);
+    const roomH = Math.max(240, (stage.clientHeight || 480) - barH);
     let z = typeof logZoom === "number" ? logZoom : 1;
     if (logZoom === "fit") {
         z = Math.min(roomW / pw, roomH / ph);
@@ -9146,7 +9479,14 @@ function logTarMeses_() {
 
 function logTarTrm_() {
     const el = document.getElementById("cfgLogTrm");
-    const n = Number(el && el.value !== "" ? el.value : ((typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.logTrm) || 0));
+    let n = Number(el && el.value !== "" ? el.value : ((typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.logTrm) || 0));
+    /* Cotización abierta: usar la TRM del documento si Ajustes no la tiene. */
+    if (!(n > 0) && logQuote && Number(logQuote.trm) > 0) n = Number(logQuote.trm);
+    if (!(n > 0)) {
+        const inp = document.getElementById("logTRM");
+        const m = Number(inp && inp.value);
+        if (m > 0) n = m;
+    }
     return n > 0 ? n : 0;
 }
 
@@ -9215,8 +9555,18 @@ function logTarExwCotizacion_(escId) {
         const idioma = (typeof logisticaLeerOpciones_ === "function" && logisticaLeerOpciones_().idioma) || "es";
         const pres = logEnvPresentacion_(idioma);
         const keys = Object.keys(pres.prod || {});
-        const k = escId && keys.indexOf(escId) >= 0 ? escId : keys[0];
-        const monto = k ? Number(pres.prod[k]) || 0 : 0;
+        let monto = 0;
+        if (escId && keys.indexOf(escId) >= 0) {
+            monto = Number(pres.prod[escId]) || 0;
+        } else if (!escId || escId === "") {
+            /* Sin opción: suma productos ("" o rangos r:uid). */
+            keys.forEach(function (k) {
+                if (k === "" || String(k).indexOf("r:") === 0) monto += Number(pres.prod[k]) || 0;
+            });
+            if (!(monto > 0) && keys[0]) monto = Number(pres.prod[keys[0]]) || 0;
+        } else if (keys[0]) {
+            monto = Number(pres.prod[keys[0]]) || 0;
+        }
         return { monto: isFinite(monto) ? monto : 0, moneda: logQuote && logQuote.moneda === "USD" ? "USD" : "COP" };
     } catch (e) { return { monto: 0, moneda: "USD" }; }
 }
@@ -10046,6 +10396,16 @@ function logisticaInitIa_() {
 
 function logisticaInit() {
     if (typeof logTarAsegurar_ === "function") logTarAsegurar_();
+    /* Bloquea el scroll de la página mientras Logística está activa: solo scrollean .log-side / .log-stage. */
+    const syncLogScrollBody_ = function () {
+        const pane = document.getElementById("tabLogistica");
+        const on = !!(pane && pane.classList.contains("active"));
+        document.body.classList.toggle("logistica-activa", on);
+    };
+    syncLogScrollBody_();
+    document.querySelectorAll('#mainAppTabs [data-bs-toggle="tab"]').forEach(function (btn) {
+        btn.addEventListener("shown.bs.tab", syncLogScrollBody_);
+    });
     const idi = document.getElementById("logIdioma");
     if (idi) idi.addEventListener("change", function () { logCab.idiomaManual = true; logisticaActualizarVista(); });
     const sis = document.getElementById("logSistema");
@@ -10216,19 +10576,6 @@ function logisticaInit() {
             logMarcarSucio_();
             logisticaActualizarVista();
         }
-    });
-    document.addEventListener("change", function (ev) {
-        const t = ev.target;
-        if (!t || t.id !== "logCostosOnEsc") return;
-        logisticaLeerEnvUi_();
-        const op = t.getAttribute("data-op");
-        if (op) {
-            const st = logEnvEsc_(op);
-            if (st) st.activo = !!t.checked;
-        }
-        logMarcarSucio_();
-        logisticaPintarEnv_(true);
-        logisticaRefrescarTabla_();
     });
     /* Scroll principal = panel izquierdo (.log-side). No bloquear con preventDefault. */
     const side = document.querySelector(".log-side");

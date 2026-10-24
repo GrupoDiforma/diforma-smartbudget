@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.89">
+  <link rel="stylesheet" href="styles.css?v=1.0.91">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -513,13 +513,14 @@
                   </div>
                 </section>
                 <section class="log-card log-env-panel">
-                  <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
-                    <h6 class="mb-0">Costos logísticos</h6>
+                  <h6 class="mb-2">Costos logísticos</h6>
+                  <div id="logEnvEscTabs" class="log-opc-tabs d-none mb-2"></div>
+                  <div id="logCostosToolbar" class="d-flex align-items-center flex-wrap gap-2 mb-2">
                     <div class="form-check form-switch mb-0">
-                      <input class="form-check-input" type="checkbox" role="switch" id="logCostosOn" checked title="Maestro: apagado quita la logística de todas las opciones. Con Opciones, debajo puedes incluir o no cada opción.">
+                      <input class="form-check-input" type="checkbox" role="switch" id="logCostosOn" checked title="Con Opciones, aplica solo a la opción que estás editando. Sin opciones, a toda la cotización.">
                       <label class="form-check-label" for="logCostosOn">Incluir</label>
                     </div>
-                    <div id="logCostosTools" class="d-flex align-items-center flex-wrap gap-2 ms-auto">
+                    <div id="logCostosTools" class="d-flex align-items-center flex-wrap gap-2">
                       <div class="btn-group btn-group-sm" role="group" aria-label="Detalle de logística">
                         <input type="radio" class="btn-check" name="logModoCosto" id="logCostoDetalle" value="detalle" autocomplete="off" checked>
                         <label class="btn btn-outline-primary" for="logCostoDetalle">Detalle</label>
@@ -540,7 +541,6 @@
                   </div>
                   <div id="logCostosCuerpo">
                     <p class="text-muted small mb-2">El valor es el costo. El margen se suma al pasarlo a la cotización y no se imprime. Duties y Taxes no llevan margen. En nacional, envío, montaje, bodegaje y otro tienen cada uno su %.</p>
-                    <div id="logEnvEscTabs" class="d-none mb-2"></div>
                     <div id="logEnvLineas"></div>
                     <div id="logEnvSuma" class="log-env-suma" hidden></div>
                   </div>
@@ -577,7 +577,7 @@
                   <button type="button" id="logZoomIn" class="btn btn-sm btn-outline-secondary" title="Acercar">+</button>
                   <span id="logZoomLbl" class="small text-muted">100%</span>
                 </div>
-                <iframe id="logFrame" class="log-frame" title="Vista previa de la cotización"></iframe>
+                <iframe id="logFrame" class="log-frame" title="Vista previa de la cotización" scrolling="no"></iframe>
               </div>
             </div>
           </div>
@@ -1513,6 +1513,6 @@
   <script src="connectors.js?v=1.0.43"></script>
   <script src="ia-core.js?v=1.0.46"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.163"></script>
+  <script src="logistica.js?v=1.0.172"></script>
 </body>
 </html>

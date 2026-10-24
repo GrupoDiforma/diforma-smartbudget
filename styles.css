@@ -137,10 +137,32 @@ body {
 .log-poc {
     background: transparent;
     border: 0;
-    padding: 4px 0 12px;
+    padding: 4px 0 0;
     max-width: 100%;
     min-width: 0;
     overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+/*
+ * Vista fija al viewport: cada columna (.log-side / .log-stage) scrollea
+ * de punta a punta sin pelear con el scroll de la página.
+ * 11.5rem ≈ top bar + header card + tabs + paddings del contenedor.
+ */
+#tabLogistica.active .log-poc {
+    height: calc(100dvh - 11.5rem);
+    max-height: calc(100dvh - 11.5rem);
+    overflow: hidden;
+}
+body.logistica-activa {
+    overflow: hidden;
+}
+.log-poc > .log-top,
+.log-poc > #logCargaBar,
+.log-poc > #logOdooEstado,
+.log-poc > #logAvisoProyecto {
+    flex: 0 0 auto;
 }
 .log-top {
     display: flex;
@@ -231,7 +253,9 @@ body {
     gap: 16px;
     align-items: stretch;
     min-width: 0;
-    overflow-x: hidden;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
 }
 .log-side {
     display: flex;
@@ -240,14 +264,12 @@ body {
     min-width: 0;
     min-height: 0; /* permite encogerse en el grid y scrollear por dentro */
     align-self: stretch;
-    position: sticky;
-    top: 8px;
-    height: calc(100vh - 96px);
-    max-height: calc(100vh - 96px);
+    position: relative;
+    height: 100%;
+    max-height: 100%;
     overflow-x: hidden;
     overflow-y: auto;
-    overscroll-behavior-y: contain;
-    overscroll-behavior-x: none;
+    overscroll-behavior: contain;
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
     isolation: isolate;
@@ -337,9 +359,25 @@ body {
     border: 1px solid #f0ddb0;
 }
 @media (max-width: 1100px) {
-    .log-work { grid-template-columns: 1fr; overflow-x: visible; }
-    .log-stage { position: static; height: auto; max-height: none; overflow: visible; }
-    .log-side { position: static; height: auto; max-height: none; overflow: visible; padding-right: 0; }
+    body.logistica-activa { overflow: auto; }
+    #tabLogistica.active .log-poc {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+    }
+    .log-work {
+        grid-template-columns: 1fr;
+        overflow: visible;
+        flex: 0 0 auto;
+    }
+    .log-stage,
+    .log-side {
+        position: static;
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+    }
 }
 .log-cubica {
     grid-column: 1 / -1;
@@ -872,8 +910,7 @@ body {
     background: transparent;
 }
 .log-stage {
-    position: sticky;
-    top: 8px;
+    position: relative;
     display: flex;
     flex-direction: column;
     background: #e6e8ee;
@@ -881,14 +918,12 @@ body {
     padding: 8px 8px 12px;
     overflow-x: hidden;
     overflow-y: auto;
-    overscroll-behavior-y: contain;
-    overscroll-behavior-x: none;
     overscroll-behavior: contain;
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
     isolation: isolate;
-    height: calc(100vh - 96px);
-    max-height: calc(100vh - 96px);
+    height: 100%;
+    max-height: 100%;
     max-width: 100%;
     min-width: 0;
     min-height: 0;
@@ -901,6 +936,8 @@ body {
     background: transparent;
     box-shadow: none;
     display: block;
+    /* El scroll de la hoja es solo .log-stage; el iframe no debe mostrar barra propia. */
+    overflow: hidden;
 }
 .btn-diforma-blue {
     background-color: var(--diforma-blue);
