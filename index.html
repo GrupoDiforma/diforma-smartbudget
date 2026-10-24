@@ -629,8 +629,9 @@
           <input type="text" id="logGuardarCom" class="form-control" maxlength="180" placeholder="Ej. Versión para aprobación del cliente">
           <div class="small mt-2" id="logGuardarEstado"></div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer flex-wrap gap-2">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-outline-secondary d-none" id="btnLogGuardarNueva" data-sv="nueva"><i class="bi bi-file-earmark-plus me-1"></i>Guardar como cotización nueva</button>
           <button type="button" class="btn btn-outline-secondary d-none" id="btnLogGuardarRev" data-sv="rev"></button>
           <button type="button" class="btn btn-diforma-blue" id="btnLogGuardarMisma" data-sv="misma"><i class="bi bi-save me-1"></i>Guardar</button>
         </div>
@@ -1561,6 +1562,6 @@
   <script src="connectors.js?v=1.0.46"></script>
   <script src="ia-core.js?v=1.0.48"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.178"></script>
+  <script src="logistica.js?v=1.0.180"></script>
 </body>
 </html>

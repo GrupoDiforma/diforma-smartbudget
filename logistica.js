@@ -846,16 +846,21 @@ function logRemapLotesFila_(fila, pr, escalasPrev) {
 /**
  * Reescribe ficha/precios de una fila desde Costos sin romper escenarios (opc/excl)
  * ni la identidad de pieza en un grupal. Devuelve true si hubo precios.
+ * opts.ver: fuerza esa versión (p. ej. al elegir V1 en la ficha). Sin opts, alinea a la versión abierta en Costos.
  */
-function logisticaRefrescarFilaDesdeCostos_(fila) {
+function logisticaRefrescarFilaDesdeCostos_(fila, opts) {
     if (!fila || fila.tipo !== "item") return false;
+    opts = opts || {};
     const p = logisticaLeerProyecto_();
-    /* Si Costos tiene abierto este mismo proyecto, usa la versión que se está trabajando. */
-    if (p.hayProyecto && logNormCod_(p.codigo) === logNormCod_(fila.proy) && window.versionActivaId) {
+    if (opts.ver) {
+        fila.ver = opts.ver;
+    } else if (p.hayProyecto && logNormCod_(p.codigo) === logNormCod_(fila.proy) && window.versionActivaId) {
+        /* Botón refrescar / actualizar desde Costos: trae la versión que se está trabajando. */
         fila.ver = window.versionActivaId;
     } else if (fila.ver && window.versionActivaId && !logVersiones_().some(function (x) { return logVerIgual_(x.id, fila.ver); })) {
         fila.ver = window.versionActivaId;
     }
+    try { if (typeof snapshotVersionActual === "function") snapshotVersionActual(); } catch (eSnap) { /* memoria */ }
     const ver = logVersiones_().find(function (x) { return logVerIgual_(x.id, fila.ver); });
     const escalasPrev = logEscalasPrevFila_(fila);
     const elemId = logResolverElemFila_(fila);
@@ -5989,10 +5994,21 @@ function logHtmlTarjetaFila_(fila, idioma, vers, p, escs) {
         (v.img ? "<img src=\"" + logEsc_(v.img) + "\" alt=\"\">" : "<i class=\"bi bi-image\"></i>") + "</button>";
     if (fila.tipo === "item" && fila.snap) {
         const escalasSnap = logEscalasFila_(fila);
-        marca = "<span class=\"badge text-bg-light border\" title=\"Precio y ficha tal como se guardaron\"><i class=\"bi bi-snow2 me-1\"></i>" + logEsc_(fila.ver || "") + "</span>" +
-            (p.hayProyecto && p.codigo === fila.proy
-                ? "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"refrescar\" title=\"Vuelve a leer ficha y precio del proyecto abierto\"><i class=\"bi bi-arrow-repeat\"></i></button>"
-                : "");
+        const mismoProy = p.hayProyecto && logNormCod_(p.codigo) === logNormCod_(fila.proy);
+        const puedeCambiarVer = mismoProy && vers.length > 0;
+        if (puedeCambiarVer) {
+            const optV = vers.map(function (x) {
+                return "<option value=\"" + logEsc_(x.id) + "\"" + (logVerIgual_(x.id, fila.ver) ? " selected" : "") + ">" + logEsc_(x.id) + "</option>";
+            }).join("");
+            campos += logHtmlCampo_("Versión", "<select class=\"form-select form-select-sm\" data-acc=\"ver\" title=\"Cambia a otra versión del proyecto abierto en Costos\">" + optV + "</select>");
+            marca = "<span class=\"badge text-bg-light border\" title=\"Vino del historial; al cambiar versión se releen ficha y precio de Costos\"><i class=\"bi bi-snow2\"></i></span>" +
+                "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"refrescar\" title=\"Vuelve a leer ficha y precio de la versión abierta en Costos\"><i class=\"bi bi-arrow-repeat\"></i></button>";
+        } else {
+            marca = "<span class=\"badge text-bg-light border\" title=\"Precio y ficha tal como se guardaron\"><i class=\"bi bi-snow2 me-1\"></i>" + logEsc_(fila.ver || "") + "</span>" +
+                (mismoProy
+                    ? "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"refrescar\" title=\"Vuelve a leer ficha y precio del proyecto abierto\"><i class=\"bi bi-arrow-repeat\"></i></button>"
+                    : "");
+        }
         if (escalasSnap.length) campos += logHtmlCampo_("Cantidad", logHtmlSelectCantidad_(fila, escalasSnap, "lote", ""));
     } else if (fila.tipo === "item") {
         const pr = logPreciosVersion_(fila.ver, fila.elem);
@@ -6107,12 +6123,18 @@ function logisticaAccionFila_(ev) {
         if (acc === "ver" || acc === "lote") logMarcarSucio_();
         if (acc === "ver") {
             fila.ver = t.value;
-            const pr = logPreciosVersion_(fila.ver, fila.elem);
-            fila.lote = pr && pr.escalas.length ? pr.escalas[0].id : "";
-            fila.over = {};
-            delete fila.puFijo;
-            delete fila.opc;
-            delete fila.excl;
+            if (fila.snap) {
+                if (!logisticaRefrescarFilaDesdeCostos_(fila, { ver: t.value }) && typeof mostrarNotificacion === "function") {
+                    mostrarNotificacion("Costos no tiene precios para " + t.value + ". Abre esa versión y genera la matriz primero.", "warning");
+                }
+            } else {
+                const pr = logPreciosVersion_(fila.ver, fila.elem);
+                fila.lote = pr && pr.escalas.length ? pr.escalas[0].id : "";
+                fila.over = {};
+                delete fila.puFijo;
+                delete fila.opc;
+                delete fila.excl;
+            }
         } else if (acc === "lote") {
             fila.lote = t.value;
             delete fila.over.qty;
@@ -7041,13 +7063,15 @@ function logisticaAbrirGuardar_() {
     if (com) com.value = (a && a.comentario) || "";
     const sub = document.getElementById("logGuardarSub");
     if (sub) sub.textContent = a
-        ? ("Guardar reescribe la Rev " + a.rev + " de " + a.id + ". La otra opción deja esta y crea la siguiente.")
+        ? ("Guardar reescribe la Rev " + a.rev + " de " + a.id + ". «Rev siguiente» deja esa y crea otra revisión. «Cotización nueva» asigna un C-xxxxx distinto (p. ej. para otra versión del proyecto).")
         : "Se guarda con los precios y textos de ahora. Las imágenes que ya están en Drive no se vuelven a subir.";
     const bRev = document.getElementById("btnLogGuardarRev");
     if (bRev) {
         bRev.classList.toggle("d-none", !a);
         if (a) bRev.innerHTML = "<i class=\"bi bi-layers me-1\"></i>Guardar como Rev " + (a.rev + 1) + " de " + logEsc_(a.id);
     }
+    const bNueva = document.getElementById("btnLogGuardarNueva");
+    if (bNueva) bNueva.classList.toggle("d-none", !a);
     bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogGuardar")).show();
 }
 
@@ -7137,11 +7161,15 @@ async function logisticaGuardar_(modo) {
         if (info) info.textContent = "";
         let aviso = "Cotización guardada: " + d.id + " Rev " + d.rev + ".";
         let tipoAviso = "success";
-        if (modo === "misma" && abiertaAntes && Number(d.rev) !== Number(abiertaAntes.rev)) {
+        if (modo === "nueva") {
+            aviso = "Nueva cotización " + d.id + " Rev " + d.rev + " (independiente de " + ((abiertaAntes && abiertaAntes.id) || "la anterior") + ").";
+        } else if (modo === "misma" && abiertaAntes && Number(d.rev) !== Number(abiertaAntes.rev)) {
             aviso = "Se creó la Rev " + d.rev + " en lugar de reescribir la " + abiertaAntes.rev + ". Publica el backend.gs de esta misma implementación.";
             tipoAviso = "warning";
         } else if (modo === "misma") {
             aviso = "Reescrita " + d.id + " Rev " + d.rev + ".";
+        } else if (modo === "rev") {
+            aviso = "Nueva revisión: " + d.id + " Rev " + d.rev + ".";
         }
         if (typeof mostrarNotificacion === "function") mostrarNotificacion(aviso, tipoAviso);
     } catch (e) {
@@ -7470,6 +7498,7 @@ function logisticaInitHistorial_() {
     const on = function (id, fn) { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
     on("btnLogGuardar", logisticaAbrirGuardar_);
     on("btnLogHistorial", logisticaAbrirHistorial_);
+    on("btnLogGuardarNueva", function () { logisticaGuardar_("nueva"); });
     on("btnLogGuardarRev", function () { logisticaGuardar_("rev"); });
     on("btnLogGuardarMisma", function () { logisticaGuardar_(logQuote.abierta ? "misma" : "nueva"); });
     const buscar = document.getElementById("logHistBuscar");
