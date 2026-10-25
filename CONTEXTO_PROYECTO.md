@@ -47,6 +47,8 @@ Mantener módulos independientes. Todo módulo nuevo (ej. `logistica.js`, `ia-co
 | `ia-core.js` | Chat único, entrevista, generar matriz, rellenar ficha comercial |
 | `export-excel.js` | Rellena la plantilla .xlsx Diforma (EXP/NAL). Duplica pestañas por versión y, si hay candados, clona AUX con el mismo formato. Publica plantilla desde Admin → Conexiones |
 | `logistica.js` | Cotización PDF, envío (Incoterm, destino, costos), tarifas manuales de Ajustes → Logística y ficha **Comisión de venta**. No meter flete ni comisión en `engine.js` ni `ia-core.js`. |
+| `simulador3d.js` | Pestaña **Simulador 3D**: puente Logística ↔ motor SmartLoad (traer/aplicar mix, escenarios multi-opción, captura opcional al PDF). |
+| `smartload/` | Motor embebido de SmartLoad (`engine.js`, `viewer3d.js`, `solver-worker.js`). UI en lenguaje Budget; no copiar el ribbon Fluent de `smartload.grupodiforma.com`. |
 | `backend.gs` | Proxy GAS (Sheets, catálogo, Odoo, Gemini, OTP, Drive, plantilla Excel, cotizaciones) |
 | `config.json` | Config de cliente (sin secretos) |
 
@@ -197,7 +199,7 @@ Los JSON de `Presupuestos` incluyen `versiones[]` (V1, V2… con matriz, chat, c
 
 ## ESTADO DEL PRODUCTO (octubre 2026)
 
-Hay **dos pestañas** en la app. No mezclar con las fases internas del chat de Gemini.
+Hay **tres pestañas** en la app: Ingeniería de Costos, Logística y consolidador comercial, **Simulador 3D**. No mezclar con las fases internas del chat de Gemini.
 
 ### Fase 1 — Ingeniería de Costos (hecha; pulir solo si Edwin lo pide)
 
@@ -415,4 +417,23 @@ Dos cambios de esta jornada, **en el repo (rama `desarrollo`) y sin publicar**: 
 **Países ES/EN (22 oct 2026, en repo sin publicar).** Auditoría pedida por Edwin antes de publicar el caso C-00019: el nombre del país puede llegar en español o en inglés (lead de Odoo sin contexto de idioma, cotización vieja, tarifa o fila de hoja escrita a mano) y no todos los cruces resolvían por ISO. En el frontend solo cruzaban los del alias corto (`LOG_PAISES_`): medido en el preview, `Germany/Alemania`, `France/Francia`, `Italy/Italia`, `Brazil/Brasil`, `United Kingdom/Reino Unido`, `Netherlands/Países Bajos`, `Japan/Japón`, `South Korea/Corea del Sur`, `Switzerland/Suiza`, `Belgium/Bélgica`, `New Zealand/Nueva Zelanda` y `Philippines/Filipinas` devolvían código vacío y no casaban entre sí; eso dejaba sin tarifa (FCL/LCL/aéreo/destino), sin ciudades y sin Duties/Taxes a esos destinos. Corrección: `LOG_PAISES_EN_` (inglés→ISO donde los idiomas no coinciden) alimenta `logEnvCodigoDePais_`, que además acepta el propio código ISO; con eso `logTarMismoPais_` y los aranceles cruzan en cualquier idioma, la fila de arancel sin código resuelve por el nombre en el otro idioma y las claves locales de ciudades van por ISO (`logPaisClave_`) para no duplicar la misma ciudad bajo dos grafías. En `backend.gs`, `paisCodigo_`/`mismoPais_` hacen lo mismo en la hoja `Ciudades` (`ciudades_consultar` ya no exige la grafía exacta y `ciudades_reemplazar` borra las dos grafías al reemplazar, para que el país no quede partido en dos), `codigoPaisArancel_` lo reutiliza y `odooPaisId_` cae al código si el nombre no se encuentra. **Exige pegar `backend.gs` y publicar versión nueva de la misma implementación**; sin eso, en Producción la hoja Ciudades sigue comparando el texto exacto. Los países del menú de Ajustes siguen saliendo del selector en español; esto solo blinda lo que ya venga escrito en inglés.
 
 **Caso C-00019 Rev. 1 (22 oct 2026, en repo sin publicar).** Edwin la abrió en Producción (V2.3, rama `main`) desde el celular: (a) no reconocía la ciudad **Everglades** en United States y (b) en la ficha de Costos logísticos no se veía cada rango. Dos causas distintas: Producción aún no tiene la logística por escenario de esta rama `desarrollo`, así que allá solo existe un juego global de líneas; y Everglades, si solo está registrada como puerto (o no está), quedaba fuera de la lista de ciudades (`uso=puerto` se filtra) aunque el select conservara el valor guardado, y `logFaltasAnalisis_` bloqueaba Análisis/Generar. El país en inglés no era el problema para US: el cruce ya es por ISO (`United States` = `Estados Unidos` = US). Corrección en `logistica.js` (`?v=1.0.148`): en modalidad FCL/LCL, `logCiudadesDePais_` suma los puertos del país a las ciudades válidas, así que un puerto registrado se reconoce también como ciudad de destino y la validación de puerto ya lo aceptaba si la ciudad coincidía con el puerto. **Dato que debe hacer el admin, no el código:** registrar Everglades en Ajustes → Logística → Ciudades con uso **Las dos** para Estados Unidos (y su tarifa FCL/destino si aplica; no inventarla). Sin ese registro ni ciudad ni puerto existen para la app. Validación local pendiente por Edwin con la C-00019: pestañas «Editando costos de: Opción…» por rango, mix por opción y gran total de cada opción en el PDF.
+
+---
+
+## CHECKPOINT — 25 oct 2026 (fin de jornada → chat «Cambios V8»)
+
+Producción en **V3.5** (`main` = `desarrollo` tras `desplegar.sh`). Badge solo lo sube el despliegue. No alterar Motor AIU, Márgenes, Catálogos fijos, Comisiones ni textos de Prompts IA salvo que Edwin lo pida. No poner secretos en el frontend ni aquí.
+
+**1. Cotizaciones: nueva C-xxxxx y versión en fichas del historial (publicado V3.4).** Con una cotización abierta, el modal de Guardar ofrece **Guardar como cotización nueva** (`modo: nueva`, id vacío → nuevo `C-xxxxx` Rev 1), además de reescribir o crear Rev siguiente. En fichas con `snap` (historial), si el mismo proyecto está abierto en Costos, hay selector de **Versión** que relee ficha/precios de esa versión (`logisticaRefrescarFilaDesdeCostos_(fila, { ver })`), no solo el badge congelado ❄ Vn.
+
+**2. Medidor Gemini alineado a tarifas 3.x (publicado V3.5).** El chip quedaba corto vs la barra de Google (p. ej. 39.891 vs 42.656) porque se cobraba Flash/Pro a list price 2.5 mientras la app usa modelos Gemini 3+. `tarifaGeminiModelo_` distingue gen ≥ 3 (Flash 0,75/3,75 · Pro 2/12) y no hereda un Ajustes viejo 0,30/2,50. Calibrar ahora pide el **gasto de la barra** de Google AI Studio (`gastoCop`), no el «costo total» de 28 días. **Hay que pegar `backend.gs` en Apps Script** (versión nueva de la misma implementación) y recalibrar con el gasto actual de la barra para que el chip coincida.
+
+**3. Pestaña Simulador 3D (en repo; aún sin publicar a prod como V3.6).** Tercera pestaña de la app. Motor de [`GrupoDiforma/diforma-smartload`](https://github.com/GrupoDiforma/diforma-smartload) en `smartload/` + puente `simulador3d.js`. UI en lenguaje SmartBudget (no réplica del ribbon Fluent). Al abrir la pestaña con cotización en Logística, **trae sola** empaque/Q por escenario (todas las opciones + rangos); fallback a medidas de producto si el empaque viene vacío. Flujo: Traer → Optimizar (multi-contenedor 20/40/40HC + custom) → validar 3D (mover/bloquear) → **Aplicar a Logística** (mix + ocupación/m³/kg, `contenedoresManual`, confirmación). También modo suelto (CSV / `.load`). Checkbox **Incluir vista 3D en PDF** → captura opcional en `logisticaConstruirHTML` (`logSim3dHtmlBloque_`). SmartLoad standalone en `smartload.grupodiforma.com` sigue aparte.
+
+**Pendientes al abrir el chat «Cambios V8»:**
+
+1. Probar Simulador 3D en local con cotización multi-opción FCL real (lista de cajas + Optimizar + Aplicar).
+2. Pegar `backend.gs` (tarifas Gemini 3.x + calibrar por gasto) si aún no está en la implementación de producción.
+3. Cuando Edwin lo pida: commit ya hecho de esta jornada + `./desplegar.sh` → V3.6 (o el siguiente) para publicar el Simulador.
+4. No sync automático de repos SmartLoad ↔ Budget; la copia en `smartload/` es consciente.
 

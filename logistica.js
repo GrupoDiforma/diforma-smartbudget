@@ -4258,6 +4258,7 @@ function logisticaTablaHTML_(idioma) {
             }
         }
     }
+    bloqueLog += logSim3dHtmlBloque_(n, esEn);
     let totalHtml = "";
     if (escs.length) {
         /* Zona libre: rangos apilados (no sumados) o total único; luego cada opción. */
@@ -7530,6 +7531,46 @@ function logisticaInitHistorial_() {
  * @param {{idioma?:string, filas?:number, margenMm?:number}} opts
  * @returns {string} documento HTML completo (se usa en iframe y se imprime)
  */
+/** Bloque opcional del Simulador 3D en el PDF (capturas + nota de ocupación). */
+function logSim3dHtmlBloque_(nCols, esEn) {
+    const env = typeof logEnv_ === "function" ? logEnv_() : {};
+    const partes = [];
+    function pushCap(titulo, img, meta) {
+        if (!img && !(meta && meta.nota)) return;
+        let h = "<tr class=\"sec-gap\"><td colspan=\"" + nCols + "\"></td></tr>";
+        h += "<tr class=\"sec\"><td colspan=\"" + nCols + "\">" + logEsc_(titulo) + "</td></tr>";
+        if (meta && meta.nota) {
+            h += "<tr class=\"it\"><td colspan=\"" + nCols + "\" style=\"font-size:8pt;color:#444;\">" + logEsc_(meta.nota) + "</td></tr>";
+        }
+        if (img) {
+            h += "<tr class=\"it\"><td colspan=\"" + nCols + "\" style=\"text-align:center;padding:6px 0;\">" +
+                "<img src=\"" + String(img).replace(/"/g, "") + "\" alt=\"Simulador 3D\" style=\"max-width:100%;max-height:220px;border:1px solid #ddd;\"/>" +
+                "</td></tr>";
+        }
+        partes.push(h);
+    }
+    const titBase = esEn ? "3D load simulation" : "Simulación 3D de carga";
+    if (env.sim3dImg || (env.sim3d && env.sim3d.nota)) pushCap(titBase, env.sim3dImg, env.sim3d);
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    escs.forEach(function (e, i) {
+        const st = env.porEsc && env.porEsc[e.id];
+        if (!st) return;
+        if (!st.sim3dImg && !(st.sim3d && st.sim3d.nota)) return;
+        const nom = typeof logEscNombre_ === "function" ? logEscNombre_(e, i, esEn ? "en" : "es") : ("Opción " + (i + 1));
+        pushCap(titBase + " — " + nom, st.sim3dImg, st.sim3d);
+    });
+    if (typeof window.slPdfCapturesParaHoja === "function") {
+        const caps = window.slPdfCapturesParaHoja() || {};
+        Object.keys(caps).forEach(function (k) {
+            if (!caps[k]) return;
+            const ya = (k === "base" && env.sim3dImg) || (env.porEsc && env.porEsc[k] && env.porEsc[k].sim3dImg);
+            if (ya) return;
+            pushCap(titBase, caps[k], null);
+        });
+    }
+    return partes.join("");
+}
+
 function logisticaConstruirHTML(opts, imprimir) {
     const o = opts || {};
     const idioma = o.idioma === "en" ? "en" : "es";
