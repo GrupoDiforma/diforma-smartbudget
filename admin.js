@@ -731,6 +731,7 @@ function pintarFormularioAjustes_() {
     if (typeof logTarCargar_ === "function") logTarCargar_(d.logTarifas);
     if (typeof pintarEditorTyc === "function") pintarEditorTyc();
     if (typeof pintarEditorMembrete === "function") pintarEditorMembrete();
+    if (typeof pintarEditorSim3d === "function") pintarEditorSim3d();
     const selUm = document.getElementById("catNuevoUm");
     if (selUm) selUm.innerHTML = opcionesUmHtml("UND");
 }
@@ -3317,6 +3318,7 @@ async function guardarConfiguracion() {
         utilidadExp: { fab: { tope: getVal('e_fabTope'), max: getVal('e_fabMax'), min: getVal('e_fabMin') }, com: { tope: getVal('e_comTope'), max: getVal('e_comMax'), min: getVal('e_comMin') } },
         tyc: (typeof leerTycUI === "function") ? leerTycUI() : (CONFIG_GLOBAL && CONFIG_GLOBAL.tyc) || null,
         membrete: (typeof leerMembreteUI === "function") ? leerMembreteUI() : (CONFIG_GLOBAL && CONFIG_GLOBAL.membrete) || null,
+        sim3d: (typeof leerSim3dUI === "function") ? leerSim3dUI() : (CONFIG_GLOBAL && CONFIG_GLOBAL.sim3d) || null,
         anchosMatriz: (CONFIG_GLOBAL && CONFIG_GLOBAL.anchosMatriz) || {}
     };
     

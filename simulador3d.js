@@ -1,11 +1,34 @@
 /**
  * simulador3d.js — Puente SmartBudget ↔ motor SmartLoad (pestaña Simulador 3D).
- * Escenarios multi-opción, traer/aplicar Logística, captura opcional para PDF.
+ * Escenarios multi-opción, traer/aplicar Logística, catálogo master/pallet/huacal, captura PDF.
  */
 (function () {
     "use strict";
 
     var SL_COLORS = ["#c5a968", "#b3aae8", "#dcdab1", "#ecc1da", "#bfeea9", "#afe8df", "#e6e4f9", "#eeecb3"];
+    var SL_EU_ = { AT: 1, BE: 1, BG: 1, HR: 1, CY: 1, CZ: 1, DK: 1, EE: 1, FI: 1, FR: 1, DE: 1, GR: 1, HU: 1, IE: 1, IT: 1, LV: 1, LT: 1, LU: 1, MT: 1, NL: 1, PL: 1, PT: 1, RO: 1, SK: 1, SI: 1, ES: 1, SE: 1 };
+    var SL_GMA_ = { US: 1, CA: 1, MX: 1, PR: 1 };
+
+    /** Defaults internacionales; Ajustes los sobrescribe en CONFIG_GLOBAL.sim3d. */
+    var SL_SIM3D_DEFAULTS = {
+        umbrales: { maxLadoCm: 80, pesoKg: 40 },
+        huacal: { holguraCm: 5, onFloor: true, noTilt: true },
+        deckH: 14.4,
+        mercadoPallet: { EU: "EUR", US: "GMA", default: "ISO1" },
+        autoPaletizarFcl: true,
+        autoPaletizarLcl: true,
+        dejarCajaSueltaAereo: true,
+        pallets: [
+            { id: "EUR", nombre: "Euro pallet", w: 120, d: 80, hUtil: 180, pesoMax: 1500 },
+            { id: "ISO1", nombre: "ISO 120×100", w: 120, d: 100, hUtil: 180, pesoMax: 1500 },
+            { id: "GMA", nombre: "GMA 48×40", w: 121.9, d: 101.6, hUtil: 180, pesoMax: 1500 }
+        ],
+        masters: [
+            { id: "M403030", nombre: "Master 40×30×30", w: 40, d: 30, h: 30, pesoMax: 25 },
+            { id: "M604040", nombre: "Master 60×40×40", w: 60, d: 40, h: 40, pesoMax: 40 }
+        ]
+    };
+
     var slEscenarios = [];
     var slEscActivo = 0;
     var slInited = false;
@@ -15,6 +38,298 @@
     function toast_(msg) {
         if (typeof mostrarToast === "function") mostrarToast(msg);
         else if (typeof mostrarNotificacion === "function") mostrarNotificacion(msg, "info");
+    }
+
+    function num_(v, def) {
+        var n = Number(v);
+        return isFinite(n) ? n : (def != null ? def : 0);
+    }
+
+    function r1_(n) { return Math.round(num_(n) * 10) / 10; }
+    function r2_(n) { return Math.round(num_(n) * 100) / 100; }
+
+    function slSim3dCfg_() {
+        var raw = (typeof CONFIG_GLOBAL !== "undefined" && CONFIG_GLOBAL && CONFIG_GLOBAL.sim3d) ? CONFIG_GLOBAL.sim3d : null;
+        if (typeof raw === "string") {
+            try { raw = JSON.parse(raw); } catch (e) { raw = null; }
+        }
+        var d = JSON.parse(JSON.stringify(SL_SIM3D_DEFAULTS));
+        if (!raw || typeof raw !== "object") return d;
+        if (raw.umbrales && typeof raw.umbrales === "object") {
+            if (raw.umbrales.maxLadoCm != null) d.umbrales.maxLadoCm = num_(raw.umbrales.maxLadoCm, d.umbrales.maxLadoCm);
+            if (raw.umbrales.pesoKg != null) d.umbrales.pesoKg = num_(raw.umbrales.pesoKg, d.umbrales.pesoKg);
+        }
+        if (raw.huacal && typeof raw.huacal === "object") {
+            if (raw.huacal.holguraCm != null) d.huacal.holguraCm = num_(raw.huacal.holguraCm, d.huacal.holguraCm);
+            if (raw.huacal.onFloor != null) d.huacal.onFloor = !!raw.huacal.onFloor;
+            if (raw.huacal.noTilt != null) d.huacal.noTilt = !!raw.huacal.noTilt;
+        }
+        if (raw.deckH != null) d.deckH = num_(raw.deckH, d.deckH);
+        if (raw.mercadoPallet && typeof raw.mercadoPallet === "object") {
+            ["EU", "US", "default"].forEach(function (k) {
+                if (raw.mercadoPallet[k]) d.mercadoPallet[k] = String(raw.mercadoPallet[k]);
+            });
+        }
+        if (raw.autoPaletizarFcl != null) d.autoPaletizarFcl = !!raw.autoPaletizarFcl;
+        if (raw.autoPaletizarLcl != null) d.autoPaletizarLcl = !!raw.autoPaletizarLcl;
+        if (raw.dejarCajaSueltaAereo != null) d.dejarCajaSueltaAereo = !!raw.dejarCajaSueltaAereo;
+        if (Array.isArray(raw.pallets) && raw.pallets.length) {
+            d.pallets = raw.pallets.map(function (p) {
+                return {
+                    id: String(p.id || "").trim() || "P",
+                    nombre: String(p.nombre || p.id || "Pallet").trim(),
+                    w: num_(p.w, 120), d: num_(p.d, 100),
+                    hUtil: num_(p.hUtil, 180), pesoMax: num_(p.pesoMax, 1500)
+                };
+            });
+        }
+        if (Array.isArray(raw.masters) && raw.masters.length) {
+            d.masters = raw.masters.map(function (m) {
+                return {
+                    id: String(m.id || "").trim() || "M",
+                    nombre: String(m.nombre || m.id || "Master").trim(),
+                    w: num_(m.w, 40), d: num_(m.d, 30), h: num_(m.h, 30),
+                    pesoMax: num_(m.pesoMax, 25)
+                };
+            });
+        }
+        return d;
+    }
+
+    function palletPorMercado_(cfg, codPais) {
+        var cod = String(codPais || "").toUpperCase();
+        var want = cfg.mercadoPallet.default || "ISO1";
+        if (SL_EU_[cod]) want = cfg.mercadoPallet.EU || "EUR";
+        else if (SL_GMA_[cod]) want = cfg.mercadoPallet.US || "GMA";
+        var found = (cfg.pallets || []).find(function (p) { return p.id === want; });
+        return found || (cfg.pallets && cfg.pallets[0]) || SL_SIM3D_DEFAULTS.pallets[1];
+    }
+
+    function oris_(w, d, h) {
+        return [
+            [w, d, h], [w, h, d], [d, w, h], [d, h, w], [h, w, d], [h, d, w]
+        ];
+    }
+
+    function cajasEnHueco_(bw, bd, bh, mw, md, mh) {
+        var best = 0;
+        oris_(bw, bd, bh).forEach(function (o) {
+            if (!(o[0] > 0 && o[1] > 0 && o[2] > 0)) return;
+            var n = Math.floor(mw / o[0]) * Math.floor(md / o[1]) * Math.floor(mh / o[2]);
+            if (n > best) best = n;
+        });
+        return best;
+    }
+
+    function mejorMaster_(box, masters, pesoCaja) {
+        var best = null;
+        (masters || []).forEach(function (m) {
+            var n = cajasEnHueco_(box.w, box.d, box.h, m.w, m.d, m.h);
+            if (n < 1) return;
+            if (m.pesoMax > 0 && pesoCaja > 0) {
+                var porPeso = Math.floor(m.pesoMax / pesoCaja);
+                if (porPeso < 1) return;
+                n = Math.min(n, porPeso);
+            }
+            var waste = (m.w * m.d * m.h) - n * (box.w * box.d * box.h);
+            if (!best || n > best.n || (n === best.n && waste < best.waste)) {
+                best = { master: m, n: n, waste: waste };
+            }
+        });
+        return best;
+    }
+
+    /** Capas × huella de un sólido (caja o master) sobre un pallet. */
+    function unidadesPorPallet_(uw, ud, uh, pesoU, pallet, deckH) {
+        var hUtil = Math.max(1, num_(pallet.hUtil, 180));
+        var best = { n: 0, loadH: uh, ori: [uw, ud, uh] };
+        oris_(uw, ud, uh).forEach(function (o) {
+            if (!(o[0] > 0 && o[1] > 0 && o[2] > 0)) return;
+            if (o[0] > pallet.w + 0.01 || o[1] > pallet.d + 0.01) return;
+            var porCapa = Math.floor(pallet.w / o[0]) * Math.floor(pallet.d / o[1]);
+            if (porCapa < 1) return;
+            var capas = Math.max(1, Math.floor(hUtil / o[2]));
+            var n = porCapa * capas;
+            if (pallet.pesoMax > 0 && pesoU > 0) {
+                var porPeso = Math.floor(pallet.pesoMax / pesoU);
+                if (porPeso < 1) return;
+                n = Math.min(n, porPeso);
+            }
+            var capasUsadas = Math.min(capas, Math.ceil(n / porCapa));
+            var loadH = capasUsadas * o[2];
+            if (n > best.n) best = { n: n, loadH: loadH, ori: o, porCapa: porCapa, capas: capasUsadas };
+        });
+        return best.n > 0 ? best : null;
+    }
+
+    function esHuacal_(box, peso, cfg) {
+        var maxL = Math.max(box.w, box.d, box.h);
+        if (maxL >= num_(cfg.umbrales.maxLadoCm, 80)) return true;
+        if (peso >= num_(cfg.umbrales.pesoKg, 40)) return true;
+        return false;
+    }
+
+    function debePaletizar_(modalidad, cfg) {
+        var mod = String(modalidad || "").toLowerCase();
+        if (mod === "fcl") return !!cfg.autoPaletizarFcl;
+        if (mod === "lcl") return !!cfg.autoPaletizarLcl;
+        if (mod === "aerea" || mod === "aereo") return !cfg.dejarCajaSueltaAereo;
+        return !!cfg.autoPaletizarFcl;
+    }
+
+    function itemBase_(desc, shape, qty, w, d, h, weight, color, flags) {
+        flags = flags || {};
+        return {
+            id: (typeof generateUUID === "function" ? generateUUID() : ("id_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7))),
+            shape: shape,
+            qty: Math.max(1, Math.ceil(num_(qty, 1))),
+            desc: String(desc || "Carga").slice(0, 80),
+            w: r1_(w), d: r1_(d), h: r1_(h),
+            weight: r2_(weight),
+            color: color,
+            noTilt: !!flags.noTilt,
+            noTurn: !!flags.noTurn,
+            onFloor: !!flags.onFloor,
+            dangerous: false,
+            slMeta: flags.slMeta || null
+        };
+    }
+
+    /**
+     * Convierte cajas comerciales de Costos en unidades de carga (caja / master / pallet / huacal).
+     */
+    function unidadesDesdeCaja_(cajaCm, nCajas, pesoCaja, desc, color, cfg, modalidad, codPais) {
+        var box = { w: cajaCm.w, d: cajaCm.d, h: cajaCm.h };
+        var peso = num_(pesoCaja, 0);
+        var out = [];
+
+        if (!debePaletizar_(modalidad, cfg)) {
+            out.push(itemBase_(desc, "box", nCajas, box.w, box.d, box.h, peso, color, {
+                slMeta: { unidad: "caja", cajas: nCajas }
+            }));
+            return out;
+        }
+
+        if (esHuacal_(box, peso, cfg)) {
+            var hol = num_(cfg.huacal.holguraCm, 5);
+            out.push(itemBase_(
+                "Huacal · " + desc,
+                "box",
+                nCajas,
+                box.w + 2 * hol,
+                box.d + 2 * hol,
+                box.h + 2 * hol,
+                peso + 2,
+                color,
+                {
+                    noTilt: cfg.huacal.noTilt !== false,
+                    onFloor: cfg.huacal.onFloor !== false,
+                    slMeta: { unidad: "huacal", cajas: 1, holguraCm: hol }
+                }
+            ));
+            return out;
+        }
+
+        var pallet = palletPorMercado_(cfg, codPais);
+        var deckH = num_(cfg.deckH, 14.4);
+        var pick = mejorMaster_(box, cfg.masters, peso);
+        var uw, ud, uh, pesoU, nUnidades, etiqueta;
+
+        if (pick && pick.n > 0) {
+            nUnidades = Math.ceil(nCajas / pick.n);
+            uw = pick.master.w; ud = pick.master.d; uh = pick.master.h;
+            pesoU = peso * pick.n;
+            etiqueta = pick.master.nombre || pick.master.id;
+        } else {
+            /* Master auto: apilar cajas directo; la unidad intermedia es la capa óptima sobre el pallet. */
+            var fitBox = unidadesPorPallet_(box.w, box.d, box.h, peso, pallet, deckH);
+            if (!fitBox) {
+                /* No cabe en pallet estándar → solid custom = caja (o pallet a medida). */
+                out.push(itemBase_(
+                    "Custom · " + desc,
+                    "pallet",
+                    nCajas,
+                    Math.max(box.w, 40),
+                    Math.max(box.d, 40),
+                    deckH + box.h,
+                    peso,
+                    color,
+                    {
+                        noTilt: true,
+                        onFloor: true,
+                        slMeta: { unidad: "pallet", estandar: "custom", cajas: 1 }
+                    }
+                ));
+                return out;
+            }
+            var porPalletDirecto = fitBox.n;
+            var nPallets = Math.ceil(nCajas / porPalletDirecto);
+            var cajasEnUltimo = nCajas - (nPallets - 1) * porPalletDirecto;
+            var loadH = fitBox.loadH;
+            var pesoPallet = peso * porPalletDirecto;
+            out.push(itemBase_(
+                (pallet.id || "Pallet") + " · " + desc,
+                "pallet",
+                nPallets,
+                pallet.w,
+                pallet.d,
+                deckH + loadH,
+                pesoPallet,
+                color,
+                {
+                    noTilt: true,
+                    onFloor: true,
+                    slMeta: {
+                        unidad: "pallet",
+                        estandar: pallet.id,
+                        cajas: porPalletDirecto,
+                        cajasUltimo: cajasEnUltimo,
+                        modo: "directo"
+                    }
+                }
+            ));
+            return out;
+        }
+
+        var fit = unidadesPorPallet_(uw, ud, uh, pesoU, pallet, deckH);
+        if (!fit) {
+            /* Master no cabe en pallet → enviar masters sueltos. */
+            out.push(itemBase_(
+                etiqueta + " · " + desc,
+                "box",
+                nUnidades,
+                uw, ud, uh,
+                pesoU,
+                color,
+                { slMeta: { unidad: "master", estandar: pick.master.id, cajas: pick.n } }
+            ));
+            return out;
+        }
+
+        var nPalletsM = Math.ceil(nUnidades / fit.n);
+        out.push(itemBase_(
+            (pallet.id || "Pallet") + " · " + desc,
+            "pallet",
+            nPalletsM,
+            pallet.w,
+            pallet.d,
+            deckH + fit.loadH,
+            pesoU * fit.n,
+            color,
+            {
+                noTilt: true,
+                onFloor: true,
+                slMeta: {
+                    unidad: "pallet",
+                    estandar: pallet.id,
+                    master: pick.master.id,
+                    mastersPorPallet: fit.n,
+                    cajasPorMaster: pick.n,
+                    cajas: pick.n * fit.n
+                }
+            }
+        ));
+        return out;
     }
 
     function loadScript_(src) {
@@ -133,7 +448,6 @@
         };
         var cm = typeof logCajaCm_ === "function" ? logCajaCm_(tipo) : null;
         if (cm) return { cm: cm, tipo: tipo };
-        /* Fallback: medidas del producto (no empaque). */
         var w = Number(ficha.ancho), d = Number(ficha.fondo), h = Number(ficha.alto);
         if (!(w > 0 && d > 0 && h > 0)) return null;
         var f = ficha.um === "in" ? 2.54 : 1;
@@ -143,9 +457,21 @@
         };
     }
 
+    function contextoLogistica_(escId) {
+        var env = typeof logEnv_ === "function" ? logEnv_() : {};
+        var vista = (escId && typeof logEnvVistaEsc_ === "function") ? logEnvVistaEsc_(escId) : env;
+        var modalidad = (vista && vista.modalidad) || env.modalidad || "aerea";
+        var pais = (vista && vista.destinoPais) || env.destinoPais || "";
+        var cod = (vista && vista.destinoCodigo) || env.destinoCodigo || "";
+        if (!cod && pais && typeof logEnvCodigoDePais_ === "function") cod = logEnvCodigoDePais_(pais) || "";
+        return { modalidad: modalidad, pais: pais, cod: cod };
+    }
+
     function itemsDesdeFilas_(filas, idioma, escId) {
         var items = [];
         var colorIdx = 0;
+        var cfg = slSim3dCfg_();
+        var ctx = contextoLogistica_(escId || "");
         (filas || []).forEach(function (fila) {
             if (!fila || fila.tipo !== "item") return;
             var ficha = (fila.snap && fila.snap.ficha) || (typeof logFichaVersion_ === "function" ? logFichaVersion_(fila.ver, fila.elem) : {}) || {};
@@ -167,21 +493,9 @@
                 var peso = typeof logPesoCajaKg_ === "function" ? logPesoCajaKg_(med.tipo) : Number(med.tipo.peso) || 0;
                 var desc = (caja && caja.nombre && String(caja.nombre).trim()) || (v.titulo || v.cod || "Caja");
                 if (tipos.length > 1 && caja && caja.nombre) desc = (v.cod || v.titulo || "") + " · " + caja.nombre;
-                items.push({
-                    id: (typeof generateUUID === "function" ? generateUUID() : ("id_" + Date.now() + "_" + colorIdx)),
-                    shape: "box",
-                    qty: nCajas,
-                    desc: String(desc).slice(0, 80),
-                    w: Math.round(med.cm.w * 10) / 10,
-                    d: Math.round(med.cm.d * 10) / 10,
-                    h: Math.round(med.cm.h * 10) / 10,
-                    weight: peso != null && isFinite(peso) ? Math.round(peso * 100) / 100 : 0,
-                    color: SL_COLORS[colorIdx % SL_COLORS.length],
-                    noTilt: false,
-                    noTurn: false,
-                    onFloor: false,
-                    dangerous: false
-                });
+                var color = SL_COLORS[colorIdx % SL_COLORS.length];
+                var unidos = unidadesDesdeCaja_(med.cm, nCajas, peso, desc, color, cfg, ctx.modalidad, ctx.cod);
+                unidos.forEach(function (it) { items.push(it); });
                 colorIdx++;
             });
         });
@@ -218,6 +532,21 @@
             contenedoresFisicos: conts,
             mixSugerido: mix
         };
+    }
+
+    function resumenUnidades_(items) {
+        var c = { caja: 0, master: 0, pallet: 0, huacal: 0 };
+        (items || []).forEach(function (it) {
+            var u = (it.slMeta && it.slMeta.unidad) || (it.shape === "pallet" ? "pallet" : "caja");
+            if (c[u] != null) c[u] += it.qty || 0;
+            else c.caja += it.qty || 0;
+        });
+        var parts = [];
+        if (c.pallet) parts.push(c.pallet + " pallet" + (c.pallet === 1 ? "" : "s"));
+        if (c.huacal) parts.push(c.huacal + " huacal" + (c.huacal === 1 ? "" : "es"));
+        if (c.master) parts.push(c.master + " master");
+        if (c.caja) parts.push(c.caja + " caja" + (c.caja === 1 ? "" : "s"));
+        return parts.join(" · ") || ((items || []).length + " tipo(s)");
     }
 
     function traerDesdeLogistica_(opts) {
@@ -264,9 +593,8 @@
         if (ribbon && slEscenarios[0]) ribbon.value = mapTipoCont_(slEscenarios[0].mixSugerido);
         activarEscenario_(0);
         pintarTabsEscenarios_();
-        var nItems = (slEscenarios[0].listaEmpaque || []).length;
         if (!opts.silencioso) {
-            toast_("Carga traída: " + slEscenarios.length + " escenario(s), " + nItems + " tipo(s) de caja. Pulsa Optimizar.");
+            toast_("Carga traída: " + slEscenarios.length + " escenario(s) · " + resumenUnidades_(slEscenarios[0].listaEmpaque) + ". Pulsa Optimizar.");
         }
         return true;
     }
@@ -278,7 +606,7 @@
             if (k === "20ft") mix.c20++;
             else if (k === "40hc") mix.c40hc++;
             else if (k === "40ft" || k.indexOf("40") === 0) mix.c40++;
-            else mix.c40++; /* custom u otros → cuenta como 40' para flete */
+            else mix.c40++;
         });
         return mix;
     }
@@ -324,16 +652,13 @@
         slEscenarios.forEach(function (esc) {
             var mix = mixDesdeContenedores_(esc.contenedoresFisicos);
             var met = metricasDesdeContenedores_(esc.contenedoresFisicos);
-            var nota = "Simulador 3D: " + met.ocupacionPct + "% occ · " + met.m3 + " m³ · " + met.kg + " kg";
+            var nota = "Simulador 3D: " + met.ocupacionPct + "% occ · " + met.m3 + " m³ · " + met.kg + " kg · " + resumenUnidades_(esc.listaEmpaque);
             if (esc.logEscId) {
                 if (!env.porEsc[esc.logEscId]) env.porEsc[esc.logEscId] = {};
                 var st = env.porEsc[esc.logEscId];
                 st.contenedores = mix;
                 st.contenedoresManual = true;
                 st.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
-                if (typeof logEnvEscVista_ === "function") {
-                    /* noop — estructura ya en porEsc */
-                }
             } else {
                 env.contenedores = mix;
                 env.contenedoresManual = true;
@@ -396,7 +721,6 @@
                 }
                 slInited = true;
             }
-            /* Si hay cotización abierta, trae sola la carga (no hace falta pulsar el botón). */
             if (!slEscenarios.length || !(slEscenarios[0].listaEmpaque || []).length) {
                 traerDesdeLogistica_({ silencioso: true });
             }
@@ -437,7 +761,6 @@
         if (tabBtn) {
             tabBtn.addEventListener("shown.bs.tab", onTabShown_);
             tabBtn.addEventListener("click", function () {
-                /* Fallback si Bootstrap no dispara shown (p. ej. ya activo). */
                 setTimeout(function () {
                     var pane = document.getElementById("tabSimulador3d");
                     if (pane && pane.classList.contains("active")) ensureInit_();
@@ -445,6 +768,179 @@
             });
         }
     }
+
+    /* ---------- Ajustes → Simulador 3D ---------- */
+
+    function filaCatalogoHtml_(tipo, row) {
+        var id = String(row.id || "");
+        var nom = String(row.nombre || "");
+        if (tipo === "pallet") {
+            return "<tr data-sim3d=\"" + tipo + "\">" +
+                "<td><input class=\"form-control form-control-sm\" data-k=\"id\" value=\"" + escAttr_(id) + "\"></td>" +
+                "<td><input class=\"form-control form-control-sm\" data-k=\"nombre\" value=\"" + escAttr_(nom) + "\"></td>" +
+                "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"w\" value=\"" + num_(row.w) + "\" style=\"width:72px\"></td>" +
+                "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"d\" value=\"" + num_(row.d) + "\" style=\"width:72px\"></td>" +
+                "<td><input type=\"number\" step=\"1\" class=\"form-control form-control-sm\" data-k=\"hUtil\" value=\"" + num_(row.hUtil) + "\" style=\"width:72px\"></td>" +
+                "<td><input type=\"number\" step=\"1\" class=\"form-control form-control-sm\" data-k=\"pesoMax\" value=\"" + num_(row.pesoMax) + "\" style=\"width:80px\"></td>" +
+                "<td><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"this.closest('tr').remove();slSim3dRefrescarSelectsPallet_();\" title=\"Quitar\">×</button></td>" +
+                "</tr>";
+        }
+        return "<tr data-sim3d=\"" + tipo + "\">" +
+            "<td><input class=\"form-control form-control-sm\" data-k=\"id\" value=\"" + escAttr_(id) + "\"></td>" +
+            "<td><input class=\"form-control form-control-sm\" data-k=\"nombre\" value=\"" + escAttr_(nom) + "\"></td>" +
+            "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"w\" value=\"" + num_(row.w) + "\" style=\"width:72px\"></td>" +
+            "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"d\" value=\"" + num_(row.d) + "\" style=\"width:72px\"></td>" +
+            "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"h\" value=\"" + num_(row.h) + "\" style=\"width:72px\"></td>" +
+            "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"pesoMax\" value=\"" + num_(row.pesoMax) + "\" style=\"width:80px\"></td>" +
+            "<td><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"this.closest('tr').remove();\" title=\"Quitar\">×</button></td>" +
+            "</tr>";
+    }
+
+    function escAttr_(s) {
+        return String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    }
+
+    function leerFilasCatalogo_(tbodyId, tipo) {
+        var body = document.getElementById(tbodyId);
+        if (!body) return [];
+        var out = [];
+        body.querySelectorAll("tr").forEach(function (tr) {
+            var get = function (k) {
+                var el = tr.querySelector("[data-k=\"" + k + "\"]");
+                return el ? el.value : "";
+            };
+            var id = String(get("id") || "").trim();
+            if (!id) return;
+            if (tipo === "pallet") {
+                out.push({
+                    id: id,
+                    nombre: String(get("nombre") || id).trim(),
+                    w: num_(get("w"), 120),
+                    d: num_(get("d"), 100),
+                    hUtil: num_(get("hUtil"), 180),
+                    pesoMax: num_(get("pesoMax"), 1500)
+                });
+            } else {
+                out.push({
+                    id: id,
+                    nombre: String(get("nombre") || id).trim(),
+                    w: num_(get("w"), 40),
+                    d: num_(get("d"), 30),
+                    h: num_(get("h"), 30),
+                    pesoMax: num_(get("pesoMax"), 25)
+                });
+            }
+        });
+        return out;
+    }
+
+    function slSim3dRefrescarSelectsPallet_() {
+        var pallets = leerFilasCatalogo_("sim3dPalletsBody", "pallet");
+        if (!pallets.length) pallets = SL_SIM3D_DEFAULTS.pallets;
+        ["sim3dPalletEU", "sim3dPalletUS", "sim3dPalletDef"].forEach(function (id) {
+            var sel = document.getElementById(id);
+            if (!sel) return;
+            var cur = sel.value;
+            sel.innerHTML = pallets.map(function (p) {
+                return "<option value=\"" + escAttr_(p.id) + "\">" + escAttr_(p.id + " — " + p.nombre) + "</option>";
+            }).join("");
+            if (cur && pallets.some(function (p) { return p.id === cur; })) sel.value = cur;
+        });
+    }
+
+    function pintarEditorSim3d_(cfg) {
+        cfg = cfg || slSim3dCfg_();
+        var setVal = function (id, v) {
+            var el = document.getElementById(id);
+            if (el) el.value = v;
+        };
+        var setChk = function (id, v) {
+            var el = document.getElementById(id);
+            if (el) el.checked = !!v;
+        };
+        setVal("sim3dUmbralCm", cfg.umbrales.maxLadoCm);
+        setVal("sim3dUmbralKg", cfg.umbrales.pesoKg);
+        setVal("sim3dHolgura", cfg.huacal.holguraCm);
+        setVal("sim3dDeckH", cfg.deckH);
+        setChk("sim3dAutoFcl", cfg.autoPaletizarFcl);
+        setChk("sim3dAutoLcl", cfg.autoPaletizarLcl);
+        setChk("sim3dCajaAereo", cfg.dejarCajaSueltaAereo);
+        var pb = document.getElementById("sim3dPalletsBody");
+        if (pb) pb.innerHTML = (cfg.pallets || []).map(function (p) { return filaCatalogoHtml_("pallet", p); }).join("");
+        var mb = document.getElementById("sim3dMastersBody");
+        if (mb) mb.innerHTML = (cfg.masters || []).map(function (m) { return filaCatalogoHtml_("master", m); }).join("");
+        slSim3dRefrescarSelectsPallet_();
+        setVal("sim3dPalletEU", cfg.mercadoPallet.EU || "EUR");
+        setVal("sim3dPalletUS", cfg.mercadoPallet.US || "GMA");
+        setVal("sim3dPalletDef", cfg.mercadoPallet.default || "ISO1");
+    }
+
+    function leerSim3dUI_() {
+        var getN = function (id, def) {
+            var el = document.getElementById(id);
+            if (!el || String(el.value).trim() === "") return def;
+            var n = parseFloat(el.value);
+            return isFinite(n) ? n : def;
+        };
+        var getChk = function (id, def) {
+            var el = document.getElementById(id);
+            return el ? !!el.checked : def;
+        };
+        var getSel = function (id, def) {
+            var el = document.getElementById(id);
+            return el && el.value ? el.value : def;
+        };
+        var pallets = leerFilasCatalogo_("sim3dPalletsBody", "pallet");
+        var masters = leerFilasCatalogo_("sim3dMastersBody", "master");
+        if (!pallets.length) pallets = JSON.parse(JSON.stringify(SL_SIM3D_DEFAULTS.pallets));
+        if (!masters.length) masters = JSON.parse(JSON.stringify(SL_SIM3D_DEFAULTS.masters));
+        return {
+            umbrales: {
+                maxLadoCm: getN("sim3dUmbralCm", 80),
+                pesoKg: getN("sim3dUmbralKg", 40)
+            },
+            huacal: {
+                holguraCm: getN("sim3dHolgura", 5),
+                onFloor: true,
+                noTilt: true
+            },
+            deckH: getN("sim3dDeckH", 14.4),
+            mercadoPallet: {
+                EU: getSel("sim3dPalletEU", "EUR"),
+                US: getSel("sim3dPalletUS", "GMA"),
+                default: getSel("sim3dPalletDef", "ISO1")
+            },
+            autoPaletizarFcl: getChk("sim3dAutoFcl", true),
+            autoPaletizarLcl: getChk("sim3dAutoLcl", true),
+            dejarCajaSueltaAereo: getChk("sim3dCajaAereo", true),
+            pallets: pallets,
+            masters: masters
+        };
+    }
+
+    window.pintarEditorSim3d = function () { pintarEditorSim3d_(slSim3dCfg_()); };
+    window.leerSim3dUI = leerSim3dUI_;
+    window.slSim3dCfg = slSim3dCfg_;
+    window.slSim3dRefrescarSelectsPallet_ = slSim3dRefrescarSelectsPallet_;
+    window.slSim3dAgregarPalletUI = function () {
+        var body = document.getElementById("sim3dPalletsBody");
+        if (!body) return;
+        body.insertAdjacentHTML("beforeend", filaCatalogoHtml_("pallet", {
+            id: "CUSTOM", nombre: "Pallet custom", w: 120, d: 100, hUtil: 180, pesoMax: 1500
+        }));
+        slSim3dRefrescarSelectsPallet_();
+    };
+    window.slSim3dAgregarMasterUI = function () {
+        var body = document.getElementById("sim3dMastersBody");
+        if (!body) return;
+        body.insertAdjacentHTML("beforeend", filaCatalogoHtml_("master", {
+            id: "MCUSTOM", nombre: "Master custom", w: 50, d: 40, h: 40, pesoMax: 30
+        }));
+    };
+    window.slSim3dRestaurarDefaultsUI = function () {
+        if (!window.confirm("¿Restaurar pallets, masters y umbrales a los defaults internacionales?")) return;
+        pintarEditorSim3d_(JSON.parse(JSON.stringify(SL_SIM3D_DEFAULTS)));
+    };
 
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire_);
     else wire_();

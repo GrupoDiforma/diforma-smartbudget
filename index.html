@@ -1106,6 +1106,7 @@
           <ul class="nav admin-nav" role="tablist">
             <li class="nav-item"><button class="nav-link active" id="adminNavCostosBtn" type="button">Costos</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-logistica" type="button">Logística</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-sim3d" type="button">Simulador 3D</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-gema" type="button">Prompts IA</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-operativos" type="button">Motor AIU</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-utilidades" type="button">Márgenes</button></li>
@@ -1376,6 +1377,87 @@
                 </div>
               </section>
               </div>
+            </div>
+            <div class="tab-pane fade admin-stack" id="panel-sim3d">
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Unidades de carga</h3>
+                    <p class="admin-card-desc">Al Traer desde Logística, el Simulador 3D convierte las cajas de Costos en huacal, master o pallet según umbrales y el catálogo de abajo. Costos sigue cotizando und/caja; esto solo afecta la simulación.</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="slSim3dRestaurarDefaultsUI()"><i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar defaults</button>
+                </header>
+                <div class="admin-card-body">
+                  <div class="row g-3 mb-3">
+                    <div class="col-md-3 admin-field">
+                      <label for="sim3dUmbralCm">Huacal si max lado ≥ (cm)</label>
+                      <input type="number" id="sim3dUmbralCm" class="form-control form-control-sm" min="1" step="1" value="80">
+                    </div>
+                    <div class="col-md-3 admin-field">
+                      <label for="sim3dUmbralKg">Huacal si peso ≥ (kg)</label>
+                      <input type="number" id="sim3dUmbralKg" class="form-control form-control-sm" min="0" step="0.1" value="40">
+                    </div>
+                    <div class="col-md-3 admin-field">
+                      <label for="sim3dHolgura">Holgura huacal (cm/lado)</label>
+                      <input type="number" id="sim3dHolgura" class="form-control form-control-sm" min="0" step="0.5" value="5">
+                    </div>
+                    <div class="col-md-3 admin-field">
+                      <label for="sim3dDeckH">Alto deck pallet (cm)</label>
+                      <input type="number" id="sim3dDeckH" class="form-control form-control-sm" min="1" step="0.1" value="14.4">
+                    </div>
+                  </div>
+                  <div class="row g-3 mb-3">
+                    <div class="col-md-4 admin-field">
+                      <label for="sim3dPalletEU">Pallet Europa</label>
+                      <select id="sim3dPalletEU" class="form-select form-select-sm"></select>
+                    </div>
+                    <div class="col-md-4 admin-field">
+                      <label for="sim3dPalletUS">Pallet US / CA / MX</label>
+                      <select id="sim3dPalletUS" class="form-select form-select-sm"></select>
+                    </div>
+                    <div class="col-md-4 admin-field">
+                      <label for="sim3dPalletDef">Pallet resto del mundo</label>
+                      <select id="sim3dPalletDef" class="form-select form-select-sm"></select>
+                    </div>
+                  </div>
+                  <div class="d-flex flex-wrap gap-3 mb-2">
+                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dAutoFcl" checked> Paletizar al Traer en FCL</label>
+                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dAutoLcl" checked> Paletizar al Traer en LCL</label>
+                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dCajaAereo" checked> Aéreo: dejar caja suelta</label>
+                  </div>
+                  <small class="text-muted d-block">Si la caja es grande o pesada → huacal. Si no → master (plantilla o auto) y luego pallet según el país de destino de la cotización.</small>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Pallets estándar</h3>
+                    <p class="admin-card-desc">Huella y capacidad. Puedes editar o agregar custom (id libre).</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="slSim3dAgregarPalletUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+                </header>
+                <div class="admin-card-table">
+                  <table class="table admin-table align-middle mb-0">
+                    <thead><tr><th>Id</th><th>Nombre</th><th>Ancho</th><th>Fondo</th><th>Alto útil</th><th>Peso máx kg</th><th></th></tr></thead>
+                    <tbody id="sim3dPalletsBody"></tbody>
+                  </table>
+                </div>
+              </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Cajas master</h3>
+                    <p class="admin-card-desc">Plantillas outer. Si ninguna encaja, el Traer arma un master auto o apila directo en el pallet.</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="slSim3dAgregarMasterUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+                </header>
+                <div class="admin-card-table">
+                  <table class="table admin-table align-middle mb-0">
+                    <thead><tr><th>Id</th><th>Nombre</th><th>Ancho</th><th>Fondo</th><th>Alto</th><th>Peso máx kg</th><th></th></tr></thead>
+                    <tbody id="sim3dMastersBody"></tbody>
+                  </table>
+                </div>
+              </section>
             </div>
             <div class="tab-pane fade admin-stack" id="panel-tarifas">
               <section class="admin-card">
@@ -1723,7 +1805,7 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.80"></script>
+  <script src="admin.js?v=1.0.81"></script>
     <script src="seguridad.js?v=1.0.26"></script>
     <script src="app.js?v=1.0.57"></script>
   <script src="engine.js?v=1.0.40"></script>
@@ -1736,6 +1818,6 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
   <script src="smartload/viewer3d.js?v=1.0.2"></script>
   <script src="smartload/engine.js?v=1.0.2"></script>
-  <script src="simulador3d.js?v=1.0.2"></script>
+  <script src="simulador3d.js?v=1.0.3"></script>
 </body>
 </html>

@@ -430,10 +430,12 @@ Producción en **V3.5** (`main` = `desarrollo` tras `desplegar.sh`). Badge solo 
 
 **3. Pestaña Simulador 3D (en repo; aún sin publicar a prod como V3.6).** Tercera pestaña de la app. Motor de [`GrupoDiforma/diforma-smartload`](https://github.com/GrupoDiforma/diforma-smartload) en `smartload/` + puente `simulador3d.js`. UI en lenguaje SmartBudget (no réplica del ribbon Fluent). Al abrir la pestaña con cotización en Logística, **trae sola** empaque/Q por escenario (todas las opciones + rangos); fallback a medidas de producto si el empaque viene vacío. Flujo: Traer → Optimizar (multi-contenedor 20/40/40HC + custom) → validar 3D (mover/bloquear) → **Aplicar a Logística** (mix + ocupación/m³/kg, `contenedoresManual`, confirmación). También modo suelto (CSV / `.load`). Checkbox **Incluir vista 3D en PDF** → captura opcional en `logisticaConstruirHTML` (`logSim3dHtmlBloque_`). SmartLoad standalone en `smartload.grupodiforma.com` sigue aparte.
 
+**4. Catálogo de unidades de carga (Ajustes → Simulador 3D).** Defaults en código (EUR 120×80, ISO1 120×100, GMA 48×40; masters 40×30×30 y 60×40×40; umbrales huacal 80 cm / 40 kg; holgura 5 cm). Editables en Ajustes y guardados en `CONFIG_GLOBAL.sim3d`. Al **Traer**: FCL/LCL paletiza (caja grande/pesada → huacal; si no → master plantilla o apilado directo → pallet según mercado EU→EUR, US/CA/MX→GMA, resto→ISO1); aéreo deja caja suelta por defecto. Costos no se reescribe.
+
 **Pendientes al abrir el chat «Cambios V8»:**
 
-1. Probar Simulador 3D en local con cotización multi-opción FCL real (lista de cajas + Optimizar + Aplicar).
+1. Probar Simulador 3D en local con cotización multi-opción FCL real (lista de cajas + Optimizar + Aplicar + verificar palets/huacales).
 2. Pegar `backend.gs` (tarifas Gemini 3.x + calibrar por gasto) si aún no está en la implementación de producción.
-3. Cuando Edwin lo pida: commit ya hecho de esta jornada + `./desplegar.sh` → V3.6 (o el siguiente) para publicar el Simulador.
+3. Cuando Edwin lo pida: commit + `./desplegar.sh` → V3.6 (o el siguiente) para publicar el Simulador + Ajustes sim3d.
 4. No sync automático de repos SmartLoad ↔ Budget; la copia en `smartload/` es consciente.
 
