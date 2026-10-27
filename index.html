@@ -645,7 +645,7 @@
               </div>
             </div>
 
-            <div id="slAvisoVacio" class="alert alert-info py-2 px-3 small mb-2">Flujo: <b>Traer</b> → edita <b>Lista de Agrupación</b> (estiba / master / huacal) → <b>Optimizar</b> → <b>Aplicar a Logística</b> (mix y métricas en Envío; sin foto en el PDF).</div>
+            <div id="slAvisoVacio" class="alert alert-info py-2 px-3 small mb-2">Flujo: <b>Traer</b> → edita <b>Lista de Agrupación</b> → <b>Optimizar</b> → <b>Aplicar a Logística</b> (mix). Para el PDF: encuadra y pulsa <b>Vista 3D PDF</b> (queda tras el Gran Total).</div>
             <ul class="nav nav-pills gap-1 mb-2 flex-wrap" id="slEscenariosTabs" role="tablist"></ul>
 
             <div class="row g-3">
@@ -974,14 +974,14 @@
     </div>
   </div>
 
-  <!-- Modal legado (foto→PDF desconectada). Se conserva por si se reactiva el layout en hoja. -->
+  <!-- Layout de Vista 3D en la hoja (tras Gran Total; ancho para caber en el hueco). -->
   <div class="modal fade" id="modalLogSim3d" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header sb-modal-header">
           <div>
             <h5 class="modal-title">Vista 3D en la hoja</h5>
-            <p class="sb-modal-sub mb-0">Función desactivada: el Simulador 3D ya no coloca capturas en el PDF.</p>
+            <p class="sb-modal-sub mb-0">Reduce el ancho para intentar que quepa tras el Gran Total. La vista se actualiza al mover el control.</p>
           </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
@@ -998,10 +998,7 @@
             <button type="button" class="btn btn-outline-secondary active" data-align="center">Centro</button>
             <button type="button" class="btn btn-outline-secondary" data-align="right">Derecha</button>
           </div>
-          <div class="form-check mt-3">
-            <input class="form-check-input" type="checkbox" id="logSim3dSalto" checked>
-            <label class="form-check-label small" for="logSim3dSalto">Empezar en página nueva (sin encabezado de columnas)</label>
-          </div>
+          <p class="small text-muted mt-3 mb-0">El salto de página se controla con «Hoja nueva» en cada opción de Logística.</p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -1584,6 +1581,21 @@
                   </table>
                 </div>
               </section>
+              <section class="admin-card">
+                <header class="admin-card-head">
+                  <div>
+                    <h3 class="admin-card-title">Contenedores personalizados</h3>
+                    <p class="admin-card-desc">Tipos custom (reefer, open top, etc.) disponibles en toda la app. También se registran al crearlos desde la librería del Simulador 3D; pulsa <strong>Guardar</strong> en Ajustes para persistirlos en la empresa.</p>
+                  </div>
+                  <button type="button" class="btn admin-btn" onclick="slSim3dAgregarContUI()"><i class="bi bi-plus-lg me-1"></i>Agregar</button>
+                </header>
+                <div class="admin-card-table">
+                  <table class="table admin-table align-middle mb-0">
+                    <thead><tr><th>Id</th><th>Nombre</th><th>Ancho cm</th><th>Largo cm</th><th>Alto cm</th><th>Peso máx kg</th><th></th></tr></thead>
+                    <tbody id="sim3dContsBody"></tbody>
+                  </table>
+                </div>
+              </section>
             </div>
             <div class="tab-pane fade admin-stack" id="panel-tarifas">
               <section class="admin-card">
@@ -1931,19 +1943,19 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.81"></script>
+  <script src="admin.js?v=1.0.82"></script>
     <script src="seguridad.js?v=1.0.26"></script>
     <script src="app.js?v=1.0.57"></script>
   <script src="engine.js?v=1.0.40"></script>
   <script src="connectors.js?v=1.0.46"></script>
   <script src="ia-core.js?v=1.0.49"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.222"></script>
+  <script src="logistica.js?v=1.0.233"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
   <script src="smartload/viewer3d.js?v=1.0.10"></script>
-  <script src="smartload/engine.js?v=1.0.5"></script>
-  <script src="simulador3d.js?v=1.0.23"></script>
+  <script src="smartload/engine.js?v=1.0.6"></script>
+  <script src="simulador3d.js?v=1.0.29"></script>
 </body>
 </html>

@@ -3363,6 +3363,9 @@ async function guardarConfiguracion() {
             try { localStorage.removeItem("smartbudget_tarifas_borrador"); } catch (eDel) {}
             CONFIG_GLOBAL = Object.assign({}, CONFIG_GLOBAL || {}, data);
             poblarSelectComisiones();
+            if (typeof window.slSim3dAplicarContenedoresCfg === "function") {
+                try { window.slSim3dAplicarContenedoresCfg(); } catch (eSim) { /* noop */ }
+            }
             if(typeof mostrarNotificacion === "function") mostrarNotificacion(resData.mensaje, "success");
             bootstrap.Modal.getInstance(document.getElementById('modalAdmin'))?.hide();
             if(typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();

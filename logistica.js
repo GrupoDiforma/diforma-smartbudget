@@ -2707,8 +2707,8 @@ function logSim3dLayoutDe_(fila) {
     let w = parseInt(ov.sim3dW, 10);
     if (!isFinite(w) || w < 40 || w > 100) w = 100;
     const align = (ov.sim3dAlign === "left" || ov.sim3dAlign === "right") ? ov.sim3dAlign : "center";
-    const salto = ov.sim3dSalto === false ? false : true;
-    return { w: w, align: align, salto: salto };
+    /* La captura no fuerza hoja propia; el salto lo marca «Hoja nueva» de la opción. */
+    return { w: w, align: align, salto: false };
 }
 
 /** Imagen + nota. En vivo prioriza data URL (imprime bien); Drive solo como respaldo. */
@@ -2740,51 +2740,217 @@ function logSim3dEscKey_(fila) {
     return "";
 }
 
-/** Saca Vista 3D de los contenedores de opción: escId → over.sim3dEsc. */
-function logNormalizarFilasSim3dFuera_() {
+/**
+ * Vista 3D vive DENTRO de su opción (escId), al final del contenedor, arrastrable.
+ * Migra filas viejas que solo tenían over.sim3dEsc (fuera de contenedores).
+ */
+function logNormalizarFilasSim3dEnOpcion_() {
     let cambio = false;
     (logQuote.filas || []).forEach(function (f) {
         if (!f || f.tipo !== "sim3d") return;
         if (!f.over || typeof f.over !== "object") f.over = {};
         if (f.escId) {
-            if (!f.over.sim3dEsc) f.over.sim3dEsc = f.escId;
-            delete f.escId;
+            if (f.over.sim3dEsc !== f.escId) { f.over.sim3dEsc = f.escId; cambio = true; }
+        } else if (f.over.sim3dEsc) {
+            f.escId = String(f.over.sim3dEsc);
             cambio = true;
         }
     });
     return cambio;
 }
 
+/** Compat: nombre viejo → nueva normalización. */
+function logNormalizarFilasSim3dFuera_() {
+    return logNormalizarFilasSim3dEnOpcion_();
+}
+
+/** Quita capturas y filas Vista 3D de la cotización abierta (memoria + caps). */
+function logLimpiarCapturasSim3dTodas_() {
+    const env = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (env) {
+        delete env.sim3dImg;
+        delete env.sim3dImgRef;
+        delete env.sim3d;
+        delete env.sim3dRef;
+        delete env.sim3dBundle;
+        delete env.sim3dState;
+        if (env.porEsc && typeof env.porEsc === "object") {
+            Object.keys(env.porEsc).forEach(function (k) {
+                const st = env.porEsc[k];
+                if (!st) return;
+                delete st.sim3dImg;
+                delete st.sim3dImgRef;
+                delete st.sim3d;
+                delete st.sim3dState;
+            });
+        }
+    }
+    if (logQuote && Array.isArray(logQuote.filas)) {
+        logQuote.filas = logQuote.filas.filter(function (f) { return !f || f.tipo !== "sim3d"; });
+    }
+    if (typeof window.slLimpiarCaptura === "function") {
+        /* limpia caps conocidas */
+    }
+    window._slPdfCaptures = {};
+    if (typeof window.slPdfCapturesParaHoja === "function") {
+        try {
+            const caps = window.slPdfCapturesParaHoja();
+            Object.keys(caps || {}).forEach(function (k) {
+                if (typeof window.slLimpiarCaptura === "function") window.slLimpiarCaptura(k);
+            });
+        } catch (eC) { /* noop */ }
+    }
+    return true;
+}
+
 function logSim3dHtmlFila_(fila, nCols, esEn, escId) {
     const key = escId || logSim3dEscKey_(fila) || "base";
     const datos = logSim3dDatosDe_(key === "base" ? "" : key);
+    /* Sin imagen real no se imprime nada (ni placeholder): evita romper opciones 2…n al reabrir. */
+    if (!datos.img) return "";
     const lay = logSim3dLayoutDe_(fila);
-    const ph = esEn
-        ? "In Simulador 3D: frame the view you want, then press «Vista 3D PDF»."
-        : "En Simulador 3D: encuadra la vista que quieras y pulsa «Vista 3D PDF».";
-    /* data-salto: página propia al final, fuera de opciones. */
+    /* Nunca embeber data: en srcdoc. Drive/http sí; data URL se inyecta al cargar el iframe. */
+    const src = /^data:/i.test(String(datos.img)) ? "" : String(datos.img).replace(/"/g, "");
+    const ml = lay.align === "left" ? "0 auto 0 0" : (lay.align === "right" ? "0 0 0 auto" : "0 auto");
     let h = "<tr class=\"it it-sim3d\"" + (lay.salto ? " data-salto=\"1\"" : "") +
         " data-r=\"" + (fila && fila.uid ? fila.uid : "") + "\"" +
         (key && key !== "base" ? " data-e=\"" + logEsc_(key) + "\"" : "") + ">" +
-        "<td colspan=\"" + nCols + "\" style=\"padding:10px 6px 14px;\">";
-    if (datos.img || (datos.meta && datos.meta.nota)) {
-        const src = (datos.img && !/^data:/i.test(datos.img)) ? String(datos.img).replace(/"/g, "") : "";
-        const ml = lay.align === "left" ? "0 auto 0 0" : (lay.align === "right" ? "0 0 0 auto" : "0 auto");
-        h += "<div class=\"log-sim3d-frame\" data-r=\"" + (fila && fila.uid ? fila.uid : "") + "\" title=\"" +
-            (esEn ? "Click to resize / align" : "Clic para tamaño / alineación") + "\" style=\"width:" + lay.w + "%;margin:" + ml + ";\">" +
-            "<img data-sim3d=\"" + logEsc_(key) + "\" data-r=\"" + (fila && fila.uid ? fila.uid : "") + "\" src=\"" + src + "\" alt=\"Simulador 3D\"/>" +
-            "</div>";
-    } else {
-        h += "<div class=\"log-sim3d-ph\">" + logEsc_(ph) + "</div>";
-    }
-    h += "</td></tr>";
+        "<td colspan=\"" + nCols + "\" style=\"padding:10px 6px 14px;\">" +
+        "<div class=\"log-sim3d-frame\" data-r=\"" + (fila && fila.uid ? fila.uid : "") + "\" title=\"" +
+        (esEn ? "Click to resize / align" : "Clic para tamaño / alineación") + "\" style=\"width:" + lay.w + "%;margin:" + ml + ";\">" +
+        "<img data-sim3d=\"" + logEsc_(key) + "\" data-r=\"" + (fila && fila.uid ? fila.uid : "") + "\" src=\"" + src + "\" alt=\"Simulador 3D\"/>" +
+        "</div></td></tr>";
     return h;
 }
 
-/** Captura 3D → PDF desconectada: no inyecta imágenes en la hoja. */
+/** Refs Drive de capturas Vista 3D (base + por opción). */
+function logSim3dRefsPendientes_() {
+    const env = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!env) return [];
+    const out = [];
+    if (env.sim3dImgRef) out.push({ key: "base", ref: String(env.sim3dImgRef), st: env });
+    const pe = env.porEsc || {};
+    Object.keys(pe).forEach(function (escId) {
+        const st = pe[escId];
+        if (st && st.sim3dImgRef) out.push({ key: escId, ref: String(st.sim3dImgRef), st: st });
+    });
+    return out;
+}
+
+/** Escribe data URL en env + buffer de capturas (preview/PDF). */
+function logSim3dPonerImg_(key, data) {
+    if (!data || !/^data:image\//i.test(data)) return;
+    const env = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!env) return;
+    if (key === "base") {
+        env.sim3dImg = data;
+    } else {
+        if (!env.porEsc) env.porEsc = {};
+        if (!env.porEsc[key]) env.porEsc[key] = {};
+        env.porEsc[key].sim3dImg = data;
+    }
+    if (typeof window.slPonerCaptura === "function") {
+        try { window.slPonerCaptura(key, data); } catch (eR) { /* noop */ }
+    } else {
+        if (!window._slPdfCaptures) window._slPdfCaptures = {};
+        window._slPdfCaptures[key] = data;
+    }
+}
+
+/**
+ * Baja capturas 3D desde IDB / Drive (refs tras guardar).
+ * Recargar imágenes también fuerza esto.
+ */
+async function logisticaHidatarSim3dImgs_(opts) {
+    opts = opts || {};
+    const lista = logSim3dRefsPendientes_();
+    if (!lista.length) return 0;
+    let ok = 0;
+    for (let i = 0; i < lista.length; i++) {
+        const it = lista[i];
+        const ya = it.st && it.st.sim3dImg;
+        if (ya && /^data:image\//i.test(ya) && !opts.forzar) {
+            logSim3dPonerImg_(it.key, ya);
+            ok++;
+            continue;
+        }
+        let data = "";
+        if (typeof logIdbGetImg_ === "function") {
+            try { data = await logIdbGetImg_(it.ref); } catch (e0) { data = ""; }
+        }
+        if ((!data || !/^data:image\//i.test(data)) && typeof realizarPeticionBD === "function") {
+            try {
+                const r = await realizarPeticionBD({ action: "cotizacion_imagenes", ids: [it.ref], modo: "blob" }, { timeoutMs: 60000 });
+                data = r && r.exito && r.data ? (r.data[it.ref] || "") : "";
+            } catch (e1) { data = ""; }
+        }
+        if (data && /^data:image\//i.test(data)) {
+            if (typeof logIdbPutImg_ === "function") logIdbPutImg_(it.ref, data);
+            logSim3dPonerImg_(it.key, data);
+            ok++;
+        }
+    }
+    return ok;
+}
+
+/**
+ * Rellena capturas 3D en el iframe y, si hay paginador, recoloca una vez tras cargar.
+ */
 function logisticaInyectarSim3dImgs_(doc, opts) {
-    void doc; void opts;
-    return Promise.resolve();
+    opts = opts || {};
+    if (!doc) return Promise.resolve();
+    const hydrate = opts.sinHidatar
+        ? Promise.resolve(0)
+        : logisticaHidatarSim3dImgs_({ forzar: !!opts.forzar }).catch(function () { return 0; });
+    return hydrate.then(function () {
+        const imgs = Array.prototype.slice.call(doc.querySelectorAll("img[data-sim3d]"));
+        imgs.forEach(function (img) {
+            const key = img.getAttribute("data-sim3d") || "base";
+            const cur = (img.getAttribute("src") || "").trim();
+            if (cur && /^data:/i.test(cur) && img.complete && img.naturalWidth) return;
+            const d = logSim3dDatosDe_(key === "base" ? "" : key);
+            if (d.img) {
+                img.setAttribute("src", d.img);
+                img.onerror = function () {
+                    if (img.dataset.sim3dfb) return;
+                    img.dataset.sim3dfb = "1";
+                    logisticaHidatarSim3dImgs_({ forzar: true }).then(function () {
+                        const d2 = logSim3dDatosDe_(key === "base" ? "" : key);
+                        if (d2.img && d2.img !== img.getAttribute("src")) img.setAttribute("src", d2.img);
+                    });
+                };
+            }
+        });
+        const pending = imgs.filter(function (img) {
+            const s = (img.getAttribute("src") || "").trim();
+            return s && !img.complete;
+        });
+        const paginar_ = function () {
+            if (opts.sinPaginar) return;
+            try {
+                if (doc.defaultView && typeof doc.defaultView.recolocarPaginas_ === "function") {
+                    doc.defaultView.recolocarPaginas_();
+                }
+            } catch (eR) { /* noop */ }
+        };
+        if (!pending.length) {
+            paginar_();
+            return;
+        }
+        return new Promise(function (resolve) {
+            let left = pending.length;
+            const done = function () {
+                left -= 1;
+                if (left > 0) return;
+                paginar_();
+                resolve();
+            };
+            pending.forEach(function (img) {
+                img.addEventListener("load", done);
+                img.addEventListener("error", done);
+            });
+        });
+    });
 }
 
 function logisticaAbrirEditorSim3d_(uid) {
@@ -2794,11 +2960,9 @@ function logisticaAbrirEditorSim3d_(uid) {
     const uidEl = document.getElementById("logSim3dUid");
     const rango = document.getElementById("logSim3dAncho");
     const lbl = document.getElementById("logSim3dAnchoLbl");
-    const salto = document.getElementById("logSim3dSalto");
     if (uidEl) uidEl.value = uid;
     if (rango) rango.value = String(lay.w);
     if (lbl) lbl.textContent = lay.w + "%";
-    if (salto) salto.checked = !!lay.salto;
     document.querySelectorAll("#logSim3dAlignGroup [data-align]").forEach(function (b) {
         b.classList.toggle("active", b.getAttribute("data-align") === lay.align);
     });
@@ -2806,18 +2970,53 @@ function logisticaAbrirEditorSim3d_(uid) {
     if (modal) bootstrap.Modal.getOrCreateInstance(modal).show();
 }
 
+/** Aplica ancho/alineación en vivo sobre el iframe (para ver si cabe en el hueco). */
+function logisticaPreviewSim3dLayout_(uid, w, align) {
+    const f = document.getElementById("logFrame");
+    const doc = f && f.contentDocument;
+    if (!doc || !uid) return;
+    const ml = align === "left" ? "0 auto 0 0" : (align === "right" ? "0 0 0 auto" : "0 auto");
+    const ww = isFinite(w) ? Math.max(40, Math.min(100, w)) : 100;
+    doc.querySelectorAll(".log-sim3d-frame[data-r=\"" + uid + "\"]").forEach(function (el) {
+        el.style.width = ww + "%";
+        el.style.margin = ml;
+    });
+    try {
+        if (doc.defaultView && typeof doc.defaultView.recolocarPaginas_ === "function") {
+            doc.defaultView.recolocarPaginas_();
+            /* El paginador recrea el DOM: reaplicar ancho y reactivar clic. */
+            doc.querySelectorAll(".log-sim3d-frame[data-r=\"" + uid + "\"]").forEach(function (el) {
+                el.style.width = ww + "%";
+                el.style.margin = ml;
+            });
+            logisticaActivarClicSim3d_(doc);
+        }
+    } catch (e) { /* noop */ }
+}
+
 function logisticaInitEditorSim3d_() {
     if (window._logSim3dEditorOk) return;
     window._logSim3dEditorOk = true;
     const rango = document.getElementById("logSim3dAncho");
     const lbl = document.getElementById("logSim3dAnchoLbl");
+    const leerAlign_ = function () {
+        const act = document.querySelector("#logSim3dAlignGroup [data-align].active");
+        return act ? act.getAttribute("data-align") : "center";
+    };
     if (rango && lbl) {
-        rango.addEventListener("input", function () { lbl.textContent = rango.value + "%"; });
+        rango.addEventListener("input", function () {
+            lbl.textContent = rango.value + "%";
+            const uid = ((document.getElementById("logSim3dUid") || {}).value || "");
+            logisticaPreviewSim3dLayout_(uid, parseInt(rango.value, 10), leerAlign_());
+        });
     }
     document.querySelectorAll("#logSim3dAlignGroup [data-align]").forEach(function (b) {
         b.addEventListener("click", function () {
             document.querySelectorAll("#logSim3dAlignGroup [data-align]").forEach(function (x) { x.classList.remove("active"); });
             b.classList.add("active");
+            const uid = ((document.getElementById("logSim3dUid") || {}).value || "");
+            const w = parseInt((document.getElementById("logSim3dAncho") || {}).value, 10);
+            logisticaPreviewSim3dLayout_(uid, w, b.getAttribute("data-align") || "center");
         });
     });
     const ok = document.getElementById("logSim3dOk");
@@ -2831,7 +3030,8 @@ function logisticaInitEditorSim3d_() {
             fila.over.sim3dW = isFinite(w) ? Math.max(40, Math.min(100, w)) : 100;
             const act = document.querySelector("#logSim3dAlignGroup [data-align].active");
             fila.over.sim3dAlign = act ? act.getAttribute("data-align") : "center";
-            fila.over.sim3dSalto = !!(document.getElementById("logSim3dSalto") || {}).checked;
+            /* Salto de página = «Hoja nueva» de la opción; la captura ya no fuerza hoja propia. */
+            delete fila.over.sim3dSalto;
             logMarcarSucio_();
             const modal = document.getElementById("modalLogSim3d");
             if (modal) bootstrap.Modal.getOrCreateInstance(modal).hide();
@@ -2840,18 +3040,30 @@ function logisticaInitEditorSim3d_() {
     }
 }
 
-/**
- * Captura 3D → PDF desconectada (paginación = producción).
- * La pestaña Simulador 3D sigue activa; no se inyecta imagen en la hoja.
- */
+/** Ya no se usa como apéndice: la Vista 3D va tras cada Gran Total vía TrasGran. */
 function logSim3dHtmlAlFinal_(nCols, esEn) {
     void nCols; void esEn;
     return "";
 }
 
+/** Filas Vista 3D ligadas a una opción (o a base sin opciones), tras el Gran Total. */
 function logSim3dHtmlTrasGran_(escId, nCols, esEn) {
-    void escId; void nCols; void esEn;
-    return "";
+    const key = String(escId || "");
+    const datos = logSim3dDatosDe_(key);
+    /* Solo con captura real. Meta de «Aplicar a Logística» o filas huérfanas no pintan el PDF. */
+    if (!datos.img) return "";
+    let filas = (logQuote.filas || []).filter(function (f) {
+        if (!f || f.tipo !== "sim3d") return false;
+        const k = logSim3dEscKey_(f);
+        if (key) return k === key;
+        return !k || k === "base";
+    });
+    if (!filas.length) {
+        filas = [{ uid: "", tipo: "sim3d", over: { sim3dEsc: key || undefined, sim3dW: 100, sim3dAlign: "center", sim3dSalto: false } }];
+    }
+    return filas.map(function (f) {
+        return logSim3dHtmlFila_(f, nCols, esEn, key || "");
+    }).join("");
 }
 
 /** Opción activa en las pestañas de las fichas (Costos, Comisión, etc.). */
@@ -3182,9 +3394,15 @@ function logKgVolDivisor_(escId) {
 /** Medidas de la caja en cm. La ficha puede estar en pulgadas. Acepta plana o tipo de caja. */
 function logCajaCm_(ficha) {
     if (!ficha) return null;
-    const w = Number(ficha.empAncho != null ? ficha.empAncho : ficha.ancho);
-    const d = Number(ficha.empFondo != null ? ficha.empFondo : ficha.fondo);
-    const h = Number(ficha.empAlto != null ? ficha.empAlto : ficha.alto);
+    const pos_ = function (a, b) {
+        const n = Number(a);
+        if (isFinite(n) && n > 0) return n;
+        const m = Number(b);
+        return (isFinite(m) && m > 0) ? m : null;
+    };
+    const w = pos_(ficha.empAncho, ficha.ancho);
+    const d = pos_(ficha.empFondo, ficha.fondo);
+    const h = pos_(ficha.empAlto, ficha.alto);
     if (!(w > 0 && d > 0 && h > 0)) return null;
     const f = ficha.um === "in" ? 2.54 : 1;
     return { w: w * f, d: d * f, h: h * f };
@@ -3522,11 +3740,10 @@ function logisticaInitContenedoresSortable_() {
             const nuevo = orden.map(function (id) { return esc.find(function (e) { return e.id === id; }); }).filter(Boolean);
             if (nuevo.length !== esc.length) return;
             logQuote.escenarios = nuevo;
-            logNormalizarFilasSim3dFuera_();
-            const sim3d = (logQuote.filas || []).filter(function (f) { return f && f.tipo === "sim3d"; });
+            logNormalizarFilasSim3dEnOpcion_();
             const por = {};
             (logQuote.filas || []).forEach(function (f) {
-                if (!f || f.tipo === "sim3d") return;
+                if (!f || logEsEnvio_(f)) return;
                 const k = f.escId || "_";
                 (por[k] || (por[k] = [])).push(f);
             });
@@ -3536,32 +3753,14 @@ function logisticaInitContenedoresSortable_() {
             (logQuote.filas || []).forEach(function (f) {
                 if (logEsEnvio_(f) && out.indexOf(f) < 0) out.push(f);
             });
-            logQuote.filas = out.filter(function (f, i, a) { return a.indexOf(f) === i; }).concat(sim3d);
+            logQuote.filas = out.filter(function (f, i, a) { return a.indexOf(f) === i; });
             if (logCab.over) delete logCab.over.codigo;
             logMarcarSucio_();
             logisticaRefrescarTabla_();
         }
     });
     lista.querySelectorAll(".log-opc-bucket-list").forEach(function (ul) {
-        /* Vista 3D tiene bucket propio: no entra al sortable de opciones (si no, borra rangos/opciones al reordenar). */
-        if (ul.classList.contains("log-opc-bucket-list-sim3d") || (ul.closest && ul.closest("[data-sim3d]"))) {
-            const s3 = Sortable.create(ul, {
-                handle: ".log-fila-grip",
-                draggable: ".log-fila-sim3d",
-                group: { name: "log-filas-sim3d", put: false, pull: false },
-                animation: 150,
-                onUpdate: function () {
-                    const uids = [].map.call(ul.querySelectorAll(".log-fila-sim3d[data-r]"), function (n) { return n.getAttribute("data-r"); });
-                    const orden = uids.map(function (id) { return logFilaPorUid_(id); }).filter(Boolean);
-                    const resto = (logQuote.filas || []).filter(function (f) { return !f || f.tipo !== "sim3d"; });
-                    logQuote.filas = resto.concat(orden);
-                    logMarcarSucio_();
-                    logisticaRefrescarTabla_();
-                }
-            });
-            lista._logFilaSorts.push(s3);
-            return;
-        }
+        /* Vista 3D se arrastra igual que proyectos entre Rangos y opciones. */
         const s = Sortable.create(ul, {
             handle: ".log-fila-grip",
             draggable: ".log-fila",
@@ -3571,11 +3770,20 @@ function logisticaInitContenedoresSortable_() {
             onAdd: function (evt) {
                 const uid = evt.item.getAttribute("data-r");
                 const fila = logFilaPorUid_(uid);
+                const escId = ul.getAttribute("data-e") || "";
                 if (fila && fila.tipo === "sim3d") {
+                    if (escId) {
+                        fila.escId = escId;
+                        if (!fila.over) fila.over = {};
+                        fila.over.sim3dEsc = escId;
+                    } else {
+                        delete fila.escId;
+                        if (fila.over) delete fila.over.sim3dEsc;
+                    }
+                    logMarcarSucio_();
                     logisticaRefrescarTabla_();
                     return;
                 }
-                const escId = ul.getAttribute("data-e") || "";
                 const antes = evt.item.nextElementSibling && evt.item.nextElementSibling.getAttribute("data-r");
                 logMoverFilaAEsc_(uid, escId, antes || "");
                 logisticaRefrescarTabla_();
@@ -3583,18 +3791,26 @@ function logisticaInitContenedoresSortable_() {
             onUpdate: function () {
                 const escId = ul.getAttribute("data-e") || "";
                 const uids = [].map.call(ul.querySelectorAll(".log-fila[data-r]"), function (n) { return n.getAttribute("data-r"); });
-                const deEsc = uids.map(function (id) { return logFilaPorUid_(id); }).filter(function (f) { return f && f.tipo !== "sim3d"; });
-                const sim3d = (logQuote.filas || []).filter(function (f) { return f && f.tipo === "sim3d"; });
+                const deEsc = uids.map(function (id) { return logFilaPorUid_(id); }).filter(Boolean);
                 const otras = (logQuote.filas || []).filter(function (f) {
-                    if (!f || f.tipo === "sim3d") return false;
+                    if (!f) return false;
                     if (logEsEnvio_(f)) return true;
+                    if (deEsc.indexOf(f) >= 0) return false;
                     if (escId) return f.escId !== escId;
                     return !!f.escId;
                 });
                 logQuote.filas = [];
                 deEsc.forEach(function (f) {
-                    if (escId) f.escId = escId;
-                    else delete f.escId;
+                    if (escId) {
+                        f.escId = escId;
+                        if (f.tipo === "sim3d") {
+                            if (!f.over) f.over = {};
+                            f.over.sim3dEsc = escId;
+                        }
+                    } else {
+                        delete f.escId;
+                        if (f.tipo === "sim3d" && f.over) delete f.over.sim3dEsc;
+                    }
                     logQuote.filas.push(f);
                 });
                 (logQuote.escenarios || []).forEach(function (e) {
@@ -3604,14 +3820,6 @@ function logisticaInitContenedoresSortable_() {
                 otras.filter(function (f) { return !f.escId || logEsEnvio_(f); }).forEach(function (f) {
                     if (logQuote.filas.indexOf(f) < 0) logQuote.filas.push(f);
                 });
-                /* Zona libre primero, luego opciones, Vista 3D al final (fuera de contenedores). */
-                const libre = logQuote.filas.filter(function (f) { return !f.escId && !logEsEnvio_(f) && f.tipo !== "sim3d"; });
-                const enOpc = [];
-                (logQuote.escenarios || []).forEach(function (e) {
-                    logQuote.filas.filter(function (f) { return f.escId === e.id && f.tipo !== "sim3d"; }).forEach(function (f) { enOpc.push(f); });
-                });
-                const env = logQuote.filas.filter(logEsEnvio_);
-                logQuote.filas = libre.concat(enOpc).concat(env).concat(sim3d);
                 if (logCab.over) delete logCab.over.codigo;
                 logMarcarSucio_();
                 logisticaRefrescarTabla_();
@@ -3688,6 +3896,10 @@ function logAsegurarFilas_() {
     const clave = p.hayProyecto ? p.codigo : "";
     /* Una cotización ya abierta o con cambios se conserva. El aviso ofrece pasar al proyecto de Costos. */
     if (logQuote.inicializado && (logQuote.codigo === clave || logQuote.abierta || logQuote.sucio)) return;
+    if (typeof window.slResetAlCambiarCotizacion === "function") {
+        try { window.slResetAlCambiarCotizacion(); } catch (eR0) { /* noop */ }
+    }
+    window._slPdfCaptures = {};
     logQuote = {
         codigo: clave,
         inicializado: true,
@@ -3802,14 +4014,14 @@ function logFilaValores_(fila, idioma, escId) {
             const med = logFmtMedidasFicha_(logConvertirUm_([c.ancho, c.fondo, c.alto], umFicha, umDoc), umDoc, idioma);
             if (!med) return "";
             let t = (c.nombre ? String(c.nombre) + " " : "") + med;
-            if (Number(c.und) > 0) t += " · " + Number(c.und) + " " + T.undEmp;
+            if (Number(c.und) > 0) t += " · " + Number(c.und) + " " + ((T && T.undEmp) || (idioma === "en" ? "units per box" : "und/emp"));
             else if (Number(c.porPieza) > 0) t += " · " + Number(c.porPieza) + (idioma === "en" ? " box/pc" : " caja/pza");
             return t;
         }).filter(Boolean);
         if (bitsEmp.length) v.empTxt = bitsEmp.join(" · ");
         else {
             v.empTxt = logFmtMedidasFicha_(logConvertirUm_([f.empAncho, f.empFondo, f.empAlto], umFicha, umDoc), umDoc, idioma);
-            if (v.empTxt && Number(f.empUnd) > 0) v.empTxt += " · " + Number(f.empUnd) + " " + T.undEmp;
+            if (v.empTxt && Number(f.empUnd) > 0) v.empTxt += " · " + Number(f.empUnd) + " " + ((T && T.undEmp) || (idioma === "en" ? "units per box" : "und/emp"));
         }
         if (esc) {
             v.qty = esc.q;
@@ -3900,7 +4112,7 @@ function logBaseLogistica_(idioma, k) {
 function logTotalesPartes_(idioma) {
     const escs = logEscList_();
     const hayBase = (logQuote.filas || []).some(function (f) {
-        return !logEsEnvio_(f) && !logEsTextoFila_(f) && !f.escId;
+        return !logEsEnvio_(f) && !logEsTextoFila_(f) && f.tipo !== "sim3d" && !f.escId;
     });
     const claves = escs.length
         ? (hayBase ? [""].concat(escs.map(function (e) { return e.id; })) : escs.map(function (e) { return e.id; }))
@@ -4199,8 +4411,10 @@ function logisticaTablaHTML_(idioma) {
      * Zona libre (sin escId): varias Q se apilan solo si comparten proyecto y render.
      * Render distinto → líneas aparte. Dentro de una opción: sin agrupar.
      */
+    /* Vista 3D vive fuera de contenedores (sin escId) pero NO es zona libre de rangos:
+     * si entra aquí, aparece un Subtotal/Gran Total $0 antes de la Opción 1. */
     const listaBase = (logQuote.filas || []).filter(function (f) {
-        return !logEsEnvio_(f) && (!escs.length || !f.escId);
+        return !logEsEnvio_(f) && f.tipo !== "sim3d" && (!escs.length || !f.escId);
     });
     const logRangosBase_ = function (lista) {
         const items = (lista || []).filter(function (f) { return f.tipo === "item" || f.tipo === "libre"; });
@@ -4450,7 +4664,8 @@ function logisticaTablaHTML_(idioma) {
                 }
             }
         }
-        /* Vista 3D va al final del documento, fuera de este contenedor de opción. */
+        /* Vista 3D justo después del Gran Total / pago de esta opción (fuera del bucket sortable). */
+        h += logSim3dHtmlTrasGran_(k, n, esEn);
         return h;
     };
     const mostrarGran = !!logQuote.totales && logQuote.filas.length;
@@ -4507,11 +4722,14 @@ function logisticaTablaHTML_(idioma) {
             }
         }
     }
-    /* Vista 3D: al final del documento, fuera de cada contenedor de opción. */
+    /* Vista 3D: tras el Gran Total de cada opción (bloqueSeccionEsc_) o del único Gran Total. */
     let totalHtml = "";
     if (escs.length) {
-        /* Zona libre: rangos apilados (no sumados) o total único; luego cada opción. */
-        if (listaBase.length) {
+        /* Totales de zona libre solo si hay productos/rangos reales (no filas vacías ni Vista 3D). */
+        const listaBaseProd = listaBase.filter(function (f) {
+            return f && (f.tipo === "item" || f.tipo === "libre");
+        });
+        if (listaBaseProd.length) {
             const tClavesSave = tClaves;
             const bag = presBaseRangos || {
                 prod: { "": (pres.prod && pres.prod[""]) || 0 },
@@ -4520,10 +4738,10 @@ function logisticaTablaHTML_(idioma) {
                 desc: { "": (pres.desc && (pres.desc[""] || 0)) || 0 }
             };
             tClaves = presBaseRangos ? tClavesBase : [""];
-            if (hayLog || (descOn && listaBase.length)) {
+            if (hayLog || descOn) {
                 filasHtml += filaMontos_("tot tot-sub tot-prod", "prod", edTit("titSubProd", logEnvTitulo_("prod", T, mon, esEn)), bag.prod);
             }
-            if (descOn && listaBase.length) {
+            if (descOn) {
                 filasHtml += filaMontos_("tot tot-desc", "desc", edTit("titDesc", logDescuentoEtiqueta_(esEn)) + logDescuentoNotaHtml_(), bag.desc || {});
             }
             if (mostrarGran) {
@@ -4532,7 +4750,6 @@ function logisticaTablaHTML_(idioma) {
             tClaves = tClavesSave;
         }
         filasHtml += escs.map(function (e, idx) { return bloqueSeccionEsc_(e, idx); }).join("");
-        filasHtml += logSim3dHtmlAlFinal_(n, esEn);
     } else {
         filasHtml += bloqueLog;
         if (mostrarGran) totalHtml += filaMontos_("tot gran", "gran", edTit("titGran", logEnvTitulo_("gran", T, mon, esEn)), pres.gran);
@@ -4554,7 +4771,8 @@ function logisticaTablaHTML_(idioma) {
             }
         }
     }
-    if (!escs.length) totalHtml += logSim3dHtmlAlFinal_(n, esEn);
+    /* Sin opciones: Vista 3D inmediatamente después del Gran Total (y pago). */
+    if (!escs.length) totalHtml += logSim3dHtmlTrasGran_("", n, esEn);
     const colgroup = "<colgroup>" + cols.map(function (c) { return "<col style=\"width:" + c.w + "%\">"; }).join("") + "</colgroup>";
     const rzAttr = function (idx) {
         if (idx >= cols.length - 1) return "";
@@ -4831,18 +5049,28 @@ async function logisticaRecargarImgs_(opts) {
             return f.tipo === "item" && (f.imgRef || f.srcRef || !(f.img && /^data:image\//.test(f.img)));
         })
         : logisticaFilasImgPendientes_());
-    if (!filas.length) {
-        if (!opts.silencio && typeof mostrarNotificacion === "function") {
-            mostrarNotificacion("No hay fotos pendientes. Si el PDF salió en blanco, pulsa PDF otra vez.", "info");
-        }
-        logCargaBar_("");
-        return 0;
-    }
     const abierta = logQuote.abierta;
     const trabajo = (async function () {
         const t0 = Date.now();
         let ok = 0;
         let fail = 0;
+        /* Vista 3D: refs Drive tras guardar / al forzar Recargar. */
+        try {
+            const n3 = await logisticaHidatarSim3dImgs_({ forzar: !!opts.todas });
+            if (n3) ok += n3;
+        } catch (e3) { /* sigue con fotos de ítems */ }
+        if (!filas.length) {
+            if (ok) {
+                logisticaActualizarVista();
+                if (!opts.silencio && typeof mostrarNotificacion === "function") {
+                    mostrarNotificacion("Imágenes 3D listas en la previsualización.", "success");
+                }
+            } else if (!opts.silencio && typeof mostrarNotificacion === "function") {
+                mostrarNotificacion("No hay fotos pendientes. Si el PDF salió en blanco, pulsa PDF otra vez.", "info");
+            }
+            logCargaBar_("");
+            return ok;
+        }
         for (let i = 0; i < filas.length; i++) {
             if (logQuote.abierta !== abierta) break;
             const fila = filas[i];
@@ -4901,7 +5129,10 @@ async function logisticaRecargarImgs_(opts) {
         }
         if (logQuote.abierta === abierta) {
             logCargaBar_("");
-            if (ok) logisticaRefrescarTabla_();
+            if (ok) {
+                logisticaRefrescarTabla_();
+                logisticaActualizarVista();
+            }
             if (fail) logisticaAvisarImgsPendientes_();
             if (!opts.silencio && typeof mostrarNotificacion === "function") {
                 if (ok && !fail) mostrarNotificacion("Imágenes listas. Ya puedes bajar el PDF.", "success");
@@ -5231,7 +5462,8 @@ function logisticaPintarMenuAgregar_() {
     html += "<li><button type=\"button\" class=\"dropdown-item\" data-add=\"otro\"><i class=\"bi bi-collection me-2\"></i>De otro proyecto (nube)</button></li>" +
         "<li><button type=\"button\" class=\"dropdown-item\" data-add=\"libre\"><i class=\"bi bi-pencil-square me-2\"></i>Fila libre (escrita a mano)</button></li>" +
         "<li><button type=\"button\" class=\"dropdown-item\" data-add=\"seccion\"><i class=\"bi bi-layout-text-sidebar me-2\"></i>Sección (título)</button></li>" +
-        "<li><button type=\"button\" class=\"dropdown-item\" data-add=\"obs\"><i class=\"bi bi-chat-left-text me-2\"></i>Observaciones</button></li>";
+        "<li><button type=\"button\" class=\"dropdown-item\" data-add=\"obs\"><i class=\"bi bi-chat-left-text me-2\"></i>Observaciones</button></li>" +
+        "<li><button type=\"button\" class=\"dropdown-item\" data-add=\"sim3d\"><i class=\"bi bi-box me-2\"></i>Vista 3D (Simulador)</button></li>";
     menu.innerHTML = html;
 }
 
@@ -6238,13 +6470,17 @@ function logHtmlTarjetaFila_(fila, idioma, vers, p, escs) {
         }
         const estado = datos.img
             ? "<span class=\"small text-success\"><i class=\"bi bi-check2-circle\"></i> Captura lista</span>"
-            : "<span class=\"small text-muted\">Sin captura en PDF (Simulador 3D solo aplica mix a Envío)</span>";
+            : "<span class=\"small text-muted\">Sin captura: Simulador → Vista 3D PDF</span>";
         const thumb = datos.img
             ? "<img src=\"" + String(datos.img).replace(/"/g, "") + "\" alt=\"\" style=\"max-height:48px;border:1px solid #ddd;border-radius:4px;\">"
             : "<i class=\"bi bi-box\" style=\"font-size:1.4rem;opacity:.45\"></i>";
+        const layBtn = "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-acc=\"sim3d-lay\" title=\"Tamaño y alineación en el PDF\"><i class=\"bi bi-arrows-fullscreen\"></i></button>";
         return "<div class=\"log-fila log-fila-simple log-fila-sim3d\" data-r=\"" + fila.uid + "\"><div class=\"log-fila-top\">" + grip +
             "<span class=\"badge text-bg-dark\">Vista 3D</span>" + origen +
-            "<span class=\"log-fila-tit\">" + tit + "</span>" + thumb + estado + acc + "</div></div>";
+            "<span class=\"log-fila-tit\">" + tit + "</span>" +
+            "<button type=\"button\" class=\"log-fila-img\" data-acc=\"sim3d-lay\" title=\"Tamaño y alineación en el PDF\">" + thumb + "</button>" +
+            estado + "<span class=\"log-fila-acc\">" + layBtn + accDup +
+            "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-acc=\"del\" title=\"Quitar de la cotización\"><i class=\"bi bi-trash\"></i></button></span></div></div>";
     }
     if (logEsTextoFila_(fila)) {
         const badge = fila.tipo === "obs"
@@ -6327,22 +6563,22 @@ function logisticaPintarFilas_() {
     const nota = document.getElementById("logMonedaNota");
     if (nota) nota.textContent = "";
     logisticaPintarEnv_();
-    logNormalizarFilasSim3dFuera_();
-    const filasSim3d = (logQuote.filas || []).filter(function (f) { return f && f.tipo === "sim3d"; });
-    const htmlSim3dBucket_ = function () {
-        if (!filasSim3d.length) return "";
-        const cuerpo = filasSim3d.map(function (fila) { return logHtmlTarjetaFila_(fila, idioma, vers, p, escs); }).join("");
-        return "<div class=\"log-opc-bucket log-opc-bucket-sim3d\" data-sim3d=\"1\">" +
-            "<div class=\"log-opc-bucket-h\">" +
-            "<span class=\"badge text-bg-dark\">Vista 3D</span>" +
-            "<span class=\"small text-muted flex-grow-1\">" + (esEn ? "End of PDF · outside option containers" : "Al final del PDF · fuera de las opciones") + "</span>" +
-            "</div>" +
-            "<div class=\"log-opc-bucket-list log-opc-bucket-list-sim3d\">" + cuerpo + "</div></div>";
+    logNormalizarFilasSim3dEnOpcion_();
+    /** Productos primero, Vista 3D al final del mismo contenedor. */
+    const ordenFilasBucket_ = function (filas) {
+        const prod = [];
+        const s3 = [];
+        (filas || []).forEach(function (f) {
+            if (!f) return;
+            if (f.tipo === "sim3d") s3.push(f);
+            else prod.push(f);
+        });
+        return prod.concat(s3);
     };
     if (escs.length) {
-        const baseFilas = (logQuote.filas || []).filter(function (f) {
-            return !logEsEnvio_(f) && !f.escId && f.tipo !== "sim3d";
-        });
+        const baseFilas = ordenFilasBucket_((logQuote.filas || []).filter(function (f) {
+            return !logEsEnvio_(f) && !f.escId;
+        }));
         const baseCuerpo = baseFilas.map(function (fila) { return logHtmlTarjetaFila_(fila, idioma, vers, p, escs); }).join("") ||
             "<div class=\"log-opc-bucket-empty\">" + (esEn ? "Same project + different Q here share image and description." : "Mismo proyecto con distinta Q aquí: comparten imagen y descripción.") + "</div>";
         let html = "<div class=\"log-opc-bucket log-opc-bucket-base\" data-base=\"1\">" +
@@ -6353,11 +6589,10 @@ function logisticaPintarFilas_() {
             "</div>" +
             "<div class=\"log-opc-bucket-list\" data-e=\"\">" + baseCuerpo + "</div></div>";
         html += escs.map(function (e, i) {
-            const filas = logFilasDeEsc_(e.id).filter(function (f) { return !!f.escId && f.tipo !== "sim3d"; });
+            const filas = ordenFilasBucket_(logFilasDeEsc_(e.id).filter(function (f) { return !!f.escId; }));
             const cuerpo = filas.map(function (fila) { return logHtmlTarjetaFila_(fila, idioma, vers, p, escs); }).join("") ||
                 "<div class=\"log-opc-bucket-empty\">" + (esEn ? "Drop projects here. Cards inside an option stay independent." : "Suelta proyectos aquí. Dentro de una opción cada ficha va aparte.") + "</div>";
-            /* Con zona libre arriba, la 1.ª opción también puede abrir hoja nueva. */
-            const puedeSalto = i > 0 || baseFilas.length > 0;
+            const puedeSalto = i > 0 || baseFilas.filter(function (f) { return f.tipo !== "sim3d"; }).length > 0;
             return "<div class=\"log-opc-bucket\" data-e=\"" + logEsc_(e.id) + "\">" +
                 "<div class=\"log-opc-bucket-h\">" +
                 "<span class=\"log-opc-bucket-grip log-esc-grip\" title=\"" + (esEn ? "Reorder options" : "Reordenar opciones") + "\"><i class=\"bi bi-grip-vertical\"></i></span>" +
@@ -6368,10 +6603,9 @@ function logisticaPintarFilas_() {
                 "</div>" +
                 "<div class=\"log-opc-bucket-list\" data-e=\"" + logEsc_(e.id) + "\">" + cuerpo + "</div></div>";
         }).join("");
-        html += htmlSim3dBucket_();
         box.innerHTML = html;
     } else {
-        const filas = (logQuote.filas || []).filter(function (f) { return !logEsEnvio_(f) && f.tipo !== "sim3d"; });
+        const filas = ordenFilasBucket_((logQuote.filas || []).filter(function (f) { return !logEsEnvio_(f); }));
         const cuerpo = filas.map(function (fila) { return logHtmlTarjetaFila_(fila, idioma, vers, p, []); }).join("") ||
             "<div class=\"text-muted small p-2\">Sin filas todavía.</div>";
         box.innerHTML = "<div class=\"log-opc-bucket log-opc-bucket-base\" data-base=\"1\">" +
@@ -6380,8 +6614,7 @@ function logisticaPintarFilas_() {
             "<span class=\"small text-muted flex-grow-1\">" + (esEn ? "Same project · shared render" : "Mismo proyecto · render compartido") + "</span>" +
             "<label class=\"log-esc-salto\"><input type=\"checkbox\" class=\"form-check-input\" data-base-salto" + (logQuote.baseHojaNueva ? " checked" : "") + "> " + (esEn ? "New sheet" : "Hoja nueva") + "</label>" +
             "</div>" +
-            "<div class=\"log-opc-bucket-list\" data-e=\"\">" + cuerpo + "</div></div>" +
-            htmlSim3dBucket_();
+            "<div class=\"log-opc-bucket-list\" data-e=\"\">" + cuerpo + "</div></div>";
     }
     logisticaInitContenedoresSortable_();
     logisticaInitSortableUnica_();
@@ -6429,6 +6662,10 @@ function logisticaAccionFila_(ev) {
             if (!logQuedanPreciosFijos_(fila)) delete fila.puFijo;
         } else { return; }
         logisticaRefrescarTabla_();
+        return;
+    }
+    if (acc === "sim3d-lay") {
+        logisticaAbrirEditorSim3d_(fila.uid);
         return;
     }
     if (acc !== "img") logMarcarSucio_();
@@ -7050,8 +7287,21 @@ function logisticaAgregarFila_(ev) {
     else if (tipo === "seccion") fila = { uid: logNuevoUid_(), tipo: "seccion", over: {} };
     else if (tipo === "obs") fila = { uid: logNuevoUid_(), tipo: "obs", over: {} };
     else if (tipo === "sim3d") {
+        fila = {
+            uid: logNuevoUid_(),
+            tipo: "sim3d",
+            over: { titulo: "Vista 3D", sim3dW: 100, sim3dAlign: "center", sim3dSalto: false }
+        };
+        const escAct = logEscList_().length ? (logOpcionUiSel_ || logOpcionUiAsegurar_() || "") : "";
+        if (escAct) {
+            fila.escId = escAct;
+            fila.over.sim3dEsc = escAct;
+        }
+        logQuote.filas.push(fila);
+        logMarcarSucio_();
+        logisticaRefrescarTabla_();
         if (typeof mostrarNotificacion === "function") {
-            mostrarNotificacion("Vista 3D en el PDF está desactivada (paginación = producción).", "info");
+            mostrarNotificacion("Fila Vista 3D creada al final de la opción. En Simulador pulsa «Vista 3D PDF» para capturar.", "info");
         }
         return;
     }
@@ -7487,10 +7737,9 @@ async function logisticaGuardar_(modo) {
                 }
                 if (escId === "base") {
                     env.sim3dImgRef = refs[k];
+                    /* Mantener data URL en memoria para la preview; Drive solo respalda. */
                     if (env.sim3dImg && typeof logIdbPutImg_ === "function") logIdbPutImg_(refs[k], env.sim3dImg);
-                    delete env.sim3dImg;
-                    if (window._slPdfCaptures) delete window._slPdfCaptures.base;
-                    if (window.slPdfCapturesParaHoja && typeof window.slLimpiarCaptura === "function") window.slLimpiarCaptura("base");
+                    if (env.sim3dImg) logSim3dPonerImg_("base", env.sim3dImg);
                 } else {
                     if (!env.porEsc) env.porEsc = {};
                     if (!env.porEsc[escId]) env.porEsc[escId] = {};
@@ -7498,9 +7747,7 @@ async function logisticaGuardar_(modo) {
                     if (env.porEsc[escId].sim3dImg && typeof logIdbPutImg_ === "function") {
                         logIdbPutImg_(refs[k], env.porEsc[escId].sim3dImg);
                     }
-                    delete env.porEsc[escId].sim3dImg;
-                    if (window._slPdfCaptures) delete window._slPdfCaptures[escId];
-                    if (typeof window.slLimpiarCaptura === "function") window.slLimpiarCaptura(escId);
+                    if (env.porEsc[escId].sim3dImg) logSim3dPonerImg_(escId, env.porEsc[escId].sim3dImg);
                 }
                 return;
             }
@@ -7768,6 +8015,11 @@ async function logisticaAbrirGuardada_(id, rev) {
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo abrir: " + ((e && e.message) || e), "danger");
         return;
     }
+    /* Evita que capturas/escenas 3D de la cotización anterior contaminen el PDF nuevo. */
+    if (typeof window.slResetAlCambiarCotizacion === "function") {
+        try { window.slResetAlCambiarCotizacion(); } catch (eR) { /* noop */ }
+    }
+    window._slPdfCaptures = {};
     const g = d.datos || {};
     const p = logisticaLeerProyecto_();
     const filaCot = (g.filas || []).find(function (f) { return f && f.tipo === "item" && String(f.proy || "").trim(); });
@@ -7857,10 +8109,13 @@ async function logisticaAbrirGuardada_(id, rev) {
     try {
         /* Restaurar Simulador 3D: JSON en hoja o archivo en Drive (sim3dRef). */
         await logisticaRestaurarSim3d_(g);
+        try { await logisticaHidatarSim3dImgs_({}); } catch (eH3) { /* preview sin 3D aún */ }
         logisticaActualizarVista();
         logisticaPintarEstado_();
         logisticaPintarBadge_();
-        if (typeof mostrarNotificacion === "function") mostrarNotificacion("Abierta " + d.numero + " (" + d.id + " Rev " + d.rev + ").", "success");
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Abierta " + d.numero + " (" + d.id + " Rev " + d.rev + ").", "success");
+        }
         logisticaTraerImgsFaltantes_();
     } catch (eVista) {
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("Se abrió, pero la hoja no se pudo pintar: " + ((eVista && eVista.message) || eVista), "warning");
@@ -8058,6 +8313,13 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".items thead th:last-child{border-right:0}" +
         ".items td{padding:5px 6px;border-bottom:1px solid #d9d9d9;vertical-align:middle;position:relative}" +
         ".items tr{break-inside:avoid;page-break-inside:avoid}" +
+        ".items tr.it-sim3d{break-inside:avoid;page-break-inside:avoid}" +
+        ".items tr.it-sim3d[data-salto=\"1\"]{break-before:page;page-break-before:always}" +
+        ".log-sim3d-frame{text-align:center;background:#eef2f7;border:1px solid #b8c4d4;padding:3px;box-sizing:border-box;cursor:pointer}" +
+        ".log-sim3d-frame img{width:100%;max-width:100%;max-height:5.2in;height:auto;object-fit:contain;display:block;margin:0 auto;pointer-events:none}" +
+        ".log-sim3d-page{margin:.12in 0 .2in;padding:0;cursor:pointer}" +
+        ".log-sim3d-page .log-sim3d-frame{max-width:100%;box-sizing:border-box}" +
+        ".log-sim3d-ph{font-size:9pt;color:#888;padding:18px;border:1px dashed #ccc;text-align:center}" +
         ".items td.c{text-align:center}" +
         ".items td.r{text-align:right;white-space:nowrap}" +
         /* escenarios apilados: misma tabla; las opciones extra solo añaden qty/pu/sub */
@@ -8126,27 +8388,36 @@ function logisticaConstruirHTML(opts, imprimir) {
         "body.rz-on.rz-row,body.rz-on.rz-row *{cursor:row-resize!important}" +
         "body{background:#e6e8ee}" +
         ".page{width:8.5in;height:11in;margin:0 auto 18px;background:#fff;box-shadow:0 8px 28px rgba(0,0,0,.18);display:flex;flex-direction:column;position:relative;overflow:hidden}" +
-        ".page-body{flex:1 1 auto;min-height:0;overflow:hidden;padding:0 var(--mx) .28in}" +
+        /* Chrome print descarta padding en flex-grow; el margen va en .page-inner (bloque). */
+        ".page-body{flex:1 1 auto;min-height:0;overflow:hidden;padding:0}" +
+        ".page-inner{margin:0 var(--mx);padding-bottom:.28in;box-sizing:border-box;min-width:0}" +
         ".page.crece .page-body{overflow:visible}" +
         ".page .pnum{position:absolute;right:var(--mx);bottom:.1in;font-size:7.5pt;color:#777}" +
         ".page.crece{height:auto;min-height:11in;overflow:visible}" +
         ".sp-h,.sp-f{display:none}" +
         "body.paginado .sheet{display:none}" +
         "}" +
-        /* impresión / PDF */
-        "@page{size:Letter;margin:0 0 .3in 0;" +
-        "@bottom-right{content:\"" + T.pagina + " \" counter(page) \" " + T.de + " \" counter(pages);font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;color:#777;padding-right:var(--mx);vertical-align:top}}" +
+        /* impresión / PDF: Carta exacta; márgenes internos vía --mx en .page-inner / .ftr. */
+        "@page{size:Letter;margin:0}" +
         "@media print{" +
-        "html,body{background:#fff}" +
-        ".pages{display:none!important}" +
+        "html,body{background:#fff!important;margin:0!important;padding:0!important;width:8.5in!important;min-width:8.5in!important;max-width:8.5in!important}" +
         ".rz{display:none!important}" +
         ".ed:empty{display:none}" +
         ".ln:has(.ed:empty){display:none}" +
-        ".hdr{position:fixed;top:0;left:0;right:0;z-index:5}" +
-        ".ftr{position:fixed;bottom:0;left:0;right:0;z-index:5;height:var(--ftr-h)}" +
-        ".paper>thead{display:table-header-group}" +
-        ".paper>tfoot{display:table-footer-group}" +
-        ".sp-h,.sp-f{display:block}" +
+        "body.paginado .sheet{display:none!important}" +
+        "body.paginado .pages{display:block!important;zoom:1!important;transform:none!important;width:8.5in!important;margin:0!important;padding:0!important}" +
+        "body.paginado .page{width:8.5in!important;height:11in!important;min-height:11in!important;max-width:8.5in!important;margin:0!important;padding:0!important;box-shadow:none!important;page-break-after:always;break-after:page;overflow:hidden!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+        "body.paginado .page:last-child{page-break-after:auto;break-after:auto}" +
+        "body.paginado .page.crece{height:auto!important;min-height:11in!important;overflow:visible!important}" +
+        "body.paginado .page-inner{margin-left:var(--mx)!important;margin-right:var(--mx)!important}" +
+        "body.paginado .ftr{padding-left:var(--mx)!important;padding-right:var(--mx)!important}" +
+        "body.paginado .page .pnum{display:none}" +
+        "body:not(.paginado) .pages{display:none!important}" +
+        "body:not(.paginado) .hdr{position:fixed;top:0;left:0;right:0;z-index:5}" +
+        "body:not(.paginado) .ftr{position:fixed;bottom:0;left:0;right:0;z-index:5;height:var(--ftr-h)}" +
+        "body:not(.paginado) .paper>thead{display:table-header-group}" +
+        "body:not(.paginado) .paper>tfoot{display:table-footer-group}" +
+        "body:not(.paginado) .sp-h,.sp-f{display:block}" +
         "}" +
         "</style></head><body>" +
         "<div class=\"sheet\">" +
@@ -8195,9 +8466,28 @@ function logisticaConstruirHTML(opts, imprimir) {
         "var intro=[],rows=[],thead=null,colg=null,tyc=null,hdr=null,ftr=null;" +
         "if(sheet){hdr=sheet.querySelector('.hdr');ftr=sheet.querySelector('.ftr');}" +
         "if(pages&&pages.querySelector('.page')){" +
-        "var table=pages.querySelector('table.items');" +
-        "if(table){thead=table.querySelector('thead');colg=table.querySelector('colgroup');rows=[].slice.call(table.querySelectorAll('tbody>tr'));" +
-        "var host=table.parentNode;[].forEach.call([].slice.call(host.childNodes),function(n){if(n===table)return;if(n.nodeType===1&&n.classList.contains('tyc-wrap')){tyc=n;return;}if(n.nodeType===1||(n.nodeType===3&&String(n.textContent||'').trim()))intro.push(n);});}" +
+        "var pageList=[].slice.call(pages.querySelectorAll('.page'));" +
+        "if(pageList[0]){var h0=pageList[0].querySelector('.hdr');var f0=pageList[0].querySelector('.ftr');if(h0)hdr=h0;if(f0)ftr=f0;}" +
+        "pageList.forEach(function(p,pi){" +
+        "var b=p.querySelector('.page-body');if(!b)return;" +
+        "var root=b.querySelector('.page-inner')||b;" +
+        "[].forEach.call([].slice.call(root.childNodes),function(n){" +
+        "if(n.nodeType!==1){if(pi===0&&n.nodeType===3&&String(n.textContent||'').trim())intro.push(n);return;}" +
+        "if(n.classList.contains('tyc-wrap')){tyc=n;return;}" +
+        "if(n.classList.contains('log-sim3d-page')){" +
+        "var tr=document.createElement('tr');tr.className='it it-sim3d';" +
+        "if(n.getAttribute('data-salto')==='1')tr.setAttribute('data-salto','1');" +
+        "var uidS=n.getAttribute('data-r')||'';var frS=n.querySelector('.log-sim3d-frame,[data-r]');" +
+        "if(!uidS&&frS)uidS=frS.getAttribute('data-r')||'';if(uidS)tr.setAttribute('data-r',uidS);" +
+        "var td=document.createElement('td');td.colSpan=99;while(n.firstChild)td.appendChild(n.firstChild);tr.appendChild(td);rows.push(tr);return;" +
+        "}" +
+        "if(n.tagName==='TABLE'||n.classList.contains('items')){" +
+        "if(!thead)thead=n.querySelector('thead');if(!colg)colg=n.querySelector('colgroup');" +
+        "[].forEach.call(n.querySelectorAll('tbody>tr'),function(tr){rows.push(tr);});return;" +
+        "}" +
+        "if(pi===0)intro.push(n);" +
+        "});" +
+        "});" +
         "if(!tyc)tyc=pages.querySelector('.tyc-wrap');" +
         "}else if(sheet){" +
         "var trs=sheet.querySelectorAll('.paper>tbody>tr');" +
@@ -8217,18 +8507,40 @@ function logisticaConstruirHTML(opts, imprimir) {
         "if(pack.colg)hold.appendChild(pack.colg);" +
         "var viejo=document.querySelector('.pages');if(viejo)viejo.parentNode.removeChild(viejo);" +
         "var pages=document.createElement('div');pages.className='pages';document.body.appendChild(pages);" +
-        "function page(){var p=document.createElement('section');p.className='page';if(pack.hdr)p.appendChild(pack.hdr.cloneNode(true));var b=document.createElement('div');b.className='page-body';p.appendChild(b);if(pack.ftr)p.appendChild(pack.ftr.cloneNode(true));var num=document.createElement('div');num.className='pnum';p.appendChild(num);pages.appendChild(p);return b;}" +
+        "function paginaDe_(el){return el&&el.closest?el.closest('.page'):null;}" +
+        "function page(){var p=document.createElement('section');p.className='page';if(pack.hdr)p.appendChild(pack.hdr.cloneNode(true));var b=document.createElement('div');b.className='page-body';var inn=document.createElement('div');inn.className='page-inner';b.appendChild(inn);p.appendChild(b);if(pack.ftr)p.appendChild(pack.ftr.cloneNode(true));var num=document.createElement('div');num.className='pnum';p.appendChild(num);pages.appendChild(p);return inn;}" +
         "function tabla(vivo){var t=document.createElement('table');t.className='items';if(pack.colg)t.appendChild(vivo?pack.colg:pack.colg.cloneNode(true));if(pack.thead)t.appendChild(vivo?pack.thead:pack.thead.cloneNode(true));var tb=document.createElement('tbody');t.appendChild(tb);return t;}" +
         "var body=page();" +
         "pack.intro.forEach(function(n){body.appendChild(n);});" +
         "var table=tabla(true);body.appendChild(table);var tb=table.tBodies[0];" +
-        "function limite(b){var f=b.parentNode.querySelector('.ftr');var y=f?f.getBoundingClientRect().top:b.getBoundingClientRect().bottom;return y-6;}" +
+        "function limite(b){var pg=paginaDe_(b);var f=pg&&pg.querySelector('.ftr');var y=f?f.getBoundingClientRect().top:b.getBoundingClientRect().bottom;return y-6;}" +
         "function noCabe(b,row){return row.getBoundingClientRect().bottom>limite(b);}" +
+        "function marcarCrece_(b){var pg=paginaDe_(b);if(pg)pg.classList.add('crece');}" +
+        "function paginaOcupada_(){return (tb&&tb.rows.length>0)||!!(body&&body.querySelector('.log-sim3d-page'));}" +
+        "function sim3dFueraTabla_(b,row){" +
+        "var td=row.querySelector('td');var wrap=document.createElement('div');wrap.className='log-sim3d-page';" +
+        "if(row.getAttribute('data-salto'))wrap.setAttribute('data-salto','1');" +
+        "if(row.getAttribute('data-r'))wrap.setAttribute('data-r',row.getAttribute('data-r'));" +
+        "if(td){while(td.firstChild)wrap.appendChild(td.firstChild);}" +
+        "b.appendChild(wrap);return wrap;" +
+        "}" +
+        "function paginaSoloSim3d_(row){" +
+        "body=page();sim3dFueraTabla_(body,row);" +
+        "if(noCabe(body,body.lastChild))marcarCrece_(body);" +
+        "table=tabla(false);body.appendChild(table);tb=table.tBodies[0];" +
+        "}" +
+        "function nuevaPaginaTabla_(){body=page();table=tabla(false);body.appendChild(table);tb=table.tBodies[0];}" +
         "pack.rows.forEach(function(row){" +
-        "if(row.getAttribute('data-salto')&&tb.rows.length){body=page();table=tabla(false);body.appendChild(table);tb=table.tBodies[0];}" +
+        "if(row.classList.contains('it-sim3d')){" +
+        "if(row.getAttribute('data-salto')&&paginaOcupada_()){paginaSoloSim3d_(row);return;}" +
+        "tb.appendChild(row);" +
+        "if(noCabe(body,row)){tb.removeChild(row);paginaSoloSim3d_(row);}" +
+        "return;" +
+        "}" +
+        "if(row.getAttribute('data-salto')&&paginaOcupada_()){nuevaPaginaTabla_();}" +
         "tb.appendChild(row);" +
         "var pasa=noCabe(body,row);" +
-        "if(pasa&&tb.rows.length===1){body.parentNode.classList.add('crece');return;}" +
+        "if(pasa&&tb.rows.length===1){marcarCrece_(body);return;}" +
         "if(pasa&&tb.rows.length>1){" +
         "tb.removeChild(row);" +
         "var ant=tb.rows.length?tb.rows[tb.rows.length-1]:null;" +
@@ -8238,13 +8550,13 @@ function logisticaConstruirHTML(opts, imprimir) {
         "body=page();table=tabla(false);body.appendChild(table);tb=table.tBodies[0];" +
         "if(llevar)tb.appendChild(llevar);" +
         "tb.appendChild(row);" +
-        "if(noCabe(body,row))body.parentNode.classList.add('crece');" +
+        "if(noCabe(body,row))marcarCrece_(body);" +
         "}" +
         "});" +
-        "if(pack.tyc){body=page();body.appendChild(pack.tyc);if(body.scrollHeight>body.clientHeight)body.parentNode.classList.add('crece');}" +
+        "if(pack.tyc){body=page();body.appendChild(pack.tyc);if(body.scrollHeight>body.clientHeight)marcarCrece_(body);}" +
         "var lista=[].slice.call(pages.querySelectorAll('.page'));" +
         "lista.forEach(function(p,i){var n=p.querySelector('.pnum');if(n)n.textContent=ETI+' '+(i+1)+' '+DE+' '+lista.length;});" +
-        "[].forEach.call(pages.querySelectorAll('table.items'),function(t){if(!t.querySelector('tbody tr.it:not(.it-env)')){var th=t.querySelector('thead');if(th)th.parentNode.removeChild(th);}});" +
+        "[].forEach.call(pages.querySelectorAll('table.items'),function(t){if(!t.querySelector('tbody tr.it:not(.it-env):not(.it-sim3d)')){var th=t.querySelector('thead');if(th)th.parentNode.removeChild(th);}if(!t.querySelector('tbody tr')){if(t.parentNode)t.parentNode.removeChild(t);}});" +
         "document.body.classList.add('paginado');" +
         "}" +
         "window.recolocarPaginas_=function(){var pack=tomar();if(!pack.hdr)return;armar(pack);};" +
@@ -9407,7 +9719,31 @@ function logisticaActivarEdicion_(doc) {
 }
 
 /** Controles de la tabla de ítems: texto editable por fila, imagen (clic) y arrastres de ancho/alto. */
+function logisticaActivarClicSim3d_(doc) {
+    if (!doc) return;
+    doc.querySelectorAll(".log-sim3d-frame, .log-sim3d-page, img[data-sim3d]").forEach(function (el) {
+        if (el.getAttribute("data-on-sim3d")) return;
+        el.setAttribute("data-on-sim3d", "1");
+        el.style.cursor = "pointer";
+        el.addEventListener("click", function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            let uid = el.getAttribute("data-r") || "";
+            if (!uid && el.querySelector) {
+                const inner = el.querySelector("[data-r]");
+                if (inner) uid = inner.getAttribute("data-r") || "";
+            }
+            if (!uid && el.closest) {
+                const host = el.closest("[data-r]");
+                if (host) uid = host.getAttribute("data-r") || "";
+            }
+            if (uid) logisticaAbrirEditorSim3d_(uid);
+        });
+    });
+}
+
 function logisticaActivarTabla_(doc) {
+    logisticaActivarClicSim3d_(doc);
     const tablas = doc.querySelectorAll("table.items");
     if (!tablas.length) return;
     const idioma = logisticaLeerOpciones_().idioma;
@@ -9462,16 +9798,6 @@ function logisticaActivarTabla_(doc) {
         img.title = "Editar imagen: acercar, recortar o girar";
         img.style.cursor = "pointer";
         img.addEventListener("click", function () { logisticaAbrirEditorImagen_(img.getAttribute("data-r")); });
-    });
-    doc.querySelectorAll(".log-sim3d-frame, img[data-sim3d]").forEach(function (el) {
-        if (el.getAttribute("data-on-sim3d")) return;
-        el.setAttribute("data-on-sim3d", "1");
-        el.style.cursor = "pointer";
-        el.addEventListener("click", function (ev) {
-            ev.preventDefault();
-            const uid = el.getAttribute("data-r") || (el.querySelector && el.querySelector("[data-r]") && el.querySelector("[data-r]").getAttribute("data-r"));
-            if (uid) logisticaAbrirEditorSim3d_(uid);
-        });
     });
     tabla.querySelectorAll("thead th[data-rz]").forEach(function (th) {
         const i = parseInt(th.getAttribute("data-rz"), 10);
@@ -9608,17 +9934,26 @@ async function logisticaDescargarPDF() {
     const f = document.getElementById("logFrame");
     if (!f) return;
     const pend = logisticaFilasImgPendientes_();
-    if (pend.length) {
+    const haySim3d = logSim3dRefsPendientes_().some(function (it) {
+        return !(it.st && it.st.sim3dImg && /^data:image\//i.test(it.st.sim3dImg));
+    });
+    if (pend.length || haySim3d) {
         if (typeof mostrarEsperaNube === "function") mostrarEsperaNube("Trayendo las imágenes para el PDF…");
-        try { await logisticaRecargarImgs_({ silencio: true, espera: true, filas: pend }); }
-        finally { if (typeof ocultarEsperaNube === "function") ocultarEsperaNube(); }
+        try {
+            if (pend.length) await logisticaRecargarImgs_({ silencio: true, espera: true, filas: pend });
+            else await logisticaHidatarSim3dImgs_({ forzar: true });
+        } finally { if (typeof ocultarEsperaNube === "function") ocultarEsperaNube(); }
     }
     const tituloOriginal = document.title;
-    /* Documento continuo (paginación de Chrome). Las capturas 3D se inyectan antes de imprimir. */
+    /* Misma vista que la preview: script de páginas + inyección 3D (sin thead en solo-foto). */
     f.onload = function () {
         const w = f.contentWindow;
         if (!w) return;
         Promise.resolve(logisticaInyectarSim3dImgs_(w.document)).then(function () {
+            try {
+                const pages = w.document.querySelector(".pages");
+                if (pages) { pages.style.zoom = "1"; pages.style.transform = ""; }
+            } catch (eZ) { /* noop */ }
             try { document.title = w.document.title || logNombreArchivoPdf_(logisticaLeerOpciones_().idioma); } catch (e) { document.title = logNombreArchivoPdf_(logisticaLeerOpciones_().idioma); }
             const restaurar = function () {
                 document.title = tituloOriginal;
@@ -9627,13 +9962,19 @@ async function logisticaDescargarPDF() {
             };
             w.addEventListener("afterprint", restaurar);
             if (typeof mostrarNotificacion === "function") {
-                mostrarNotificacion("En el diálogo: Destino 'Guardar como PDF', tamaño Carta, márgenes 'Predeterminado' y desactiva 'Encabezados y pies de página'.", "info");
+                mostrarNotificacion("En el diálogo: Destino 'Guardar como PDF', tamaño Carta, márgenes 'Ninguno' y desactiva 'Encabezados y pies de página'.", "info");
             }
-            w.focus();
-            w.print();
+            /* 2 frames: layout estable antes de print (evita escala de Chrome). */
+            w.requestAnimationFrame(function () {
+                w.requestAnimationFrame(function () {
+                    w.focus();
+                    w.print();
+                });
+            });
         });
     };
-    f.srcdoc = logisticaConstruirHTML(logisticaLeerOpciones_(), true);
+    /* imprimir=false → corre recolocarPaginas_ (igual que la preview). */
+    f.srcdoc = logisticaConstruirHTML(logisticaLeerOpciones_(), false);
 }
 
 function logListaPaises_() {

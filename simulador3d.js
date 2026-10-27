@@ -29,7 +29,9 @@
         masters: [
             { id: "M403030", nombre: "Master 40×30×30", w: 40, d: 30, h: 30, pesoMax: 25 },
             { id: "M604040", nombre: "Master 60×40×40", w: 60, d: 40, h: 40, pesoMax: 40 }
-        ]
+        ],
+        /* Contenedores custom (empresa): se mezclan en dbContenedores del Simulador. */
+        contenedores: []
     };
 
     var slEscenarios = [];
@@ -98,7 +100,65 @@
                 };
             });
         }
+        if (Array.isArray(raw.contenedores)) {
+            d.contenedores = raw.contenedores.map(function (c) {
+                var id = String(c.id || c.key || "").trim();
+                if (!id) return null;
+                var w = num_(c.w, 235), h = num_(c.h, 239), dep = num_(c.d, 1200);
+                return {
+                    id: id,
+                    nombre: String(c.nombre || id).trim(),
+                    w: w, h: h, d: dep,
+                    maxWeight: num_(c.maxWeight != null ? c.maxWeight : c.pesoMax, 26500),
+                    maxVol: num_(c.maxVol, (w * h * dep) / 1000000)
+                };
+            }).filter(Boolean);
+        }
         return d;
+    }
+
+    /** Aplica contenedores custom de Ajustes a dbContenedores (global del motor). */
+    function aplicarContenedoresCfgADb_(cfg) {
+        if (typeof dbContenedores === "undefined" || !dbContenedores) return;
+        cfg = cfg || slSim3dCfg_();
+        Object.keys(dbContenedores).forEach(function (k) {
+            if (dbContenedores[k] && dbContenedores[k].fromAjustes) delete dbContenedores[k];
+        });
+        (cfg.contenedores || []).forEach(function (c) {
+            if (!c || !c.id) return;
+            if (dbContenedores[c.id] && dbContenedores[c.id].isSystem) return;
+            dbContenedores[c.id] = {
+                nombre: c.nombre || c.id,
+                w: num_(c.w, 235),
+                h: num_(c.h, 239),
+                d: num_(c.d, 1200),
+                maxWeight: num_(c.maxWeight, 26500),
+                maxVol: num_(c.maxVol, (num_(c.w, 235) * num_(c.h, 239) * num_(c.d, 1200)) / 1000000),
+                isSystem: false,
+                fromAjustes: true
+            };
+        });
+        if (typeof updateAllContDropdowns === "function") updateAllContDropdowns();
+    }
+
+    /** Lee customs vivos del motor (p. ej. creados en la pestaña Simulador) hacia el editor de Ajustes. */
+    function contenedoresCustomDesdeDb_() {
+        if (typeof dbContenedores === "undefined" || !dbContenedores) return [];
+        var out = [];
+        Object.keys(dbContenedores).forEach(function (k) {
+            var c = dbContenedores[k];
+            if (!c || c.isSystem || k === "custom") return;
+            out.push({
+                id: k,
+                nombre: c.nombre || k,
+                w: num_(c.w, 235),
+                h: num_(c.h, 239),
+                d: num_(c.d, 1200),
+                maxWeight: num_(c.maxWeight, 26500),
+                maxVol: num_(c.maxVol, 0)
+            });
+        });
+        return out;
     }
 
     function palletPorMercado_(cfg, codPais) {
@@ -909,7 +969,9 @@
                 "<div class=\"sl-esc-tab" + (i === slEscActivo ? " active" : "") + "\">" +
                 "<button type=\"button\" class=\"nav-link" + (i === slEscActivo ? " active" : "") + "\" data-sl-esc=\"" + i + "\">" +
                 (e.nombre || ("Opción " + (i + 1))) +
-                "<span class=\"sl-esc-meta\">" + (mixTxt || "") + (n ? " · " + n + " ítems" : "") + "</span></button></div></li>";
+                "<span class=\"sl-esc-meta\">" + (mixTxt || "") + (n ? " · " + n + " ítems" : "") + "</span></button>" +
+                "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary sl-btn-pdf3d\" data-sl-pdf=\"" + i + "\" title=\"Captura la vista actual y la pone tras el Gran Total en el PDF\">" +
+                "<i class=\"bi bi-camera\"></i> Vista 3D PDF</button></div></li>";
         }).join("");
     }
 
@@ -926,6 +988,11 @@
         /* Restaurar mix de Envío si aún no hay contenedores físicos. */
         if ((!e.contenedoresFisicos || !e.contenedoresFisicos.length) && e.mixSugerido) {
             e.contenedoresFisicos = contenedoresDesdeMix_(e.mixSugerido);
+        }
+        /* Agrupación puede tener datos y Lista de carga vacía (p. ej. opción 2 tras Traer). */
+        asegurarAgrupaciones_(e);
+        if (!(e.listaEmpaque || []).length && (e.agrupaciones || []).length) {
+            aplicarAgrupacionesAlEscenario_(e);
         }
         restoreEstado_({
             listaEmpaque: e.listaEmpaque || [],
@@ -1035,27 +1102,35 @@
         inp.value = nombreLoadSugerido_(slEscenarios[slEscActivo]);
     }
 
-    /** Medidas cm: empaque de la caja, o producto de la ficha si el empaque está vacío. */
-    function medidasCajaCm_(caja, ficha) {
-        var tipo = {
-            ancho: (caja && caja.ancho) != null ? caja.ancho : ficha.empAncho,
-            fondo: (caja && caja.fondo) != null ? caja.fondo : ficha.empFondo,
-            alto: (caja && caja.alto) != null ? caja.alto : ficha.empAlto,
-            peso: (caja && caja.peso) != null ? caja.peso : ficha.empPeso,
-            empAncho: ficha.empAncho,
-            empFondo: ficha.empFondo,
-            empAlto: ficha.empAlto,
-            um: ficha.um
+    /** Medidas cm: cada tipo de caja (empCajas); no reusar emp plano vacío ni producto si hay varias cajas. */
+    function medidasCajaCm_(caja, ficha, opts) {
+        opts = opts || {};
+        ficha = ficha || {};
+        caja = caja || {};
+        var pos_ = function (v) {
+            var n = Number(v);
+            return (isFinite(n) && n > 0) ? n : null;
         };
+        var w = pos_(caja.ancho); if (w == null) w = pos_(ficha.empAncho);
+        var d = pos_(caja.fondo); if (d == null) d = pos_(ficha.empFondo);
+        var h = pos_(caja.alto); if (h == null) h = pos_(ficha.empAlto);
+        var peso = pos_(caja.peso); if (peso == null) peso = pos_(ficha.empPeso);
+        /* Con varias cajas distintas, no caigas al tamaño del producto (todas saldrían iguales). */
+        if ((w == null || d == null || h == null) && !opts.permitirProducto) return null;
+        if (w == null || d == null || h == null) {
+            w = pos_(ficha.ancho); d = pos_(ficha.fondo); h = pos_(ficha.alto);
+            if (w == null || d == null || h == null) return null;
+            var fProd = ficha.um === "in" ? 2.54 : 1;
+            return {
+                cm: { w: w * fProd, d: d * fProd, h: h * fProd },
+                tipo: { empAncho: w, empFondo: d, empAlto: h, peso: peso, um: ficha.um }
+            };
+        }
+        var tipo = { empAncho: w, empFondo: d, empAlto: h, peso: peso, um: ficha.um };
         var cm = typeof logCajaCm_ === "function" ? logCajaCm_(tipo) : null;
         if (cm) return { cm: cm, tipo: tipo };
-        var w = Number(ficha.ancho), d = Number(ficha.fondo), h = Number(ficha.alto);
-        if (!(w > 0 && d > 0 && h > 0)) return null;
         var f = ficha.um === "in" ? 2.54 : 1;
-        return {
-            cm: { w: w * f, d: d * f, h: h * f },
-            tipo: { ancho: w, fondo: d, alto: h, peso: ficha.peso, um: ficha.um }
-        };
+        return { cm: { w: w * f, d: d * f, h: h * f }, tipo: tipo };
     }
 
     function contextoLogistica_(escId) {
@@ -1081,9 +1156,12 @@
             if (!(qtyProd > 0)) return;
             var tipos = typeof logEmpCajasDeFicha_ === "function" ? logEmpCajasDeFicha_(ficha) : [{}];
             if (!tipos.length) tipos = [{}];
-            tipos.forEach(function (caja) {
-                var med = medidasCajaCm_(caja || {}, ficha);
+            var multi = tipos.length > 1;
+            var alguna = false;
+            tipos.forEach(function (caja, ix) {
+                var med = medidasCajaCm_(caja || {}, ficha, { permitirProducto: !multi });
                 if (!med) return;
+                alguna = true;
                 var und = Number(caja && caja.und);
                 if (!(und > 0)) und = Number(ficha.empUnd) || 1;
                 var porPieza = Number(caja && caja.porPieza);
@@ -1091,14 +1169,30 @@
                 var nCajas = Math.ceil(qtyProd / und) * porPieza;
                 if (!(nCajas > 0)) nCajas = qtyProd;
                 var peso = typeof logPesoCajaKg_ === "function" ? logPesoCajaKg_(med.tipo) : Number(med.tipo.peso) || 0;
-                var desc = (caja && caja.nombre && String(caja.nombre).trim()) || (v.titulo || v.cod || "Caja");
-                if (tipos.length > 1 && caja && caja.nombre) desc = (v.cod || v.titulo || "") + " · " + caja.nombre;
+                var nomCaja = (caja && caja.nombre && String(caja.nombre).trim()) || "";
+                var desc = nomCaja || (v.titulo || v.cod || "Caja");
+                if (multi) {
+                    desc = (v.cod || v.titulo || "Caja") + " · " + (nomCaja || ("Caja " + (ix + 1) + "/" + tipos.length));
+                }
                 var color = SL_COLORS[colorIdx % SL_COLORS.length];
                 items.push(itemBase_(desc, "box", nCajas, med.cm.w, med.cm.d, med.cm.h, peso, color, {
                     slMeta: { unidad: "caja", cajas: 1, cruda: true }
                 }));
                 colorIdx++;
             });
+            /* Si las empCajas no traían medidas, un solo ítem con empaque/producto plano. */
+            if (!alguna) {
+                var med0 = medidasCajaCm_({}, ficha, { permitirProducto: true });
+                if (!med0) return;
+                var und0 = Number(ficha.empUnd) || 1;
+                var n0 = Math.ceil(qtyProd / Math.max(1, und0));
+                var peso0 = typeof logPesoCajaKg_ === "function" ? logPesoCajaKg_(med0.tipo) : Number(med0.tipo.peso) || 0;
+                var color0 = SL_COLORS[colorIdx % SL_COLORS.length];
+                items.push(itemBase_(v.titulo || v.cod || "Caja", "box", n0, med0.cm.w, med0.cm.d, med0.cm.h, peso0, color0, {
+                    slMeta: { unidad: "caja", cajas: 1, cruda: true }
+                }));
+                colorIdx++;
+            }
         });
         return items;
     }
@@ -1185,8 +1279,9 @@
         return "es";
     }
 
-    function resumenUnidades_(items, idioma) {
+    function resumenUnidades_(items, idioma, opts) {
         idioma = idioma || idiomaCotizacion_();
+        opts = opts || {};
         var en = idioma === "en";
         var c = { caja: 0, master: 0, pallet: 0, huacal: 0 };
         (items || []).forEach(function (it) {
@@ -1195,10 +1290,14 @@
             else c.caja += it.qty || 0;
         });
         var parts = [];
+        var totalCajas = Math.max(0, Math.floor(num_(opts.totalCajas, totalCajasLista_(items))));
+        if (totalCajas > 0) {
+            parts.push(totalCajas + (en ? (" box" + (totalCajas === 1 ? "" : "es")) : (" caja" + (totalCajas === 1 ? "" : "s"))));
+        }
         if (c.pallet) parts.push(c.pallet + (en ? (" pallet" + (c.pallet === 1 ? "" : "s")) : (" estiba" + (c.pallet === 1 ? "" : "s"))));
         if (c.huacal) parts.push(c.huacal + (en ? (" crate" + (c.huacal === 1 ? "" : "s")) : (" huacal" + (c.huacal === 1 ? "" : "es"))));
         if (c.master) parts.push(c.master + (en ? (" master" + (c.master === 1 ? "" : "s")) : (" master")));
-        if (c.caja) parts.push(c.caja + (en ? (" loose box" + (c.caja === 1 ? "" : "es")) : (" caja" + (c.caja === 1 ? "" : "s") + " suelta" + (c.caja === 1 ? "" : "s"))));
+        if (c.caja) parts.push(c.caja + (en ? (" loose" + (c.caja === 1 ? "" : "")) : (" suelta" + (c.caja === 1 ? "" : "s"))));
         return parts.join(en ? ", " : " · ") || (en ? "No load" : "Sin carga");
     }
 
@@ -2049,12 +2148,11 @@
                 st.contenedores = mix;
                 st.contenedoresManual = true;
                 st.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
-                delete st.sim3dImg;
+                /* No borrar sim3dImg: la captura al PDF es manual y se conserva. */
             } else {
                 env.contenedores = mix;
                 env.contenedoresManual = true;
                 env.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
-                delete env.sim3dImg;
             }
         });
 
@@ -2107,7 +2205,10 @@
             var mix = mixDesdeContenedores_(esc.contenedoresFisicos || contenedoresFisicos);
             var mixTxt = (typeof logContenedoresTexto_ === "function") ? logContenedoresTexto_(mix) : "";
             var met = metricasDesdeContenedores_(esc.contenedoresFisicos || contenedoresFisicos);
-            var units = resumenUnidades_(esc.listaEmpaque || listaEmpaque, idioma);
+            var listaU = esc.listaEmpaque || listaEmpaque;
+            var crudas = (esc.cajasCrudas && esc.cajasCrudas.length) ? esc.cajasCrudas : listaU;
+            var totalCajas = totalCajasLista_(crudas);
+            var units = resumenUnidades_(listaU, idioma, { totalCajas: totalCajas });
             var tit = String(esc.nombre || (en ? "3D load simulation" : "Simulación 3D")).slice(0, 56);
             ctx.fillStyle = "#0b1220";
             ctx.fillRect(0, drawH, w, bandH);
@@ -2116,7 +2217,7 @@
             ctx.fillText(tit, 20, drawH + 36);
             ctx.font = "bold 20px Segoe UI, Arial, sans-serif";
             ctx.fillStyle = "#ffffff";
-            ctx.fillText([mixTxt, units].filter(Boolean).join(en ? "  ·  " : "   ·   ").slice(0, 88), 20, drawH + 66);
+            ctx.fillText([mixTxt, units].filter(Boolean).join(en ? "  ·  " : "   ·   ").slice(0, 96), 20, drawH + 66);
             var metParts = [
                 (en ? "Occupancy " : "Ocupación ") + met.ocupacionPct + "% vol",
                 met.m3 + " m³"
@@ -2149,7 +2250,9 @@
         var idioma = idiomaCotizacion_();
         var en = idioma === "en";
         var met = metricasDesdeContenedores_(esc.contenedoresFisicos || []);
-        var units = resumenUnidades_(esc.listaEmpaque || listaEmpaque, idioma);
+        var listaU = esc.listaEmpaque || listaEmpaque;
+        var crudas = (esc.cajasCrudas && esc.cajasCrudas.length) ? esc.cajasCrudas : listaU;
+        var units = resumenUnidades_(listaU, idioma, { totalCajas: totalCajasLista_(crudas) });
         var notaParts = [
             (en ? "3D simulator" : "Simulador 3D") + ": " + met.ocupacionPct + "%",
             met.m3 + " m³",
@@ -2173,14 +2276,82 @@
         }
     }
 
-    /** Foto → PDF desconectada: el Simulador no escribe capturas en la cotización. */
+    /** Captura la vista actual y crea/actualiza la fila Vista 3D (fuera de contenedores) tras el Gran Total. */
     function agregarVista3dPdf_(idx) {
-        void idx;
-        toast_("El Simulador 3D no envía fotos al PDF. Usa Traer → Optimizar → Aplicar a Logística.");
+        if (!slEscenarios.length) {
+            toast_("Trae carga desde Logística antes de capturar la Vista 3D.");
+            return;
+        }
+        if (idx < 0 || idx >= slEscenarios.length) idx = slEscActivo;
+        if (idx !== slEscActivo) activarEscenario_(idx, { sinAutoOpt: true });
+        var esc = slEscenarios[idx];
+        setModoVista_("contenedor");
+        if (typeof ocultarCotasModulo_ === "function") ocultarCotasModulo_();
+        setTimeout(function () {
+            /* Clave = id de opción en Logística (no el id interno del escenario). */
+            var escId = esc.logEscId || "";
+            if (!escId && typeof logEscList_ === "function") {
+                var listaEsc = logEscList_() || [];
+                if (listaEsc[idx] && listaEsc[idx].id) {
+                    escId = listaEsc[idx].id;
+                    esc.logEscId = escId;
+                }
+            }
+            capturarVista_(esc);
+            if (typeof logQuote === "undefined" || !logQuote || !Array.isArray(logQuote.filas)) {
+                toast_("Abre Logística con una cotización para ubicar la Vista 3D en el PDF.");
+                return;
+            }
+            if (typeof logNormalizarFilasSim3dEnOpcion_ === "function") logNormalizarFilasSim3dEnOpcion_();
+            var existente = logQuote.filas.find(function (f) {
+                if (!f || f.tipo !== "sim3d") return false;
+                var k = (typeof logSim3dEscKey_ === "function") ? logSim3dEscKey_(f) : ((f.over && f.over.sim3dEsc) || f.escId || "");
+                if (escId) return k === escId;
+                return !k || k === "base";
+            });
+            if (!existente) {
+                var uid = (typeof logNuevoUid_ === "function") ? logNuevoUid_() : ("s3d_" + Date.now());
+                var fila = {
+                    uid: uid,
+                    tipo: "sim3d",
+                    over: {
+                        titulo: "Vista 3D",
+                        sim3dW: 100,
+                        sim3dAlign: "center"
+                    }
+                };
+                if (escId) {
+                    fila.escId = escId;
+                    fila.over.sim3dEsc = escId;
+                }
+                logQuote.filas.push(fila);
+            } else {
+                if (!existente.over || typeof existente.over !== "object") existente.over = {};
+                if (escId) {
+                    existente.escId = escId;
+                    existente.over.sim3dEsc = escId;
+                }
+                delete existente.over.sim3dSalto;
+            }
+            try { if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv(); } catch (ePe) { /* noop */ }
+            if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
+            if (typeof logisticaPintarFilas_ === "function") logisticaPintarFilas_();
+            if (typeof logisticaActualizarVista === "function") logisticaActualizarVista();
+            toast_(escId
+                ? ("Vista 3D lista para «" + (esc.nombre || escId) + "» (tras el Gran Total).")
+                : "Vista 3D lista (tras el Gran Total).");
+        }, 80);
     }
 
     window.slPdfCapturesParaHoja = function () {
         return Object.assign({}, window._slPdfCaptures || slPdfCaptures);
+    };
+
+    /** Restaura captura en memoria (tras guardar / Recargar imágenes). */
+    window.slPonerCaptura = function (key, data) {
+        if (!key || !data) return;
+        slPdfCaptures[key] = data;
+        window._slPdfCaptures = slPdfCaptures;
     };
 
     /** Tras subir a Drive: quita el data URL de memoria para no re-embeberlo. */
@@ -2277,6 +2448,26 @@
         }, 80);
     }
 
+    function escenarioTieneCarga_(e) {
+        if (!e) return false;
+        return !!(
+            (e.listaEmpaque && e.listaEmpaque.length) ||
+            (e.contenedoresFisicos && e.contenedoresFisicos.length) ||
+            (e.agrupaciones && e.agrupaciones.length) ||
+            (e.instanciasCajas && e.instanciasCajas.length) ||
+            (e.cajasCrudas && e.cajasCrudas.length)
+        );
+    }
+
+    function refrescarVistaTrasTab_() {
+        resizeViewer_();
+        pintarTabsEscenarios_();
+        actualizarNombreLoadUI_();
+        if (slEscenarios.length && slEscActivo >= 0 && slEscActivo < slEscenarios.length) {
+            try { activarEscenario_(slEscActivo, { sinAutoOpt: true }); } catch (eAct) { /* noop */ }
+        }
+    }
+
     async function ensureInit_() {
         try {
             await ensureThree_();
@@ -2288,18 +2479,24 @@
                     limpiarTodo();
                 }
                 slInited = true;
+                try { aplicarContenedoresCfgADb_(slSim3dCfg_()); } catch (eCfg) { /* noop */ }
+            }
+            /* Si ya hay trabajo en memoria (Optimizar / capturas), NO reimportar el bundle
+             * viejo de env: eso borraba los ajustes al volver desde Logística. */
+            if (slEscenarios.some(escenarioTieneCarga_)) {
+                try { if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv(); } catch (eP) { /* noop */ }
+                refrescarVistaTrasTab_();
+                return;
             }
             var env0 = typeof logEnv_ === "function" ? logEnv_() : null;
             var restored = false;
             if (env0 && env0.sim3dBundle && typeof window.slImportarEstado === "function") {
                 restored = !!window.slImportarEstado(env0.sim3dBundle);
             }
-            if (!restored && (!slEscenarios.length || !(slEscenarios[0].listaEmpaque || []).length)) {
+            if (!restored && !slEscenarios.some(escenarioTieneCarga_)) {
                 traerDesdeLogistica_({ silencioso: true });
             }
-            resizeViewer_();
-            pintarTabsEscenarios_();
-            actualizarNombreLoadUI_();
+            refrescarVistaTrasTab_();
         } catch (e) {
             console.error("Simulador 3D init:", e);
             toast_("No se pudo iniciar el Simulador 3D: " + ((e && e.message) || e));
@@ -2314,6 +2511,16 @@
             btn = document.getElementById("tabBtnSimulador3d");
         }
         if (btn) ensureInit_();
+    }
+
+    /** Al salir del Simulador: guarda el trabajo en la cotización (memoria) para no perderlo. */
+    function onTabHide_(ev) {
+        var t = ev && ev.target;
+        if (!t || t.id !== "tabBtnSimulador3d") return;
+        try {
+            if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv();
+            if (typeof logMarcarSucio_ === "function" && slEscenarios.some(escenarioTieneCarga_)) logMarcarSucio_();
+        } catch (eH) { /* noop */ }
     }
 
     function wire_() {
@@ -2363,6 +2570,12 @@
         var tabs = document.getElementById("slEscenariosTabs");
         if (tabs) {
             tabs.addEventListener("click", function (ev) {
+                var pdfBtn = ev.target.closest("[data-sl-pdf]");
+                if (pdfBtn) {
+                    ev.preventDefault();
+                    agregarVista3dPdf_(Number(pdfBtn.getAttribute("data-sl-pdf")));
+                    return;
+                }
                 var b = ev.target.closest("[data-sl-esc]");
                 if (!b) return;
                 activarEscenario_(Number(b.getAttribute("data-sl-esc")));
@@ -2370,10 +2583,14 @@
             });
         }
         var mainTabs = document.getElementById("mainAppTabs");
-        if (mainTabs) mainTabs.addEventListener("shown.bs.tab", onTabShown_);
+        if (mainTabs) {
+            mainTabs.addEventListener("shown.bs.tab", onTabShown_);
+            mainTabs.addEventListener("hide.bs.tab", onTabHide_);
+        }
         var tabBtn = document.getElementById("tabBtnSimulador3d");
         if (tabBtn) {
             tabBtn.addEventListener("shown.bs.tab", onTabShown_);
+            tabBtn.addEventListener("hide.bs.tab", onTabHide_);
             tabBtn.addEventListener("click", function () {
                 setTimeout(function () {
                     var pane = document.getElementById("tabSimulador3d");
@@ -2397,6 +2614,17 @@
                 "<td><input type=\"number\" step=\"1\" class=\"form-control form-control-sm\" data-k=\"hUtil\" value=\"" + num_(row.hUtil) + "\" style=\"width:72px\"></td>" +
                 "<td><input type=\"number\" step=\"1\" class=\"form-control form-control-sm\" data-k=\"pesoMax\" value=\"" + num_(row.pesoMax) + "\" style=\"width:80px\"></td>" +
                 "<td><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"this.closest('tr').remove();slSim3dRefrescarSelectsPallet_();\" title=\"Quitar\">×</button></td>" +
+                "</tr>";
+        }
+        if (tipo === "cont") {
+            return "<tr data-sim3d=\"cont\">" +
+                "<td><input class=\"form-control form-control-sm\" data-k=\"id\" value=\"" + escAttr_(id) + "\" title=\"Clave interna (sin espacios)\"></td>" +
+                "<td><input class=\"form-control form-control-sm\" data-k=\"nombre\" value=\"" + escAttr_(nom) + "\"></td>" +
+                "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"w\" value=\"" + num_(row.w, 235) + "\" style=\"width:72px\" title=\"Ancho útil cm\"></td>" +
+                "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"d\" value=\"" + num_(row.d, 1200) + "\" style=\"width:80px\" title=\"Largo útil cm\"></td>" +
+                "<td><input type=\"number\" step=\"0.1\" class=\"form-control form-control-sm\" data-k=\"h\" value=\"" + num_(row.h, 239) + "\" style=\"width:72px\" title=\"Alto útil cm\"></td>" +
+                "<td><input type=\"number\" step=\"1\" class=\"form-control form-control-sm\" data-k=\"maxWeight\" value=\"" + num_(row.maxWeight != null ? row.maxWeight : row.pesoMax, 26500) + "\" style=\"width:88px\"></td>" +
+                "<td><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"this.closest('tr').remove();\" title=\"Quitar\">×</button></td>" +
                 "</tr>";
         }
         return "<tr data-sim3d=\"" + tipo + "\">" +
@@ -2433,6 +2661,15 @@
                     d: num_(get("d"), 100),
                     hUtil: num_(get("hUtil"), 180),
                     pesoMax: num_(get("pesoMax"), 1500)
+                });
+            } else if (tipo === "cont") {
+                var ww = num_(get("w"), 235), hh = num_(get("h"), 239), dd = num_(get("d"), 1200);
+                out.push({
+                    id: id.replace(/\s+/g, "_"),
+                    nombre: String(get("nombre") || id).trim(),
+                    w: ww, h: hh, d: dd,
+                    maxWeight: num_(get("maxWeight") || get("pesoMax"), 26500),
+                    maxVol: (ww * hh * dd) / 1000000
                 });
             } else {
                 out.push({
@@ -2485,10 +2722,14 @@
         if (pb) pb.innerHTML = (cfg.pallets || []).map(function (p) { return filaCatalogoHtml_("pallet", p); }).join("");
         var mb = document.getElementById("sim3dMastersBody");
         if (mb) mb.innerHTML = (cfg.masters || []).map(function (m) { return filaCatalogoHtml_("master", m); }).join("");
+        var conts = (cfg.contenedores && cfg.contenedores.length) ? cfg.contenedores : contenedoresCustomDesdeDb_();
+        var cb = document.getElementById("sim3dContsBody");
+        if (cb) cb.innerHTML = conts.map(function (c) { return filaCatalogoHtml_("cont", c); }).join("");
         slSim3dRefrescarSelectsPallet_();
         setVal("sim3dPalletEU", cfg.mercadoPallet.EU || "EUR");
         setVal("sim3dPalletUS", cfg.mercadoPallet.US || "GMA");
         setVal("sim3dPalletDef", cfg.mercadoPallet.default || "ISO1");
+        aplicarContenedoresCfgADb_(cfg);
     }
 
     function leerSim3dUI_() {
@@ -2508,6 +2749,7 @@
         };
         var pallets = leerFilasCatalogo_("sim3dPalletsBody", "pallet");
         var masters = leerFilasCatalogo_("sim3dMastersBody", "master");
+        var contenedores = leerFilasCatalogo_("sim3dContsBody", "cont");
         if (!pallets.length) pallets = JSON.parse(JSON.stringify(SL_SIM3D_DEFAULTS.pallets));
         if (!masters.length) masters = JSON.parse(JSON.stringify(SL_SIM3D_DEFAULTS.masters));
         return {
@@ -2532,7 +2774,8 @@
             autoPaletizarLcl: getChk("sim3dAutoLcl", false),
             dejarCajaSueltaAereo: getChk("sim3dCajaAereo", true),
             pallets: pallets,
-            masters: masters
+            masters: masters,
+            contenedores: contenedores
         };
     }
 
@@ -2555,18 +2798,77 @@
             id: "MCUSTOM", nombre: "Master custom", w: 50, d: 40, h: 40, pesoMax: 30
         }));
     };
+    window.slSim3dAgregarContUI = function () {
+        var body = document.getElementById("sim3dContsBody");
+        if (!body) return;
+        body.insertAdjacentHTML("beforeend", filaCatalogoHtml_("cont", {
+            id: "custom_" + Date.now().toString(36),
+            nombre: "Contenedor custom",
+            w: 235, d: 1200, h: 239, maxWeight: 26500
+        }));
+    };
     window.slSim3dRestaurarDefaultsUI = function () {
-        if (!window.confirm("¿Restaurar pallets, masters y umbrales a los defaults internacionales?")) return;
+        if (!window.confirm("¿Restaurar pallets, masters, contenedores custom y umbrales a los defaults?")) return;
         pintarEditorSim3d_(JSON.parse(JSON.stringify(SL_SIM3D_DEFAULTS)));
+    };
+    /** Tras crear un contenedor en la librería del Simulador, lo refleja en Ajustes (hay que Guardar empresa). */
+    window.slSim3dOnContenedorCustom_ = function (key, cont) {
+        if (!key || !cont) return;
+        if (typeof CONFIG_GLOBAL === "undefined" || !CONFIG_GLOBAL) return;
+        if (!CONFIG_GLOBAL.sim3d || typeof CONFIG_GLOBAL.sim3d !== "object") CONFIG_GLOBAL.sim3d = {};
+        var lista = Array.isArray(CONFIG_GLOBAL.sim3d.contenedores) ? CONFIG_GLOBAL.sim3d.contenedores.slice() : [];
+        var row = {
+            id: String(key),
+            nombre: String(cont.nombre || key),
+            w: num_(cont.w, 235),
+            h: num_(cont.h, 239),
+            d: num_(cont.d, 1200),
+            maxWeight: num_(cont.maxWeight, 26500),
+            maxVol: num_(cont.maxVol, 0)
+        };
+        var ix = lista.findIndex(function (c) { return c && c.id === row.id; });
+        if (ix >= 0) lista[ix] = row; else lista.push(row);
+        CONFIG_GLOBAL.sim3d.contenedores = lista;
+        var body = document.getElementById("sim3dContsBody");
+        if (body) {
+            var existe = false;
+            body.querySelectorAll("tr [data-k=\"id\"]").forEach(function (inp) {
+                if (String(inp.value || "") === row.id) existe = true;
+            });
+            if (!existe) body.insertAdjacentHTML("beforeend", filaCatalogoHtml_("cont", row));
+        }
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Contenedor «" + row.nombre + "» añadido. Guarda Ajustes para que quede global.", "info");
+        }
     };
 
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire_);
     else wire_();
 
+    /** Limpia memoria del Simulador al abrir/crear otra cotización (evita PDF con imagen ajena). */
+    window.slResetAlCambiarCotizacion = function () {
+        try { guardarEscenarioActivo_(); } catch (eG) { /* noop */ }
+        slEscenarios = [];
+        slEscActivo = -1;
+        slPdfCaptures = {};
+        window._slPdfCaptures = {};
+        try {
+            if (typeof listaEmpaque !== "undefined") listaEmpaque = [];
+            if (typeof instanciasCajas !== "undefined") instanciasCajas = [];
+            if (typeof contenedoresFisicos !== "undefined") contenedoresFisicos = [];
+            if (typeof selectedGroupId !== "undefined") selectedGroupId = null;
+            if (typeof selectedUUIDsSet !== "undefined" && selectedUUIDsSet.clear) selectedUUIDsSet.clear();
+            if (typeof actualizarTabla === "function") actualizarTabla();
+            if (typeof construirEscena3D === "function") construirEscena3D();
+        } catch (eUi) { /* noop */ }
+        try { pintarTabsEscenarios_(); } catch (eT) { /* noop */ }
+    };
+
     window.slTraerDesdeLogistica = traerDesdeLogistica_;
     window.slModularizarCarga = modularizarCarga_;
     window.slAplicarALogistica = aplicarALogistica_;
     window.slEnsureInit = ensureInit_;
+    window.slSim3dAplicarContenedoresCfg = function () { aplicarContenedoresCfgADb_(slSim3dCfg_()); };
     window.slCapacidadFcl = function (cajaCm, pesoKg) {
         var cfg = slSim3dCfg_();
         var box = { w: num_(cajaCm.w), d: num_(cajaCm.d), h: num_(cajaCm.h) };

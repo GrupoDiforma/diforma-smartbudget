@@ -263,7 +263,10 @@ function guardarNuevoContenedor() {
     let h = parseFloat(document.getElementById('nc-h').value); 
     dbContenedores[key] = { nombre: document.getElementById('nc-name').value, w: w, h: h, d: d, maxWeight: parseFloat(document.getElementById('nc-kg').value), maxVol: (w*h*d)/1000000, isSystem: false }; 
     updateAllContDropdowns(); 
-    showContLibrary(); 
+    showContLibrary();
+    if (typeof window.slSim3dOnContenedorCustom_ === "function") {
+        try { window.slSim3dOnContenedorCustom_(key, dbContenedores[key]); } catch (eReg) { /* noop */ }
+    }
 }
 
 function borrarContTipo(key) { delete dbContenedores[key]; updateAllContDropdowns(); showContLibrary(); }
