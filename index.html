@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.94">
+  <link rel="stylesheet" href="styles.css?v=1.0.102">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -617,8 +617,8 @@
             <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
               <h6 class="fw-bold mb-0 me-2"><i class="bi bi-box-seam me-1"></i>Simulador 3D</h6>
               <div class="btn-group btn-group-sm" role="group">
-                <button type="button" class="btn btn-outline-primary" id="slBtnTraerLog" title="Trae empaque y opciones desde Logística"><i class="bi bi-download me-1"></i>Traer desde Logística</button>
-                <button type="button" class="btn btn-primary" id="slBtnOptimizar" onclick="optimizarCarga()"><i class="bi bi-gear me-1"></i>Optimizar</button>
+                <button type="button" class="btn btn-outline-primary" id="slBtnTraerLog" title="Trae las cajas y contenedores de Envío por opción"><i class="bi bi-download me-1"></i>Traer desde Logística</button>
+                <button type="button" class="btn btn-primary" id="slBtnOptimizar" onclick="optimizarCarga()" title="Empaca la Lista de carga en los contenedores de esta opción"><i class="bi bi-gear me-1"></i>Optimizar</button>
                 <button type="button" class="btn btn-outline-success" id="slBtnAplicarLog" title="Escribe el mix validado en Logística"><i class="bi bi-upload me-1"></i>Aplicar a Logística</button>
               </div>
               <div class="btn-group btn-group-sm">
@@ -643,13 +643,9 @@
                 <span>H</span><input type="number" id="cc-h" class="form-control form-control-sm" style="width:70px" value="239" onchange="actualizarCustomDimensions()">
                 <span>Kg</span><input type="number" id="cc-kg" class="form-control form-control-sm" style="width:80px" value="26500" onchange="actualizarCustomDimensions()">
               </div>
-              <div class="form-check form-check-inline mb-0">
-                <input class="form-check-input" type="checkbox" id="slIncluirPdf">
-                <label class="form-check-label small" for="slIncluirPdf">Incluir vista 3D en PDF</label>
-              </div>
             </div>
 
-            <div id="slAvisoVacio" class="alert alert-info py-2 px-3 small mb-2">Abre una cotización en Logística y entra a esta pestaña: la carga se trae sola. También puedes pulsar <b>Traer desde Logística</b> o cargar CSV / .load.</div>
+            <div id="slAvisoVacio" class="alert alert-info py-2 px-3 small mb-2">Flujo: <b>Traer</b> → edita <b>Lista de Agrupación</b> (estiba / master / huacal) → <b>Optimizar</b> → <b>Aplicar a Logística</b>. <span class="text-muted">Vista 3D PDF desactivada (paginación = producción).</span></div>
             <ul class="nav nav-pills gap-1 mb-2 flex-wrap" id="slEscenariosTabs" role="tablist"></ul>
 
             <div class="row g-3">
@@ -699,7 +695,28 @@
                     <div class="small text-muted" id="len-text">0 / 0 cm</div>
                   </div>
                 </div>
-                <div class="log-card">
+                <div class="log-card mb-3" id="slPanelListaModulos">
+                  <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Lista de Agrupación</h6>
+                    <div class="btn-group btn-group-sm">
+                      <button type="button" class="btn btn-outline-secondary" onclick="typeof slEditarAgrupacionSel==='function'&&slEditarAgrupacionSel()" title="Editar agrupación"><i class="bi bi-pencil"></i></button>
+                      <button type="button" class="btn btn-outline-primary" onclick="typeof slDuplicarAgrupacionOpciones==='function'&&slDuplicarAgrupacionOpciones()" title="Duplicar agrupaciones a las otras opciones"><i class="bi bi-copy"></i></button>
+                    </div>
+                  </div>
+                  <div class="sl-agrup-live mb-2" id="slAgrupLive">
+                    <label class="small text-muted mb-0" for="slAgrupContTipo">Contenedor de esta opción</label>
+                    <select id="slAgrupContTipo" class="form-select form-select-sm mb-1" title="Cambia el equipo; la simulación 3D se actualiza"></select>
+                    <div class="small fw-semibold" id="slAgrupStats">—</div>
+                  </div>
+                  <p class="small text-muted mb-2" id="slModulosHint">Al editar estiba / master / huacal, el 3D y este resumen se actualizan en vivo.</p>
+                  <div class="table-responsive sl-table-wrap">
+                    <table class="table table-sm table-hover align-middle mb-0" id="sl-modulos-table">
+                      <thead class="table-light"><tr><th></th><th>Cant</th><th>Caja / Agrupación</th><th>An</th><th>Lar</th><th>Al</th><th></th></tr></thead>
+                      <tbody id="sl-modulos-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="log-card" id="slPanelListaCarga">
                   <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="mb-0">Lista de carga</h6>
                     <div class="btn-group btn-group-sm">
@@ -711,7 +728,7 @@
                   </div>
                   <div class="table-responsive sl-table-wrap">
                     <table class="table table-sm table-hover align-middle mb-0" id="pack-table">
-                      <thead class="table-light"><tr><th></th><th>Cant</th><th>Descripción</th><th>An</th><th>Lar</th><th>Al</th><th>Kg</th></tr></thead>
+                      <thead class="table-light"><tr><th></th><th>Cant</th><th>Descripción</th><th>An</th><th>Lar</th><th>Al</th><th>Kg</th><th></th></tr></thead>
                       <tbody id="table-body"></tbody>
                     </table>
                   </div>
@@ -740,6 +757,70 @@
         <button type="button" class="btn btn-sm btn-outline-primary w-100" onclick="showNewContForm()">Nuevo tipo</button>
       </div>
       <div id="cont-main-area" class="flex-grow-1 p-3 overflow-auto"></div>
+    </div>
+  </div>
+
+  <div id="modal-agrupacion" class="sl-modal draggable-modal" style="display:none;width:min(720px,96vw)">
+    <div class="sl-modal-h" id="modal-agrupacion-header"><span>Agrupación de cajas</span><button type="button" class="btn-close btn-close-white" onclick="slCerrarAgrupacion()"></button></div>
+    <div class="sl-modal-b">
+      <input type="hidden" id="ag-id">
+      <div class="row g-3">
+        <div class="col-md-7">
+          <div class="mb-2"><div class="fw-semibold" id="ag-desc">Caja</div><div class="small text-muted" id="ag-dims">—</div></div>
+          <div class="row g-2 mb-2">
+            <div class="col-4"><label class="form-label small mb-0">Cajas totales</label><input type="number" id="ag-total" class="form-control form-control-sm" min="1" step="1"></div>
+            <div class="col-8"><label class="form-label small mb-0">Tipo de agrupación</label>
+              <select id="ag-modo" class="form-select form-select-sm">
+                <option value="ninguna">Sin agrupar (caja suelta)</option>
+                <option value="pallet">Estiba / pallet</option>
+                <option value="master">Caja master</option>
+                <option value="huacal">Huacal</option>
+              </select>
+            </div>
+          </div>
+          <div class="mb-2"><label class="form-label small mb-0">Posición de la caja en el grupo</label>
+            <select id="ag-ori" class="form-select form-select-sm"></select>
+          </div>
+          <div class="row g-2 mb-2">
+            <div class="col-4"><label class="form-label small mb-0" title="Cajas en ancho">nx</label><input type="number" id="ag-nx" class="form-control form-control-sm" min="1" step="1" value="1"></div>
+            <div class="col-4"><label class="form-label small mb-0" title="Cajas en largo">ny</label><input type="number" id="ag-ny" class="form-control form-control-sm" min="1" step="1" value="1"></div>
+            <div class="col-4"><label class="form-label small mb-0" title="Capas">nz</label><input type="number" id="ag-nz" class="form-control form-control-sm" min="1" step="1" value="1"></div>
+          </div>
+          <div class="row g-2 mb-2" id="ag-grupos-row">
+            <div class="col-6">
+              <label class="form-label small mb-0" id="ag-n-grupos-lbl">Cant. agrupaciones</label>
+              <input type="number" id="ag-n-grupos" class="form-control form-control-sm" min="0" step="1" value="0" title="Baja esta cantidad para liberar cajas sueltas">
+            </div>
+            <div class="col-6 d-flex align-items-end">
+              <div class="small text-muted" id="ag-grupos-hint">Máx. según rejilla</div>
+            </div>
+          </div>
+          <div class="small text-muted mb-2" id="ag-grid-info">Por grupo: 1 · Grupos: 0 · Sueltas: 0</div>
+          <div id="ag-master-block" class="border rounded p-2 mb-2 d-none">
+            <div class="small fw-semibold mb-1">Caja master (exterior, +1 cm/lado de espesor)</div>
+            <div class="row g-1">
+              <div class="col-4"><label class="form-label small mb-0">An</label><input type="number" id="ag-mw" class="form-control form-control-sm" step="0.1"></div>
+              <div class="col-4"><label class="form-label small mb-0">Lar</label><input type="number" id="ag-md" class="form-control form-control-sm" step="0.1"></div>
+              <div class="col-4"><label class="form-label small mb-0">Al</label><input type="number" id="ag-mh" class="form-control form-control-sm" step="0.1"></div>
+            </div>
+            <div class="small text-muted mt-1" id="ag-master-hint">Sugerido según rejilla</div>
+          </div>
+          <div id="ag-unit-preview" class="small border rounded p-2 mb-2 bg-light">Unidad: —</div>
+          <div class="fw-semibold small mb-1">Restricciones (cajas sueltas / individuales)</div>
+          <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="ag-no-tilt"><label class="form-check-label small" for="ag-no-tilt">No inclinar</label></div>
+          <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="ag-no-turn"><label class="form-check-label small" for="ag-no-turn">No rotar</label></div>
+          <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="ag-floor"><label class="form-check-label small" for="ag-floor">Solo piso</label></div>
+        </div>
+        <div class="col-md-5">
+          <div class="small fw-semibold mb-1">Vista 3D de la agrupación</div>
+          <div id="ag-mini3d" class="ag-mini3d border rounded"></div>
+          <div class="small text-muted mt-1">Gira sola · refleja nx×ny×nz y el tipo elegido</div>
+        </div>
+      </div>
+    </div>
+    <div class="sl-modal-f">
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="slCerrarAgrupacion()">Cancelar</button>
+      <button type="button" class="btn btn-sm btn-primary" onclick="slGuardarAgrupacion()">Aplicar a Lista de carga</button>
     </div>
   </div>
 
@@ -888,6 +969,42 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button type="button" class="btn btn-diforma-blue" data-lacc="ok">Aplicar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="modalLogSim3d" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header sb-modal-header">
+          <div>
+            <h5 class="modal-title">Vista 3D en la hoja</h5>
+            <p class="sb-modal-sub mb-0">Ajusta tamaño y posición en el PDF. La captura en sí se hace en Simulador 3D.</p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="logSim3dUid" value="">
+          <label class="form-label small fw-semibold">Ancho en la página</label>
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <input type="range" class="form-range flex-grow-1" id="logSim3dAncho" min="40" max="100" step="5" value="100">
+            <span class="small text-nowrap" id="logSim3dAnchoLbl">100%</span>
+          </div>
+          <label class="form-label small fw-semibold">Alineación</label>
+          <div class="btn-group w-100" role="group" id="logSim3dAlignGroup">
+            <button type="button" class="btn btn-outline-secondary" data-align="left">Izquierda</button>
+            <button type="button" class="btn btn-outline-secondary active" data-align="center">Centro</button>
+            <button type="button" class="btn btn-outline-secondary" data-align="right">Derecha</button>
+          </div>
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" id="logSim3dSalto" checked>
+            <label class="form-check-label small" for="logSim3dSalto">Empezar en página nueva (sin encabezado de columnas)</label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-diforma-blue" id="logSim3dOk">Aplicar</button>
         </div>
       </div>
     </div>
@@ -1383,27 +1500,35 @@
                 <header class="admin-card-head">
                   <div>
                     <h3 class="admin-card-title">Unidades de carga</h3>
-                    <p class="admin-card-desc">Al Traer desde Logística, el Simulador 3D convierte las cajas de Costos en huacal, master o pallet según umbrales y el catálogo de abajo. Costos sigue cotizando und/caja; esto solo afecta la simulación.</p>
+                    <p class="admin-card-desc">El botón <strong>Modular carga</strong> convierte cajas en master/pallet custom/huacal (prioridad: más paletizado, menos sueltas). Opcionalmente puede hacerse al Traer. Costos sigue cotizando und/caja.</p>
                   </div>
                   <button type="button" class="btn admin-btn" onclick="slSim3dRestaurarDefaultsUI()"><i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar defaults</button>
                 </header>
                 <div class="admin-card-body">
                   <div class="row g-3 mb-3">
-                    <div class="col-md-3 admin-field">
+                    <div class="col-md-2 admin-field">
                       <label for="sim3dUmbralCm">Huacal si max lado ≥ (cm)</label>
-                      <input type="number" id="sim3dUmbralCm" class="form-control form-control-sm" min="1" step="1" value="80">
+                      <input type="number" id="sim3dUmbralCm" class="form-control form-control-sm" min="1" step="1" value="200">
                     </div>
-                    <div class="col-md-3 admin-field">
+                    <div class="col-md-2 admin-field">
                       <label for="sim3dUmbralKg">Huacal si peso ≥ (kg)</label>
-                      <input type="number" id="sim3dUmbralKg" class="form-control form-control-sm" min="0" step="0.1" value="40">
+                      <input type="number" id="sim3dUmbralKg" class="form-control form-control-sm" min="0" step="0.1" value="120">
                     </div>
-                    <div class="col-md-3 admin-field">
+                    <div class="col-md-2 admin-field">
                       <label for="sim3dHolgura">Holgura huacal (cm/lado)</label>
                       <input type="number" id="sim3dHolgura" class="form-control form-control-sm" min="0" step="0.5" value="5">
                     </div>
-                    <div class="col-md-3 admin-field">
+                    <div class="col-md-2 admin-field">
                       <label for="sim3dDeckH">Alto deck pallet (cm)</label>
                       <input type="number" id="sim3dDeckH" class="form-control form-control-sm" min="1" step="0.1" value="14.4">
+                    </div>
+                    <div class="col-md-2 admin-field">
+                      <label for="sim3dMaxCapas" title="Tope de capas al apilar cajas en pallet (estándar o a medida).">Máx. capas / pallet</label>
+                      <input type="number" id="sim3dMaxCapas" class="form-control form-control-sm" min="1" step="1" value="3">
+                    </div>
+                    <div class="col-md-2 admin-field">
+                      <label for="sim3dMaxLadoPal" title="Huella máxima del pallet custom (cm). Evita tarimas gigantes; el resto del Q va en cajas sueltas (2.º piso).">Máx. lado pallet custom</label>
+                      <input type="number" id="sim3dMaxLadoPal" class="form-control form-control-sm" min="40" step="1" value="160">
                     </div>
                   </div>
                   <div class="row g-3 mb-3">
@@ -1421,11 +1546,11 @@
                     </div>
                   </div>
                   <div class="d-flex flex-wrap gap-3 mb-2">
-                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dAutoFcl" checked> Paletizar al Traer en FCL</label>
-                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dAutoLcl" checked> Paletizar al Traer en LCL</label>
-                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dCajaAereo" checked> Aéreo: dejar caja suelta</label>
+                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dAutoFcl"> Modular al Traer en FCL</label>
+                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dAutoLcl"> Modular al Traer en LCL</label>
+                    <label class="small mb-0 d-flex align-items-center gap-1"><input type="checkbox" id="sim3dCajaAereo" checked> Aéreo al Traer: dejar caja suelta</label>
                   </div>
-                  <small class="text-muted d-block">Si la caja es grande o pesada → huacal. Si no → master (plantilla o auto) y luego pallet según el país de destino de la cotización.</small>
+                  <small class="text-muted d-block">Flujo recomendado: Traer → Modular → Optimizar. Estándar si cabe; si no, pallet custom (máx. cajas en pallet, mín. sueltas). Huacal solo si no hay rejilla útil y cruza umbral.</small>
                 </div>
               </section>
               <section class="admin-card">
@@ -1812,12 +1937,12 @@
   <script src="connectors.js?v=1.0.46"></script>
   <script src="ia-core.js?v=1.0.49"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.181"></script>
+  <script src="logistica.js?v=1.0.221"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
-  <script src="smartload/viewer3d.js?v=1.0.2"></script>
-  <script src="smartload/engine.js?v=1.0.2"></script>
-  <script src="simulador3d.js?v=1.0.3"></script>
+  <script src="smartload/viewer3d.js?v=1.0.8"></script>
+  <script src="smartload/engine.js?v=1.0.4"></script>
+  <script src="simulador3d.js?v=1.0.22"></script>
 </body>
 </html>
