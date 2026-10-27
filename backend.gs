@@ -1339,8 +1339,10 @@ function guardarCotizacionBD(p, email) {
         var m = String(im.data).match(/^data:([^;]+);base64,(.+)$/);
         if (!m) return;
         if (!carpeta) carpeta = carpetaCotizaciones_();
-        var nombre = id + "_r" + rev + "_" + String(im.k).replace(/[^\w]/g, "_") + ".jpg";
-        var file = carpeta.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], nombre));
+        var mime = m[1] || "image/jpeg";
+        var ext = /json/i.test(mime) ? ".json" : (/png/i.test(mime) ? ".png" : ".jpg");
+        var nombre = id + "_r" + rev + "_" + String(im.k).replace(/[^\w]/g, "_") + ext;
+        var file = carpeta.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), mime, nombre));
         publicarArchivoCotizacion_(file);
         refs[im.k] = file.getId();
         return;
@@ -1355,6 +1357,30 @@ function guardarCotizacionBD(p, email) {
       if (refs[f.uid + ":img"]) f.imgRef = refs[f.uid + ":img"];
       if (refs[f.uid + ":src"]) f.srcRef = refs[f.uid + ":src"];
     });
+    /* Vista 3D del simulador: imágenes y bundle JSON en Drive; en la hoja solo refs. */
+    if (!datos.env || typeof datos.env !== "object") datos.env = {};
+    if (refs["sim3d:base"]) {
+      datos.env.sim3dImgRef = refs["sim3d:base"];
+      delete datos.env.sim3dImg;
+    }
+    if (refs["sim3d:bundle"]) {
+      datos.sim3dRef = refs["sim3d:bundle"];
+      datos.env.sim3dRef = refs["sim3d:bundle"];
+      datos.sim3d = { v: (datos.sim3d && datos.sim3d.v) || 1, activo: (datos.sim3d && datos.sim3d.activo) || 0, drive: true };
+    }
+    if (!datos.env.porEsc || typeof datos.env.porEsc !== "object") datos.env.porEsc = {};
+    Object.keys(refs).forEach(function (k) {
+      if (k.indexOf("sim3d:") !== 0 || k === "sim3d:base" || k === "sim3d:bundle") return;
+      var escId = k.substring(6);
+      if (!datos.env.porEsc[escId]) datos.env.porEsc[escId] = {};
+      datos.env.porEsc[escId].sim3dImgRef = refs[k];
+      delete datos.env.porEsc[escId].sim3dImg;
+      delete datos.env.porEsc[escId].sim3dState;
+    });
+    delete datos.env.sim3dImg;
+    delete datos.env.sim3dBundle;
+    delete datos.env.sim3dState;
+    if (datos.sim3d) datos.sim3d.captures = {};
     var json = JSON.stringify(datos);
     if (json.length > COT_CHUNK_ * 4) return { exito: false, mensaje: "La cotización es demasiado grande para guardarse (reduce filas o textos)." };
     var partes = [];

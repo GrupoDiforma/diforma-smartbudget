@@ -66,7 +66,7 @@ function descargarPlantillaCSV() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", "Plantilla_Carga_SmartLoad.csv");
+    link.setAttribute("download", "Plantilla_Carga_Simulador3D_SmartBudget.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -212,7 +212,7 @@ function updateAllContDropdowns() {
     selects.forEach(id => {
         let el = document.getElementById(id); if(!el) return; let currentVal = el.value; el.innerHTML = '';
         for(let key in dbContenedores) { let opt = document.createElement('option'); opt.value = key; opt.text = dbContenedores[key].nombre; el.appendChild(opt); }
-        if(dbContenedores[currentVal]) el.value = currentVal; if(!currentVal && id === 'ribbon-cont-type') el.value = '40ft';
+        if(dbContenedores[currentVal]) el.value = currentVal; if(!currentVal && id === 'ribbon-cont-type') el.value = '40hc';
     });
 }
 
@@ -581,17 +581,43 @@ function duplicarItemLista() {
 function borrarItemLista() { if(!selectedGroupId) return; listaEmpaque = listaEmpaque.filter(i => String(i.id) !== String(selectedGroupId)); selectedGroupId = null; actualizarTabla(); optimizarCarga(); }
 
 function actualizarTabla() {
-  const tbody = document.getElementById('table-body'); let html = '';
+  const tbody = document.getElementById('table-body'); if (!tbody) return; let html = '';
   listaEmpaque.forEach(item => {
+    const idEsc = String(item.id).replace(/'/g, "\\'");
     const isSel = String(item.id) === String(selectedGroupId) ? 'selected' : ''; 
-    let icono = item.shape === 'barrel' ? '🛢️' : (item.shape === 'pallet' ? '🪵' : '📦'); 
+    let icono = item.shape === 'barrel' ? '🛢️' : (item.shape === 'pallet' ? '🪵' : (item.shape === 'huacal' ? '🏗️' : '📦')); 
     if(item.dangerous) icono = '☣️ ' + icono;
     
     let tieneBloqueados = instanciasCajas.some(inst => String(inst.groupId) === String(item.id) && inst.locked);
     if (tieneBloqueados) icono = '🔒 ' + icono;
 
-    html += `<tr class="${isSel}" data-id="${item.id}" onclick="seleccionarFila('${item.id}')" ondblclick="editarItemLista('${item.id}')"><td><div class="color-box" style="background-color: ${item.color};"></div></td><td style="text-align:right;">${item.qty}</td><td>${icono} ${item.desc}</td><td style="text-align:right;">${item.w}</td><td style="text-align:right;">${item.d}</td><td style="text-align:right;">${item.h}</td><td style="text-align:right;">${item.weight}</td></tr>`;
+    html += `<tr class="${isSel}" data-id="${item.id}" onclick="seleccionarFila('${idEsc}')" ondblclick="editarItemLista('${idEsc}')">` +
+      `<td><div class="color-box" style="background-color: ${item.color};"></div></td>` +
+      `<td style="text-align:right;">${item.qty}</td>` +
+      `<td>${icono} ${item.desc}</td>` +
+      `<td style="text-align:right;">${item.w}</td>` +
+      `<td style="text-align:right;">${item.d}</td>` +
+      `<td style="text-align:right;">${item.h}</td>` +
+      `<td style="text-align:right;">${item.weight}</td>` +
+      `<td class="sl-row-actions" onclick="event.stopPropagation()">` +
+        `<button type="button" class="btn btn-link btn-sm p-0 px-1" title="Editar" onclick="editarItemLista('${idEsc}')"><i class="bi bi-pencil"></i></button>` +
+        `<button type="button" class="btn btn-link btn-sm p-0 px-1" title="Duplicar" onclick="duplicarItemListaId('${idEsc}')"><i class="bi bi-files"></i></button>` +
+        `<button type="button" class="btn btn-link btn-sm p-0 px-1 text-danger" title="Eliminar" onclick="borrarItemListaId('${idEsc}')"><i class="bi bi-trash"></i></button>` +
+      `</td></tr>`;
   }); tbody.innerHTML = html;
+  if (typeof window.slAfterListaCargaUpdate === 'function') window.slAfterListaCargaUpdate();
+}
+
+function duplicarItemListaId(id) {
+  if (!id) return;
+  selectedGroupId = String(id);
+  duplicarItemLista();
+}
+
+function borrarItemListaId(id) {
+  if (!id) return;
+  selectedGroupId = String(id);
+  borrarItemLista();
 }
 
 function sincronizarInstancias() {
@@ -604,7 +630,7 @@ function sincronizarInstancias() {
          for(let i=instanciasCajas.length-1; i>=0 && toRemove>0; i--) { if(String(instanciasCajas[i].groupId) === String(item.id) && !instanciasCajas[i].locked) { instanciasCajas.splice(i, 1); toRemove--; } }
          for(let i=instanciasCajas.length-1; i>=0 && toRemove>0; i--) { if(String(instanciasCajas[i].groupId) === String(item.id)) { instanciasCajas.splice(i, 1); toRemove--; } }
      }
-     instanciasCajas.forEach(inst => { if(String(inst.groupId) === String(item.id)) { inst.shape = item.shape || 'box'; inst.w = item.w; inst.d = item.d; inst.h = item.h; inst.weight = item.weight; inst.color = item.color; inst.noTurn = item.noTurn; inst.noTilt = item.noTilt; inst.onFloor = item.onFloor; } });
+     instanciasCajas.forEach(inst => { if(String(inst.groupId) === String(item.id)) { inst.shape = item.shape || 'box'; inst.w = item.w; inst.d = item.d; inst.h = item.h; inst.weight = item.weight; inst.color = item.color; inst.noTurn = item.noTurn; inst.noTilt = item.noTilt; inst.onFloor = item.onFloor; inst.slMeta = item.slMeta || null; } });
   });
 }
 
@@ -701,7 +727,29 @@ function optimizarCarga() {
         if (data.status === 'exito') {
             contenedoresFisicos = data.contenedoresFisicos;
             instanciasCajas = data.instanciasCajas;
+            /* Reinyecta slMeta/shape desde lista (el worker puede no preservar todo). */
+            if (typeof listaEmpaque !== 'undefined') {
+                let byId = {};
+                listaEmpaque.forEach(function (it) { byId[String(it.id)] = it; });
+                instanciasCajas.forEach(function (inst) {
+                    let src = byId[String(inst.groupId)];
+                    if (!src) return;
+                    if (src.shape) inst.shape = src.shape;
+                    if (src.slMeta) inst.slMeta = src.slMeta;
+                });
+                contenedoresFisicos.forEach(function (c) {
+                    (c.cajas || []).forEach(function (caja) {
+                        let src = byId[String(caja.groupId)];
+                        if (!src) return;
+                        if (src.shape) caja.shape = src.shape;
+                        if (src.slMeta) caja.slMeta = src.slMeta;
+                    });
+                });
+            }
             actualizarUIContenedores();
+            if (typeof window.slAfterOptimizar === "function") {
+                try { window.slAfterOptimizar(); } catch (eAf) { /* noop */ }
+            }
         } else {
             alert("Error en el algoritmo de optimización:\n" + data.mensaje);
         }

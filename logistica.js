@@ -6238,7 +6238,7 @@ function logHtmlTarjetaFila_(fila, idioma, vers, p, escs) {
         }
         const estado = datos.img
             ? "<span class=\"small text-success\"><i class=\"bi bi-check2-circle\"></i> Captura lista</span>"
-            : "<span class=\"small text-muted\">Sin captura — Simulador 3D → Vista 3D PDF</span>";
+            : "<span class=\"small text-muted\">Sin captura en PDF (Simulador 3D solo aplica mix a Envío)</span>";
         const thumb = datos.img
             ? "<img src=\"" + String(datos.img).replace(/"/g, "") + "\" alt=\"\" style=\"max-height:48px;border:1px solid #ddd;border-radius:4px;\">"
             : "<i class=\"bi bi-box\" style=\"font-size:1.4rem;opacity:.45\"></i>";

@@ -150,7 +150,7 @@ function obtenerRotaciones(caja) {
     let d = Math.max(0.1, parseFloat(caja.d || 1));
 
     let noTurn = caja.noTurn || false;
-    let noTilt = caja.noTilt || (caja.shape === 'pallet');
+    let noTilt = caja.noTilt || (caja.shape === 'pallet') || (caja.shape === 'huacal');
 
     let rots = [{ w, h, d }];
     if (!noTurn) {
@@ -272,14 +272,14 @@ function empaquetarUnContenedor(cajasDisponibles, cont, contIdx, st) {
             let itemH = parseFloat(c.h || 1);
             
             let isSmallItem = (st.smallVolThreshold > 0) && (unitVol < st.smallVolThreshold || itemH < 25);
-            let isRestricted = (c.shape === 'pallet' || c.onFloor) || (!isSmallItem && (c.noTilt || c.noTurn));
+            let isRestricted = (c.shape === 'pallet' || c.shape === 'huacal' || c.onFloor) || (!isSmallItem && (c.noTilt || c.noTurn));
 
             groupMap[sig] = {
                 sample: c,
                 qty: 0,
                 items: [],
                 is_restricted: isRestricted,
-                is_pallet: (c.shape === 'pallet' || c.onFloor) ? 1 : 0,
+                is_pallet: (c.shape === 'pallet' || c.shape === 'huacal' || c.onFloor) ? 1 : 0,
                 unit_vol: unitVol
             };
             groupOrder.push(sig);

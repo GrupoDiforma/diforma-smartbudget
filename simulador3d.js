@@ -1,6 +1,7 @@
 /**
- * simulador3d.js — Puente SmartBudget ↔ motor SmartLoad (pestaña Simulador 3D).
- * Escenarios multi-opción, traer/aplicar Logística, catálogo master/pallet/huacal, captura PDF.
+ * simulador3d.js — Pestaña Simulador 3D nativa de SmartBudget.
+ * Motor en smartload/ (código embebido del producto). Traer / Optimizar / Aplicar a Logística.
+ * Sin captura de foto hacia el PDF (desconectada a propósito).
  */
 (function () {
     "use strict";
@@ -908,9 +909,7 @@
                 "<div class=\"sl-esc-tab" + (i === slEscActivo ? " active" : "") + "\">" +
                 "<button type=\"button\" class=\"nav-link" + (i === slEscActivo ? " active" : "") + "\" data-sl-esc=\"" + i + "\">" +
                 (e.nombre || ("Opción " + (i + 1))) +
-                "<span class=\"sl-esc-meta\">" + (mixTxt || "") + (n ? " · " + n + " ítems" : "") + "</span></button>" +
-                "<button type=\"button\" class=\"btn btn-sm btn-outline-dark sl-btn-pdf3d\" data-sl-pdf=\"" + i + "\" title=\"Captura isométrica y la pone al final de esta opción en el PDF\">" +
-                "<i class=\"bi bi-camera\"></i> Vista 3D PDF</button></div></li>";
+                "<span class=\"sl-esc-meta\">" + (mixTxt || "") + (n ? " · " + n + " ítems" : "") + "</span></button></div></li>";
         }).join("");
     }
 
@@ -2040,7 +2039,7 @@
         var env = logEnv_();
         if (!env.porEsc) env.porEsc = {};
 
-        slEscenarios.forEach(function (esc, ei) {
+        slEscenarios.forEach(function (esc) {
             var mix = mixDesdeContenedores_(esc.contenedoresFisicos);
             var met = metricasDesdeContenedores_(esc.contenedoresFisicos);
             var nota = "Simulador 3D: " + met.ocupacionPct + "% occ · " + met.m3 + " m³ · " + met.kg + " kg · " + resumenUnidades_(esc.listaEmpaque);
@@ -2050,18 +2049,13 @@
                 st.contenedores = mix;
                 st.contenedoresManual = true;
                 st.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
+                delete st.sim3dImg;
             } else {
                 env.contenedores = mix;
                 env.contenedoresManual = true;
                 env.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
+                delete env.sim3dImg;
             }
-            /* Activar escenario para capturar su 3D (no la vista de otro). */
-            try {
-                if (ei !== slEscActivo) activarEscenario_(ei);
-                setModoVista_("contenedor");
-                if (typeof construirEscena3D === "function") construirEscena3D();
-            } catch (eCap) { /* noop */ }
-            capturarVista_(esc);
         });
 
         if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv();
@@ -2069,7 +2063,7 @@
         if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
         if (typeof logisticaPintarFilas_ === "function") logisticaPintarFilas_();
         if (typeof logisticaActualizarVista === "function") logisticaActualizarVista();
-        toast_("Envío actualizado con el mix 3D. Usa «Vista 3D PDF» en cada opción para el documento.");
+        toast_("Envío actualizado con el mix del Simulador 3D (ocupación / m³ / kg).");
     }
 
     /**
@@ -2179,13 +2173,10 @@
         }
     }
 
-    /**
-     * Captura → PDF desconectada (paginación alineada a producción).
-     * El Simulador 3D sigue: Traer / Optimizar / Aplicar a Logística.
-     */
+    /** Foto → PDF desconectada: el Simulador no escribe capturas en la cotización. */
     function agregarVista3dPdf_(idx) {
         void idx;
-        toast_("Vista 3D en el PDF está desactivada por ahora (paginación de producción). El Simulador sigue disponible.");
+        toast_("El Simulador 3D no envía fotos al PDF. Usa Traer → Optimizar → Aplicar a Logística.");
     }
 
     window.slPdfCapturesParaHoja = function () {
@@ -2372,12 +2363,6 @@
         var tabs = document.getElementById("slEscenariosTabs");
         if (tabs) {
             tabs.addEventListener("click", function (ev) {
-                var pdfBtn = ev.target.closest("[data-sl-pdf]");
-                if (pdfBtn) {
-                    ev.preventDefault();
-                    agregarVista3dPdf_(Number(pdfBtn.getAttribute("data-sl-pdf")));
-                    return;
-                }
                 var b = ev.target.closest("[data-sl-esc]");
                 if (!b) return;
                 activarEscenario_(Number(b.getAttribute("data-sl-esc")));

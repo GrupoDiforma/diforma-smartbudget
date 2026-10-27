@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.102">
+  <link rel="stylesheet" href="styles.css?v=1.0.110">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -645,7 +645,7 @@
               </div>
             </div>
 
-            <div id="slAvisoVacio" class="alert alert-info py-2 px-3 small mb-2">Flujo: <b>Traer</b> → edita <b>Lista de Agrupación</b> (estiba / master / huacal) → <b>Optimizar</b> → <b>Aplicar a Logística</b>. <span class="text-muted">Vista 3D PDF desactivada (paginación = producción).</span></div>
+            <div id="slAvisoVacio" class="alert alert-info py-2 px-3 small mb-2">Flujo: <b>Traer</b> → edita <b>Lista de Agrupación</b> (estiba / master / huacal) → <b>Optimizar</b> → <b>Aplicar a Logística</b> (mix y métricas en Envío; sin foto en el PDF).</div>
             <ul class="nav nav-pills gap-1 mb-2 flex-wrap" id="slEscenariosTabs" role="tablist"></ul>
 
             <div class="row g-3">
@@ -974,13 +974,14 @@
     </div>
   </div>
 
+  <!-- Modal legado (foto→PDF desconectada). Se conserva por si se reactiva el layout en hoja. -->
   <div class="modal fade" id="modalLogSim3d" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header sb-modal-header">
           <div>
             <h5 class="modal-title">Vista 3D en la hoja</h5>
-            <p class="sb-modal-sub mb-0">Ajusta tamaño y posición en el PDF. La captura en sí se hace en Simulador 3D.</p>
+            <p class="sb-modal-sub mb-0">Función desactivada: el Simulador 3D ya no coloca capturas en el PDF.</p>
           </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
@@ -1937,12 +1938,12 @@
   <script src="connectors.js?v=1.0.46"></script>
   <script src="ia-core.js?v=1.0.49"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.221"></script>
+  <script src="logistica.js?v=1.0.222"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
-  <script src="smartload/viewer3d.js?v=1.0.8"></script>
-  <script src="smartload/engine.js?v=1.0.4"></script>
-  <script src="simulador3d.js?v=1.0.22"></script>
+  <script src="smartload/viewer3d.js?v=1.0.10"></script>
+  <script src="smartload/engine.js?v=1.0.5"></script>
+  <script src="simulador3d.js?v=1.0.23"></script>
 </body>
 </html>
