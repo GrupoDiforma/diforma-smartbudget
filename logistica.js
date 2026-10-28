@@ -8617,8 +8617,9 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".hdr-logo{position:absolute;right:15%;top:.26in;height:.7in;width:auto}" +
         ".hdr-dots{position:absolute;right:.5in;top:.56in;width:.5in;height:.34in;background:radial-gradient(circle,#c4c4c4 1.3px,transparent 1.7px) 0 0/10px 10px}" +
         ".hdr-ref{position:absolute;left:var(--mx);top:.14in;font-size:7pt;color:#9a9a9a;letter-spacing:.03em;z-index:2}" +
-        /* membrete: pie */
+        /* membrete: pie — en .page va absoluto al fondo (Chrome print ignora flex-grow del body). */
         ".ftr{position:relative;z-index:2;width:100%;height:auto;min-height:var(--ftr-h);flex:0 0 auto;overflow:hidden;background:#fff;padding:0 var(--mx);display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:.08in}" +
+        ".page>.ftr{position:absolute;left:0;right:0;bottom:0;height:var(--ftr-h);min-height:var(--ftr-h);max-height:var(--ftr-h);flex:none;box-sizing:border-box}" +
         ".ftr-line{position:relative;border-top:1px solid #d9d9d9;margin-bottom:.1in;height:0}" +
         ".ftr-line i{position:absolute;right:0;top:-5px;width:9px;height:9px;background:#555}" +
         ".ftr-row{display:flex;align-items:center;gap:.28in}" +
@@ -8721,11 +8722,11 @@ function logisticaConstruirHTML(opts, imprimir) {
         "body.rz-on.rz-row,body.rz-on.rz-row *{cursor:row-resize!important}" +
         "body{background:#e6e8ee}" +
         ".page{width:8.5in;height:11in;margin:0 auto 18px;background:#fff;box-shadow:0 8px 28px rgba(0,0,0,.18);display:flex;flex-direction:column;position:relative;overflow:hidden}" +
-        /* Chrome print descarta padding en flex-grow; el margen va en .page-inner (bloque). */
-        ".page-body{flex:1 1 auto;min-height:0;overflow:hidden;padding:0}" +
-        ".page-inner{margin:0 var(--mx);padding-bottom:.28in;box-sizing:border-box;min-width:0}" +
+        /* Reserva el alto del pie: Chrome print no respeta flex-grow para empujar el .ftr. */
+        ".page-body{flex:1 1 auto;min-height:0;overflow:hidden;padding:0;padding-bottom:calc(var(--ftr-h) + .06in);box-sizing:border-box}" +
+        ".page-inner{margin:0 var(--mx);padding-bottom:.12in;box-sizing:border-box;min-width:0}" +
         ".page.crece .page-body{overflow:visible}" +
-        ".page .pnum{position:absolute;right:var(--mx);bottom:.1in;font-size:7.5pt;color:#777}" +
+        ".page .pnum{position:absolute;right:var(--mx);bottom:calc(var(--ftr-h) + .04in);font-size:7.5pt;color:#777;z-index:3}" +
         ".page.crece{height:auto;min-height:11in;overflow:visible}" +
         ".sp-h,.sp-f{display:none}" +
         "body.paginado .sheet{display:none}" +
@@ -8739,11 +8740,12 @@ function logisticaConstruirHTML(opts, imprimir) {
         ".ln:has(.ed:empty){display:none}" +
         "body.paginado .sheet{display:none!important}" +
         "body.paginado .pages{display:block!important;zoom:1!important;transform:none!important;width:8.5in!important;margin:0!important;padding:0!important}" +
-        "body.paginado .page{width:8.5in!important;height:11in!important;min-height:11in!important;max-width:8.5in!important;margin:0!important;padding:0!important;box-shadow:none!important;page-break-after:always;break-after:page;overflow:hidden!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+        "body.paginado .page{width:8.5in!important;height:11in!important;min-height:11in!important;max-width:8.5in!important;margin:0!important;padding:0!important;box-shadow:none!important;page-break-after:always;break-after:page;overflow:hidden!important;position:relative!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
         "body.paginado .page:last-child{page-break-after:auto;break-after:auto}" +
         "body.paginado .page.crece{height:auto!important;min-height:11in!important;overflow:visible!important}" +
+        "body.paginado .page-body{padding-bottom:calc(var(--ftr-h) + .06in)!important}" +
         "body.paginado .page-inner{margin-left:var(--mx)!important;margin-right:var(--mx)!important}" +
-        "body.paginado .ftr{padding-left:var(--mx)!important;padding-right:var(--mx)!important}" +
+        "body.paginado .page>.ftr{position:absolute!important;left:0!important;right:0!important;bottom:0!important;height:var(--ftr-h)!important;min-height:var(--ftr-h)!important;max-height:var(--ftr-h)!important;padding-left:var(--mx)!important;padding-right:var(--mx)!important}" +
         "body.paginado .page .pnum{display:none}" +
         "body:not(.paginado) .pages{display:none!important}" +
         "body:not(.paginado) .hdr{position:fixed;top:0;left:0;right:0;z-index:5}" +
