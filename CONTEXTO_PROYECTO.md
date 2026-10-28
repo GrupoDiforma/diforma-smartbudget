@@ -432,10 +432,48 @@ Producción en **V3.5** (`main` = `desarrollo` tras `desplegar.sh`). Badge solo 
 
 **4. Catálogo de unidades de carga (Ajustes → Simulador 3D).** Defaults en código (EUR 120×80, ISO1 120×100, GMA 48×40; masters 40×30×30 y 60×40×40; umbrales huacal 80 cm / 40 kg; holgura 5 cm). Editables en Ajustes y guardados en `CONFIG_GLOBAL.sim3d`. Al **Traer**: FCL/LCL paletiza (caja grande/pesada → huacal; si no → master plantilla o apilado directo → pallet según mercado EU→EUR, US/CA/MX→GMA, resto→ISO1); aéreo deja caja suelta por defecto. Costos no se reescribe.
 
-**Pendientes al abrir el chat «Cambios V8»:**
+**Pendientes al abrir el chat «Cambios V8» (cerrados o movidos al checkpoint 28 oct):**
 
-1. Probar Simulador 3D en local con cotización multi-opción FCL real (lista de cajas + Optimizar + Aplicar + verificar palets/huacales).
-2. Pegar `backend.gs` (tarifas Gemini 3.x + calibrar por gasto) si aún no está en la implementación de producción.
-3. Cuando Edwin lo pida: commit + `./desplegar.sh` → V3.6 (o el siguiente) para publicar el Simulador + Ajustes sim3d.
+1. ~~Probar Simulador 3D…~~ → validación continua; módulo publicado en V3.6.
+2. Pegar `backend.gs` si aún faltan acciones nuevas (sigue vigente; ver checkpoint 28 oct).
+3. ~~desplegar → V3.6~~ hecho. Siguiente despliegue: V3.7 (28 oct).
 4. No sync automático de repos SmartLoad ↔ Budget; la copia en `smartload/` es consciente.
+
+---
+
+## CHECKPOINT — 28 oct 2026 (producción V3.7)
+
+Lee este checkpoint y las reglas de la cabecera. No abras chats anteriores salvo que Edwin pegue un enlace. Producción: `https://smartbudget.grupodiforma.com`. Preview local: `http://127.0.0.1:8765/`.
+
+**Publicado hoy (V3.7)** con `desplegar` (`main` = `desarrollo`). Badge solo lo sube el despliegue. No alterar Motor AIU, Márgenes, Catálogos fijos, Comisiones ni textos de Prompts IA. No `guardar_config` salvo que Edwin lo pida. No secretos en frontend ni aquí.
+
+### Qué entró en esta publicación
+
+1. **Sesión liviana (F5 sin congelar).** `localStorage` ya **no** guarda base64 de renders (`archivos`, `imgCotizacion`, `archivosGrupo`). Solo cabecera, matriz, chat e `imgRef`. Tras restaurar, Odoo/Drive cargan en segundo plano. Config/TRM no bloquean el arranque. Pins pendientes intentan subir a Drive (`presupuesto_imagenes`) si el presupuesto ya existe en la nube.
+
+2. **Nombre Proyecto.** Etiqueta renombrada (antes «No. Proyecto»). Formato siempre `código + nombre` (ej. `17716-A EXHIBICION MURO`). Cargar Renders / Odoo usan **Cód. Oportunidad**, nunca un `$` u otro token del nombre.
+
+3. **Pin de cotización en Individual.** Antes solo Grupal. Ahora el botón Cotización está en ambos. En Individual, el render de Odoo se pinea por defecto; se puede +Agregar otro y cambiar el pin. Persistencia en la versión (`imgRef` / `V#: _indiv`). Logística prioriza ese pin sobre Odoo en filas sin pieza.
+
+4. **Guardar cotización con aviso de existentes.** Si se entra a Logística desde Costos sin abrir el historial y ya hay un `C-xxxxx` del mismo proyecto, el modal avisa y ofrece: Rev siguiente (recomendado), reescribir Rev actual, o cotización nueva.
+
+5. **Confirmación in-app.** `mostrarConfirmacionApp` (modal SmartBudget) reemplaza el `confirm()` de Chrome al abrir una cotización guardada con cambios sucios.
+
+6. **Ajustes (jornada previa en el mismo lote).** Renombrar ciudad con cascada + alias; filtros por columna en tablas del modal Ajustes (helper `adminTableFiltros_`).
+
+7. **Load! / `.load` (commit previo).** Export canónico de contenedores y flags reales de ítems.
+
+### Caché `?v=` en `index.html` (Ctrl+F5)
+
+`styles.css 1.0.114` · `admin.js 1.0.84` · `app.js 1.0.62` · `engine.js 1.0.41` · `connectors.js 1.0.50` · `ia-core.js 1.0.50` · `logistica.js 1.0.238` · `export-excel.js 1.0.33` · `simulador3d.js 1.0.30` · `seguridad.js 1.0.26`.
+
+### Obligatorio en Apps Script
+
+Pegar el `backend.gs` del repo y publicar **versión nueva de la misma implementación** (no crear implementación nueva: cambia la URL). Sin eso fallan o quedan a medias: refs de pin Individual (`_indiv`), `presupuesto_imagenes` / `imagenes` en `guardar`, y cualquier acción nueva previa no pegada.
+
+### Pendientes (solo si Edwin lo pide)
+
+1. Confirmar en producción F5 rápido + Cargar Renders Individual + Guardar cotización con aviso (caso 17667-B).
+2. Pegar `backend.gs` si aún no está la versión del 28 oct.
+3. No inventar tarifas ni tocar Ajustes de negocio desde código.
 
