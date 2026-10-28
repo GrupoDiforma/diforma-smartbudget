@@ -287,83 +287,223 @@ function determineDirection(item, caja) {
     return 1;
 }
 
-function generateLoadXML() {
-    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<load xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.daubnet.com/ftp/load1.xsd">\n';
-    xml += '<!-- \nThis is a container load file, created by Diforma SmartLoad!\n  -->\n';
+/** Shapes que Load! (daubnet) entiende; el resto se exporta como box. */
+function loadShapeExport_(shape) {
+    const s = String(shape || "box").toLowerCase();
+    if (s === "pallet" || s === "box" || s === "barrel") return s;
+    return "box";
+}
 
-    contenedoresFisicos.forEach((c, idx) => {
-        xml += `  <container id="c${idx+1}">\n`;
-        xml += `    <width>${Math.round(c.w * 10)}</width>\n`;
-        xml += `    <height>${Math.round(c.h * 10)}</height>\n`;
-        xml += `    <length>${Math.round(c.d * 10)}</length>\n`;
-        xml += `    <maxload>${Math.round(c.maxWeight)}</maxload>\n`;
-        xml += `    <description>Container #${idx+1}</description>\n`;
-        xml += `    <type>${escapeXML(c.nombre || "40' Standard Container")}</type>\n`;
-        xml += `  </container>\n`;
+/** Textos seguros para Load! (evita · y no-ASCII que rompen parsers viejos). */
+function loadSafeText_(str) {
+    return String(str == null ? "" : str)
+        .replace(/[·•]/g, "-")
+        .replace(/[–—]/g, "-")
+        .replace(/[“”«»]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/[^\x09\x0A\x0D\x20-\x7EáéíóúÁÉÍÓÚñÑüÜ°]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+/**
+ * Dimensiones canónicas Load! (mm) por tipo. Si no coinciden con la librería local
+ * de Load!, el contenedor aparece como "(custom)" o no se reconoce.
+ */
+var LOAD_CONT_CANON_MM_ = {
+    "20ft": { type: "20' Standard Container", w: 2330, h: 2356, d: 5918, maxload: 21687 },
+    "40ft": { type: "40' Standard Container", w: 2330, h: 2389, d: 12015, maxload: 26500 },
+    "40hc": { type: "40' High Cube Container", w: 2350, h: 2690, d: 12013, maxload: 26500 }
+};
+
+function loadContExportMm_(c) {
+    const key = String((c && c.tipoKey) || "").toLowerCase();
+    const canon = LOAD_CONT_CANON_MM_[key];
+    if (canon) return canon;
+    return {
+        type: loadSafeText_((c && c.nombre) || "Custom Container") || "Custom Container",
+        w: Math.round((c && c.w ? c.w : 235) * 10),
+        h: Math.round((c && c.h ? c.h : 239) * 10),
+        d: Math.round((c && c.d ? c.d : 1200) * 10),
+        maxload: Math.round((c && c.maxWeight) || 26500)
+    };
+}
+
+/** drawW/H/D (cm) según direction Load! 1..6 (misma tabla al importar). */
+function loadDrawDims_(w, h, d, dir) {
+    w = Number(w) || 0; h = Number(h) || 0; d = Number(d) || 0;
+    switch (parseInt(dir, 10) || 1) {
+        case 2: return { dw: d, dh: h, dd: w };
+        case 3: return { dw: w, dh: d, dd: h };
+        case 4: return { dw: d, dh: w, dd: h };
+        case 5: return { dw: h, dh: w, dd: d };
+        case 6: return { dw: h, dh: d, dd: w };
+        default: return { dw: w, dh: h, dd: d };
+    }
+}
+
+/**
+ * XML .load compatible con Load! (archivos nativos daubnet).
+ * - Sin JSON embebido.
+ * - Contenedores con medidas/tipo de librería Load!.
+ * - Restricciones solo las del ítem; orientación en <direction> (Optimizar puede girar).
+ */
+function generateLoadXML() {
+    const NL = "\r\n";
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>' + NL;
+    xml += '<load  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.daubnet.com/ftp/load1.xsd">' + NL;
+    xml += '<!-- ' + NL;
+    xml += 'This is a container load file, created by Load!' + NL;
+    xml += 'For a free download of Load! go to http://www.daubnet.com/english/load.html' + NL;
+    xml += 'You need version 1.20 or above to access this file' + NL;
+    xml += '  -->' + NL;
+
+    const conts = (contenedoresFisicos && contenedoresFisicos.length)
+        ? contenedoresFisicos
+        : [{ tipoKey: "20ft", nombre: "20' Standard Container", w: 233, h: 235.6, d: 591.8, maxWeight: 21687, cajas: [] }];
+
+    conts.forEach((c, idx) => {
+        const mm = loadContExportMm_(c);
+        xml += '<container id="c' + (idx + 1) + '">' + NL;
+        xml += '  <width>' + mm.w + '</width>' + NL;
+        xml += '  <height>' + mm.h + '</height>' + NL;
+        xml += '  <length>' + mm.d + '</length>' + NL;
+        xml += '  <maxload>' + mm.maxload + '</maxload>' + NL;
+        xml += '  <description>Container #' + (idx + 1) + '</description>' + NL;
+        xml += '  <type>' + escapeXML(mm.type) + '</type>' + NL;
+        xml += '</container>' + NL;
     });
 
-    xml += `  <packinglist>\n`;
+    /*
+     * Un packinglistitem por ítem del Simulador (medidas originales).
+     * Restricciones = solo las del ítem (no forzar noturn/notilt por shape=pallet:
+     * eso hacía que Load! → Optimizar rearmara distinto al Simulador).
+     * Orientación en <direction>; así Optimizar puede girar como nuestro solver.
+     */
+    xml += '  <packinglist>' + NL;
     listaEmpaque.forEach(item => {
-        xml += `    <packinglistitem>\n`;
-        xml += `      <description>${escapeXML(item.desc || 'Item')}</description>\n`;
-        xml += `      <width>${Math.round(item.w * 10)}</width>\n`;
-        xml += `      <height>${Math.round(item.h * 10)}</height>\n`;
-        xml += `      <depth>${Math.round(item.d * 10)}</depth>\n`;
-        if (item.shape) xml += `      <shape>${item.shape}</shape>\n`;
-        if (item.shape === 'pallet') xml += `      <baseheight>150</baseheight>\n`;
-        
-        let colorObj = colorPalette.find(cp => cp.hex === item.color);
-        let colorIdx = colorObj ? colorObj.index : 0;
-        xml += `      <colorindex>${colorIdx}</colorindex>\n`;
-        
-        if (item.noTilt || item.shape === 'pallet') xml += `      <notilt/>\n`;
-        if (item.noTurn || item.shape === 'pallet') xml += `      <noturn/>\n`;
-        if (item.onFloor) xml += `      <floor/>\n`;
+        const shape = loadShapeExport_(item.shape);
+        const colorObj = colorPalette.find(cp => cp.hex === item.color);
+        const colorIdx = colorObj ? colorObj.index : 0;
+        const noTilt = !!item.noTilt;
+        const noTurn = !!item.noTurn;
+        const onFloor = !!item.onFloor;
+        const desc = loadSafeText_(item.desc || "Item") || "Item";
+        const weight = Number(item.weight) > 0 ? Number(item.weight) : 0;
 
-        contenedoresFisicos.forEach((cont, cIdx) => {
-            let cajasDeEsteItem = cont.cajas.filter(c => String(c.groupId) === String(item.id));
-            cajasDeEsteItem.forEach(c => {
-                let dir = determineDirection(item, c);
-                xml += `      <package>\n`;
-                xml += `        <container ref="c${cIdx+1}" />\n`;
-                xml += `        <direction>${dir}</direction>\n`;
-                xml += `        <position-x>${Math.round(c.x * 10)}</position-x>\n`;
-                xml += `        <position-y>${Math.round(c.y * 10)}</position-y>\n`;
-                xml += `        <position-z>${Math.round(c.z * 10)}</position-z>\n`;
-                xml += `      </package>\n`;
+        const pkgs = [];
+        conts.forEach((cont, cIdx) => {
+            (cont.cajas || []).forEach(c => {
+                if (String(c.groupId) !== String(item.id)) return;
+                pkgs.push({ contIdx: cIdx, caja: c });
             });
         });
-        xml += `    </packinglistitem>\n`;
-    });
-    xml += `  </packinglist>\n`;
+        if (!pkgs.length && Array.isArray(instanciasCajas)) {
+            instanciasCajas.forEach(c => {
+                if (String(c.groupId) !== String(item.id)) return;
+                pkgs.push({ contIdx: Math.max(0, parseInt(c.contIdx, 10) || 0), caja: c });
+            });
+        }
 
-    let appData = { appVersion: APP_VERSION, listaEmpaque, instanciasCajas, contenedoresFisicos: contenedoresFisicos.map(c => ({ tipoKey: c.tipoKey, nombre: c.nombre, w: c.w, h: c.h, d: c.d, maxWeight: c.maxWeight, maxVol: c.maxVol })), dbContenedores };
-    xml += `\n  <!-- DiformaSmartLoadData\n${JSON.stringify(appData)}\n  -->\n</load>`; 
+        xml += '    <packinglistitem>' + NL;
+        xml += '      <description>' + escapeXML(desc) + '</description>' + NL;
+        xml += '      <width>' + Math.round(item.w * 10) + '</width>' + NL;
+        xml += '      <height>' + Math.round(item.h * 10) + '</height>' + NL;
+        xml += '      <depth>' + Math.round(item.d * 10) + '</depth>' + NL;
+        if (weight > 0) xml += '      <weight>' + (Math.round(weight * 1000) / 1000) + '</weight>' + NL;
+        xml += '      <shape>' + shape + '</shape>' + NL;
+        if (shape === "pallet") xml += '      <baseheight>150</baseheight>' + NL;
+        xml += '      <colorindex>' + colorIdx + '</colorindex>' + NL;
+        if (noTilt) xml += '      <notilt/>' + NL;
+        if (noTurn) xml += '      <noturn/>' + NL;
+        if (onFloor) xml += '      <bottommost/>' + NL;
+
+        if (pkgs.length) {
+            pkgs.forEach(p => {
+                const c = p.caja;
+                const dir = determineDirection(item, c);
+                const ref = "c" + (Math.min(Math.max(0, p.contIdx), Math.max(0, conts.length - 1)) + 1);
+                xml += '      <package>' + NL;
+                xml += '        <container ref="' + ref + '" />' + NL;
+                xml += '        <direction>' + dir + '</direction>' + NL;
+                xml += '        <position-x>' + Math.round((c.x || 0) * 10) + '</position-x>' + NL;
+                xml += '        <position-y>' + Math.round((c.y || 0) * 10) + '</position-y>' + NL;
+                xml += '        <position-z>' + Math.round((c.z || 0) * 10) + '</position-z>' + NL;
+                xml += '      </package>' + NL;
+            });
+        } else {
+            const n = Math.max(1, Math.floor(Number(item.qty) || 1));
+            for (let i = 0; i < n; i++) {
+                xml += '      <package>' + NL;
+                xml += '        <container ref="c1" />' + NL;
+                xml += '        <direction>1</direction>' + NL;
+                xml += '        <position-x>0</position-x>' + NL;
+                xml += '        <position-y>0</position-y>' + NL;
+                xml += '        <position-z>0</position-z>' + NL;
+                xml += '      </package>' + NL;
+            }
+        }
+        xml += '    </packinglistitem>' + NL;
+    });
+    xml += '  </packinglist>' + NL;
+    xml += '</load>' + NL;
     return xml;
 }
 
 async function guardarArchivo(forceSaveAs = false) {
-  if(listaEmpaque.length === 0) { alert("No hay datos para guardar."); return; }
-  let fileName = document.getElementById('save-filename').value.trim(); if(!fileName) fileName = "MiCargaLoad"; if(!fileName.toLowerCase().endsWith(".load")) fileName += ".load";
+  if (listaEmpaque.length === 0) { alert("No hay datos para guardar."); return; }
+  let fileName = document.getElementById('save-filename').value.trim();
+  if (!fileName) fileName = "MiCargaLoad";
+  if (!fileName.toLowerCase().endsWith(".load")) fileName += ".load";
   const xmlData = generateLoadXML();
-  
+  if (!xmlData || xmlData.length < 80 || xmlData.indexOf("<packinglist>") < 0) {
+      alert("No se pudo armar el archivo .load. Revisa la lista de carga e intenta otra vez.");
+      return;
+  }
+
+  const descargarBlob_ = function () {
+      const blob = new Blob([xmlData], { type: "text/xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      mostrarToast("✅ Archivo .load descargado (compatible con Load!).");
+  };
+
   if (window.showSaveFilePicker) {
       try {
           let handle = currentFileHandle;
           if (forceSaveAs || !handle) {
-              handle = await window.showSaveFilePicker({ suggestedName: fileName, types: [{ description: 'Load! File', accept: {'text/xml': ['.load']} }] });
-              currentFileHandle = handle; 
+              handle = await window.showSaveFilePicker({
+                  suggestedName: fileName,
+                  types: [{ description: "Load! File", accept: { "text/xml": [".load"] } }]
+              });
+              currentFileHandle = handle;
           }
-          const writable = await handle.createWritable(); 
-          await writable.write(xmlData); 
-          await writable.close(); 
-          mostrarToast("✅ Archivo guardado correctamente.");
-          return; 
-      } catch (err) { if(err.name === 'AbortError') return; }
+          /* createWritable trunca al abrir: solo escribir si ya tenemos XML válido. */
+          const writable = await handle.createWritable();
+          try {
+              await writable.write(xmlData);
+              await writable.close();
+          } catch (wErr) {
+              try { await writable.abort(); } catch (eA) { /* noop */ }
+              throw wErr;
+          }
+          mostrarToast("✅ Archivo .load guardado (compatible con Load!).");
+          return;
+      } catch (err) {
+          if (err && err.name === "AbortError") return;
+          console.warn("guardarArchivo FS API:", err);
+          descargarBlob_();
+          return;
+      }
   }
-  
-  const blob = new Blob([xmlData], {type: "text/xml"}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-  mostrarToast("✅ Archivo descargado.");
+
+  descargarBlob_();
 }
 
 async function abrirArchivo() {
@@ -470,7 +610,7 @@ function cargarContenidoArchivo(file) {
               let colorObj = colorPalette.find(c => c.index === colorIdx) || colorPalette[0];
               let noTilt = node.getElementsByTagName("notilt").length > 0; 
               let noTurn = node.getElementsByTagName("noturn").length > 0; 
-              let floor = node.getElementsByTagName("floor").length > 0;
+              let floor = node.getElementsByTagName("floor").length > 0 || node.getElementsByTagName("bottommost").length > 0;
               let packages = node.getElementsByTagName("package"); 
               let qty = packages.length > 0 ? packages.length : 1; 
               let itemId = generateUUID();
