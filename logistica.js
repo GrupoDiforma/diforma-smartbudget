@@ -1151,6 +1151,19 @@ function logPinImgDeElemento_(el) {
     return (out.img || out.imgRef) ? out : null;
 }
 
+/** Pin de cotización de un individual abierto en Costos (vive en la versión, no en elementos). */
+function logPinImgIndividualAbierto_(proy, verId) {
+    const abierto = typeof logisticaLeerProyecto_ === "function" ? logisticaLeerProyecto_() : null;
+    const cod = String((abierto && abierto.codigo) || "").trim();
+    if (!cod || String(proy || "").trim() !== cod) return null;
+    const vers = window.versionesPresupuesto || [];
+    const ver = verId
+        ? vers.find(function (v) { return String(v.id) === String(verId); })
+        : (vers.find(function (v) { return String(v.id) === String(window.versionActivaId || ""); }) || vers[0]);
+    if (!ver || (ver.elementos && ver.elementos.length)) return null;
+    return logPinImgDeElemento_(ver);
+}
+
 function logNombrePreImg_(fila) {
     const codigo = String((fila && fila.proy) || (logisticaLeerProyecto_() || {}).codigo || "").trim();
     if (!codigo || !fila || !fila.elem) return "";
@@ -1164,6 +1177,9 @@ function logAsegurarImgRefFila_(fila) {
     if (fila.elem) {
         const ref = logImgRefElemento_(fila.elem, fila.ver);
         if (ref) fila.imgRef = ref;
+    } else if (fila.tipo === "item") {
+        const pin = logPinImgIndividualAbierto_(fila.proy, fila.ver);
+        if (pin && pin.imgRef) fila.imgRef = pin.imgRef;
     }
     return fila.imgRef || "";
 }
@@ -1470,6 +1486,8 @@ var logPaisesCat_ = null;
 var logCiudadesOdoo_ = [];
 var logCiudadesApp_ = [];
 var logCiudadesOcultas_ = {};
+/** Alias viejo→nombre canónico: clave `pais|nombreNorm` → nombre actual. Cotizaciones históricas siguen resolviendo. */
+var logCiudadesAlias_ = {};
 var logCiudadesAsegurando_ = {};
 var logCiudadesHojaLista_ = {};
 var logCiudadesPublicarPend_ = {};
@@ -1631,14 +1649,170 @@ function logCiudadesAppLeer_() {
             logCiudadesApp_ = o.data.filter(function (x) { return x && x.nombre && x.pais; });
         }
         logCiudadesOcultas_ = (o && o.ocultas && typeof o.ocultas === "object") ? o.ocultas : {};
+        if (o && o.alias && typeof o.alias === "object") logCiudadesAlias_ = o.alias;
     } catch (e) {}
+    try {
+        const t = typeof logTarAsegurar_ === "function" ? logTarAsegurar_() : window.logTarifas;
+        if (t && t.ciudadesAlias && typeof t.ciudadesAlias === "object") {
+            Object.keys(t.ciudadesAlias).forEach(function (k) {
+                if (t.ciudadesAlias[k]) logCiudadesAlias_[k] = t.ciudadesAlias[k];
+            });
+        }
+    } catch (e2) {}
     logLugaresManuales_().forEach(function (x) { logCiudadesAppMeter_(x, true); });
 }
 
 function logCiudadesAppGuardarLocal_() {
     try {
-        localStorage.setItem(LOG_CIUDADES_LOCAL_, JSON.stringify({ t: Date.now(), data: logCiudadesApp_, ocultas: logCiudadesOcultas_ }));
+        localStorage.setItem(LOG_CIUDADES_LOCAL_, JSON.stringify({
+            t: Date.now(),
+            data: logCiudadesApp_,
+            ocultas: logCiudadesOcultas_,
+            alias: logCiudadesAlias_
+        }));
     } catch (e) {}
+    try {
+        const t = typeof logTarAsegurar_ === "function" ? logTarAsegurar_() : window.logTarifas;
+        if (t) t.ciudadesAlias = logCiudadesAlias_;
+    } catch (e2) {}
+}
+
+/** Resuelve nombre histórico → nombre canónico actual (cadena de alias). */
+function logCiudadAliasCanon_(pais, nombre) {
+    let nom = String(nombre || "").trim();
+    if (!nom) return "";
+    let guard = 0;
+    while (guard++ < 24) {
+        const k = logCiudadesAppClave_(pais, nom);
+        const next = logCiudadesAlias_[k];
+        if (!next || logTarNorm_(next) === logTarNorm_(nom)) break;
+        nom = String(next).trim();
+    }
+    return nom;
+}
+
+function logCiudadAliasRegistrar_(pais, nombreAntiguo, nombreNuevo) {
+    const pa = String(pais || "").trim();
+    const oldN = String(nombreAntiguo || "").trim();
+    const newN = String(nombreNuevo || "").trim();
+    if (!pa || !oldN || !newN) return;
+    logCiudadesAlias_[logCiudadesAppClave_(pa, oldN)] = newN;
+    const oldNorm = logTarNorm_(oldN);
+    Object.keys(logCiudadesAlias_).forEach(function (k) {
+        if (logTarNorm_(logCiudadesAlias_[k]) === oldNorm) logCiudadesAlias_[k] = newN;
+    });
+}
+
+/**
+ * Renombra ciudad/puerto sin romper tarifas ni cotización abierta.
+ * Registra alias para que cotizaciones guardadas con el nombre viejo sigan resolviendo.
+ */
+function logCiudadRenombrar_(pais, nombreAntiguo, nombreNuevo, id) {
+    const pa = String(pais || "").trim();
+    const oldN = String(nombreAntiguo || "").trim();
+    const newN = String(nombreNuevo || "").trim();
+    if (!pa) return { ok: false, mensaje: "Elige el país." };
+    if (!oldN) return { ok: false, mensaje: "Falta el nombre actual." };
+    if (!newN) return { ok: false, mensaje: "Escribe el nombre nuevo." };
+    if (logTarNorm_(oldN) === logTarNorm_(newN)) {
+        if (oldN !== newN) {
+            /* Solo cambio de mayúsculas/acentos: actualiza texto canónico. */
+        } else {
+            return { ok: true, mismo: true };
+        }
+    }
+    const kOld = logCiudadesAppClave_(pa, oldN);
+    const kNew = logCiudadesAppClave_(pa, newN);
+    if (kOld !== kNew) {
+        const choc = logCiudadesCatalogo_(pa).some(function (x) {
+            return logCiudadesAppClave_(x.pais, x.nombre) === kNew;
+        });
+        if (choc) return { ok: false, mensaje: newN + " ya está en " + pa + "." };
+    }
+
+    function mismaFila_(c) {
+        if (!c) return false;
+        if (id && c.id && String(c.id) === String(id)) return true;
+        return logCiudadesAppClave_(c.pais, c.nombre) === kOld;
+    }
+
+    let tocada = false;
+    logCiudadesApp_.forEach(function (c) {
+        if (!mismaFila_(c)) return;
+        c.nombre = newN;
+        c.pais = pa;
+        tocada = true;
+    });
+    logLugaresManuales_().forEach(function (x) {
+        if (!mismaFila_(x)) return;
+        x.nombre = newN;
+        x.pais = pa;
+        tocada = true;
+    });
+    if (!tocada) {
+        logCiudadesAppMeter_({
+            id: id || ("lg" + Date.now().toString(36)),
+            nombre: newN,
+            pais: pa,
+            uso: "ciudad"
+        }, true);
+    }
+
+    if (logCiudadesOcultas_[kOld]) {
+        logCiudadesOcultas_[kNew] = 1;
+        delete logCiudadesOcultas_[kOld];
+    }
+
+    const t = typeof logTarAsegurar_ === "function" ? logTarAsegurar_() : window.logTarifas;
+    if (t) {
+        const matchPais_ = function (f) { return f && logTarMismoPais_(pa, f.pais); };
+        const matchNom_ = function (val) { return logTarNorm_(val) === logTarNorm_(oldN); };
+        (t.aereo || []).forEach(function (f) {
+            if (matchPais_(f) && matchNom_(f.ciudad)) f.ciudad = newN;
+        });
+        (t.destino || []).forEach(function (f) {
+            if (matchPais_(f) && matchNom_(f.ciudad)) f.ciudad = newN;
+        });
+        (t.fcl || []).forEach(function (f) {
+            if (matchPais_(f) && matchNom_(f.puerto)) f.puerto = newN;
+        });
+        (t.lcl || []).forEach(function (f) {
+            if (matchPais_(f) && matchNom_(f.puerto)) f.puerto = newN;
+        });
+    }
+
+    if (typeof logQuote !== "undefined" && logQuote && logQuote.env) {
+        const e = logQuote.env;
+        const mismoPais = !e.destinoPais || logTarMismoPais_(pa, e.destinoPais);
+        if (mismoPais) {
+            if (logTarNorm_(e.destinoCiudad) === logTarNorm_(oldN)) e.destinoCiudad = newN;
+            if (logTarNorm_(e.destinoPuerto) === logTarNorm_(oldN)) e.destinoPuerto = newN;
+        }
+    }
+    ["logDestCiudad", "logDestPuerto"].forEach(function (eid) {
+        const el = document.getElementById(eid);
+        if (el && logTarNorm_(el.value) === logTarNorm_(oldN)) {
+            if (el.tagName === "SELECT") {
+                const opt = Array.prototype.find.call(el.options || [], function (o) {
+                    return logTarNorm_(o.value) === logTarNorm_(oldN);
+                });
+                if (opt) opt.value = newN;
+                if (opt) opt.textContent = newN;
+            }
+            el.value = newN;
+        }
+    });
+
+    logCiudadAliasRegistrar_(pa, oldN, newN);
+    logCiudadesAppGuardarLocal_();
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+    if (typeof logCiudadesPublicarPais_ === "function") logCiudadesPublicarPais_(pa);
+    const tab = window.logTarTab;
+    if ((tab === "aereo" || tab === "destino" || tab === "fcl" || tab === "lcl") && typeof logTarPintar_ === "function") {
+        if (typeof logTarFlush_ === "function") logTarFlush_();
+        logTarPintar_();
+    }
+    return { ok: true };
 }
 
 function logCiudadesAppMeter_(x, silencio) {
@@ -4061,8 +4235,10 @@ function logFilaValores_(fila, idioma, escId) {
                 const deElem = window.imagenCotizacionElemento(fila.elem);
                 if (deElem) v.img = deElem;
             }
-        } else if (logImgOdoo.url && logImgOdoo.codigo === fila.proy) {
-            v.img = logImgOdoo.url;
+        } else {
+            const pinInd = logPinImgIndividualAbierto_(fila.proy, fila.ver);
+            if (pinInd && pinInd.img) v.img = pinInd.img;
+            else if (logImgOdoo.url && logImgOdoo.codigo === fila.proy) v.img = logImgOdoo.url;
         }
     }
     return v;
@@ -4899,7 +5075,11 @@ function logImgFuente_(fila) {
         }
         return "";
     }
-    if (fila.tipo === "item" && logImgOdoo.orig && logImgOdoo.codigo === fila.proy) return logImgOdoo.orig;
+    if (fila.tipo === "item") {
+        const pinInd = logPinImgIndividualAbierto_(fila.proy, fila.ver);
+        if (pinInd && pinInd.img) return pinInd.img;
+        if (logImgOdoo.orig && logImgOdoo.codigo === fila.proy) return logImgOdoo.orig;
+    }
     return "";
 }
 
@@ -7640,7 +7820,124 @@ function logisticaSerializar_(idioma) {
     };
 }
 
-function logisticaAbrirGuardar_() {
+/** Códigos de proyecto presentes en la cotización / Costos abierto. */
+function logisticaCodigosProyectoCot_() {
+    const codes = {};
+    (logQuote.filas || []).forEach(function (f) {
+        const c = String((f && f.proy) || "").trim();
+        if (f && f.tipo === "item" && c) codes[c] = 1;
+    });
+    const p = typeof logisticaLeerProyecto_ === "function" ? logisticaLeerProyecto_() : {};
+    if (p && p.codigo) codes[String(p.codigo).trim()] = 1;
+    return Object.keys(codes).filter(Boolean);
+}
+
+/**
+ * Si hay cotizaciones guardadas del mismo proyecto (y ojalá mismo número),
+ * devuelve la revisión más reciente del mejor match. Evita guardar un C-nuevo a ciegas.
+ */
+function logisticaMatchCotExistente_(lista) {
+    const codes = logisticaCodigosProyectoCot_();
+    if (!codes.length || !lista || !lista.length) return null;
+    const idioma = logisticaLeerOpciones_().idioma;
+    const numeroWant = String(logNombreArchivoPdf_(idioma) || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const hits = lista.filter(function (h) {
+        const proy = String(h.proyecto || "") + " " + String(h.proyectos || "") + " " + String(h.numero || "");
+        return codes.some(function (c) { return proy.indexOf(c) >= 0; });
+    });
+    if (!hits.length) return null;
+    const porId = {};
+    hits.forEach(function (h) {
+        const id = String(h.id || "");
+        if (!id) return;
+        if (!porId[id] || (Number(h.rev) || 0) > (Number(porId[id].rev) || 0)) porId[id] = h;
+    });
+    const cands = Object.keys(porId).map(function (k) { return porId[k]; });
+    cands.sort(function (a, b) {
+        const aN = String(a.numero || "").replace(/\s+/g, " ").trim().toLowerCase() === numeroWant ? 1 : 0;
+        const bN = String(b.numero || "").replace(/\s+/g, " ").trim().toLowerCase() === numeroWant ? 1 : 0;
+        if (aN !== bN) return bN - aN;
+        const ta = String(a.creado || "");
+        const tb = String(b.creado || "");
+        if (ta !== tb) return ta < tb ? 1 : -1;
+        return String(b.id).localeCompare(String(a.id));
+    });
+    const best = cands[0];
+    if (!best) return null;
+    return {
+        id: String(best.id),
+        rev: Number(best.rev) || 1,
+        numero: String(best.numero || ""),
+        comentario: String(best.comentario || ""),
+        cliente: String(best.cliente || "")
+    };
+}
+
+function logisticaDestinoGuardar_() {
+    return logQuote.abierta || logQuote.guardarExistente || null;
+}
+
+function logisticaPintarModalGuardar_(idioma) {
+    const a = logQuote.abierta;
+    const det = !a ? logQuote.guardarExistente : null;
+    const dest = a || det;
+    const num = document.getElementById("logGuardarNumero");
+    if (num) num.textContent = logNombreArchivoPdf_(idioma);
+    const com = document.getElementById("logGuardarCom");
+    if (com && !(com.value || "").trim()) com.value = (dest && dest.comentario) || "";
+    const sub = document.getElementById("logGuardarSub");
+    const bMisma = document.getElementById("btnLogGuardarMisma");
+    const bRev = document.getElementById("btnLogGuardarRev");
+    const bNueva = document.getElementById("btnLogGuardarNueva");
+    if (a) {
+        if (sub) sub.textContent = "Estás editando " + a.id + " Rev " + a.rev + ". «Guardar» reescribe esa revisión. «Rev siguiente» la conserva y crea otra. «Cotización nueva» asigna un C-xxxxx distinto.";
+        if (bMisma) {
+            bMisma.classList.remove("d-none");
+            bMisma.innerHTML = "<i class=\"bi bi-save me-1\"></i>Guardar (reescribir Rev " + a.rev + ")";
+        }
+        if (bRev) {
+            bRev.classList.remove("d-none");
+            bRev.innerHTML = "<i class=\"bi bi-layers me-1\"></i>Guardar como Rev " + (a.rev + 1) + " de " + logEsc_(a.id);
+        }
+        if (bNueva) bNueva.classList.remove("d-none");
+    } else if (det) {
+        if (sub) {
+            sub.innerHTML = "<span class=\"text-warning-emphasis fw-semibold\">Ya existe "
+                + logEsc_(det.numero || "una cotización") + " (" + logEsc_(det.id) + " · Rev " + det.rev
+                + ")</span> de este proyecto. Si guardas sin elegir, podrías duplicar o pisar trabajo previo. Elige cómo continuar:";
+        }
+        /* Por defecto: nueva revisión (no pisa la Rev actual). */
+        if (bRev) {
+            bRev.classList.remove("d-none");
+            bRev.classList.remove("btn-outline-secondary");
+            bRev.classList.add("btn-diforma-blue");
+            bRev.innerHTML = "<i class=\"bi bi-layers me-1\"></i>Guardar como Rev " + (det.rev + 1) + " de " + logEsc_(det.id);
+        }
+        if (bMisma) {
+            bMisma.classList.remove("d-none");
+            bMisma.classList.remove("btn-diforma-blue");
+            bMisma.classList.add("btn-outline-secondary");
+            bMisma.innerHTML = "<i class=\"bi bi-exclamation-triangle me-1\"></i>Reescribir Rev " + det.rev + " de " + logEsc_(det.id);
+        }
+        if (bNueva) bNueva.classList.remove("d-none");
+    } else {
+        if (sub) sub.textContent = "Se guarda con los precios y textos de ahora. Las imágenes que ya están en Drive no se vuelven a subir.";
+        if (bMisma) {
+            bMisma.classList.remove("d-none");
+            bMisma.classList.add("btn-diforma-blue");
+            bMisma.classList.remove("btn-outline-secondary");
+            bMisma.innerHTML = "<i class=\"bi bi-save me-1\"></i>Guardar";
+        }
+        if (bRev) {
+            bRev.classList.add("d-none");
+            bRev.classList.add("btn-outline-secondary");
+            bRev.classList.remove("btn-diforma-blue");
+        }
+        if (bNueva) bNueva.classList.add("d-none");
+    }
+}
+
+async function logisticaAbrirGuardar_() {
     const p = logisticaLeerProyecto_();
     if (!logQuote.filas.some(function (f) { return !logEsTextoFila_(f); })) {
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("Agrega al menos una fila antes de guardar.", "warning");
@@ -7651,22 +7948,21 @@ function logisticaAbrirGuardar_() {
         return;
     }
     const idioma = logisticaLeerOpciones_().idioma;
-    const a = logQuote.abierta;
-    const num = document.getElementById("logGuardarNumero");
-    if (num) num.textContent = logNombreArchivoPdf_(idioma);
-    const com = document.getElementById("logGuardarCom");
-    if (com) com.value = (a && a.comentario) || "";
-    const sub = document.getElementById("logGuardarSub");
-    if (sub) sub.textContent = a
-        ? ("Guardar reescribe la Rev " + a.rev + " de " + a.id + ". «Rev siguiente» deja esa y crea otra revisión. «Cotización nueva» asigna un C-xxxxx distinto (p. ej. para otra versión del proyecto).")
-        : "Se guarda con los precios y textos de ahora. Las imágenes que ya están en Drive no se vuelven a subir.";
-    const bRev = document.getElementById("btnLogGuardarRev");
-    if (bRev) {
-        bRev.classList.toggle("d-none", !a);
-        if (a) bRev.innerHTML = "<i class=\"bi bi-layers me-1\"></i>Guardar como Rev " + (a.rev + 1) + " de " + logEsc_(a.id);
+    logQuote.guardarExistente = null;
+    if (!logQuote.abierta) {
+        const estado = document.getElementById("logGuardarEstado");
+        if (estado) estado.innerHTML = "<span class=\"spinner-border spinner-border-sm me-1\"></span>Buscando cotizaciones previas de este proyecto…";
+        bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogGuardar")).show();
+        logisticaPintarModalGuardar_(idioma);
+        try {
+            const lista = await logisticaCargarHistorial_(false);
+            logQuote.guardarExistente = logisticaMatchCotExistente_(lista || []);
+        } catch (eHist) {
+            logQuote.guardarExistente = null;
+        }
+        if (estado) estado.innerHTML = "";
     }
-    const bNueva = document.getElementById("btnLogGuardarNueva");
-    if (bNueva) bNueva.classList.toggle("d-none", !a);
+    logisticaPintarModalGuardar_(idioma);
     bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogGuardar")).show();
 }
 
@@ -7709,7 +8005,11 @@ async function logisticaGuardar_(modo) {
         await logisticaReusarRendersPresupuesto_();
         const S = logisticaSerializar_(idioma);
         const comentario = ((document.getElementById("logGuardarCom") || {}).value || "").trim();
-        const abiertaAntes = logQuote.abierta;
+        const abiertaAntes = logisticaDestinoGuardar_();
+        if ((modo === "misma" || modo === "rev") && !abiertaAntes) {
+            throw new Error("No hay una cotización previa vinculada. Elige «Guardar» (nueva) o vuelve a abrir el diálogo.");
+        }
+        if (modo === "nueva") logQuote.guardarExistente = null;
         const nImg = S.imagenes.length;
         paso(nImg ? ("Subiendo " + nImg + " imagen" + (nImg === 1 ? "" : "es") + " a Drive…") : (modo === "misma" ? "Reescribiendo esta revisión…" : "Guardando la cotización…"));
         const resp = await realizarPeticionBD({
@@ -7764,6 +8064,7 @@ async function logisticaGuardar_(modo) {
             }
         });
         logQuote.abierta = { id: d.id, rev: d.rev, numero: d.numero || S.numero, comentario: comentario };
+        logQuote.guardarExistente = null;
         logQuote.sucio = false;
         logisticaPintarBadge_();
         logisticaPintarEstado_();
@@ -8154,11 +8455,28 @@ async function logisticaRestaurarSim3d_(g) {
 
 function logisticaInitHistorial_() {
     const on = function (id, fn) { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
-    on("btnLogGuardar", logisticaAbrirGuardar_);
+    on("btnLogGuardar", function () { logisticaAbrirGuardar_(); });
     on("btnLogHistorial", logisticaAbrirHistorial_);
     on("btnLogGuardarNueva", function () { logisticaGuardar_("nueva"); });
     on("btnLogGuardarRev", function () { logisticaGuardar_("rev"); });
-    on("btnLogGuardarMisma", function () { logisticaGuardar_(logQuote.abierta ? "misma" : "nueva"); });
+    on("btnLogGuardarMisma", function () {
+        logisticaGuardar_(logisticaDestinoGuardar_() ? "misma" : "nueva");
+    });
+    const modalG = document.getElementById("modalLogGuardar");
+    if (modalG) {
+        modalG.addEventListener("hidden.bs.modal", function () {
+            const bMisma = document.getElementById("btnLogGuardarMisma");
+            const bRev = document.getElementById("btnLogGuardarRev");
+            if (bMisma) {
+                bMisma.classList.add("btn-diforma-blue");
+                bMisma.classList.remove("btn-outline-secondary");
+            }
+            if (bRev) {
+                bRev.classList.add("btn-outline-secondary");
+                bRev.classList.remove("btn-diforma-blue");
+            }
+        });
+    }
     const buscar = document.getElementById("logHistBuscar");
     if (buscar) buscar.addEventListener("input", logisticaPintarHistorial_);
     const lista = document.getElementById("logHistLista");
@@ -8915,6 +9233,16 @@ function logPintarSelectCiudad_(actual, pais) {
     if (!el || el.tagName !== "SELECT") return;
     const lista = logCiudadesDePais_(pais);
     let ahora = String(actual || "").trim();
+    if (ahora && typeof logCiudadAliasCanon_ === "function") {
+        const canon = logCiudadAliasCanon_(pais, ahora);
+        if (canon && logTarNorm_(canon) !== logTarNorm_(ahora)) {
+            const enLista = lista.some(function (c) { return logTarNorm_(c) === logTarNorm_(canon); });
+            if (enLista) {
+                ahora = canon;
+                if (logQuote && logQuote.env) logQuote.env.destinoCiudad = canon;
+            }
+        }
+    }
     if (!ahora && !logDestinoCiudadTocado_) {
         const def = logCiudadPorDefecto_(pais);
         if (def) {
@@ -8923,10 +9251,11 @@ function logPintarSelectCiudad_(actual, pais) {
         }
     }
     const norm = logTarNorm_(ahora);
+    const normCanon = typeof logCiudadAliasCanon_ === "function" ? logTarNorm_(logCiudadAliasCanon_(pais, ahora)) : norm;
     let html = "<option value=\"\">Elige</option>";
     let visto = !ahora;
     lista.forEach(function (c) {
-        const sel = logTarNorm_(c) === norm;
+        const sel = logTarNorm_(c) === norm || logTarNorm_(c) === normCanon;
         if (sel) visto = true;
         html += "<option value=\"" + logEsc_(c) + "\"" + (sel ? " selected" : "") + ">" + logEsc_(c) + "</option>";
     });
@@ -8949,10 +9278,21 @@ function logPintarPuertosLista_(pais) {
     }
 }
 
-function logEnListaTarifa_(nombre, lista) {
+function logEnListaTarifa_(nombre, lista, pais) {
     const n = logTarNorm_(nombre);
     if (!n) return false;
-    return (lista || []).some(function (x) { return logTarNorm_(x) === n; });
+    const canon = (pais && typeof logCiudadAliasCanon_ === "function")
+        ? logTarNorm_(logCiudadAliasCanon_(pais, nombre))
+        : n;
+    return (lista || []).some(function (x) {
+        const xn = logTarNorm_(x);
+        if (xn === n || xn === canon) return true;
+        if (pais && typeof logCiudadAliasCanon_ === "function") {
+            const xc = logTarNorm_(logCiudadAliasCanon_(pais, x));
+            if (xc === n || xc === canon) return true;
+        }
+        return false;
+    });
 }
 
 function logFaltasAnalisis_() {
@@ -8967,7 +9307,7 @@ function logFaltasAnalisis_() {
         const esMarF = e.modalidad === "fcl" || e.modalidad === "lcl";
         if (!ciudades.length) faltas.push({ id: "logDestCiudad", msg: esMarF ? "No hay ciudades ni puertos en Ajustes → Logística para este país. Agrega la tarifa y elige la ciudad." : "No hay ciudades en Ajustes → Logística para este país. Agrega la tarifa y elige la ciudad." });
         else if (!ciudad) faltas.push({ id: "logDestCiudad", msg: "Elige la ciudad de destino. La lista sale de Ajustes → Logística." });
-        else if (!logEnListaTarifa_(ciudad, ciudades)) faltas.push({ id: "logDestCiudad", msg: esMarF ? "Esa ciudad no está en las ciudades ni en los puertos de este país. Elige una de la lista o regístrala en Ajustes → Logística → Ciudades." : "Esa ciudad no está en las tarifas de este país. Elige una de la lista." });
+        else if (!logEnListaTarifa_(ciudad, ciudades, e.destinoPais)) faltas.push({ id: "logDestCiudad", msg: esMarF ? "Esa ciudad no está en las ciudades ni en los puertos de este país. Elige una de la lista o regístrala en Ajustes → Logística → Ciudades." : "Esa ciudad no está en las tarifas de este país. Elige una de la lista." });
         if (!String(e.destinoPais || "").trim()) faltas.push({ id: "logDestPais", msg: "Falta el país de destino." });
     }
     const mar = e.modalidad === "fcl" || e.modalidad === "lcl";
@@ -10315,6 +10655,12 @@ function logTarAsegurar_() {
     });
     base.conceptos = (raw && raw.conceptos && typeof raw.conceptos === "object") ? raw.conceptos : { origen: [], destino: [] };
     base.lugares = (raw && Array.isArray(raw.lugares)) ? raw.lugares : [];
+    base.ciudadesAlias = (raw && raw.ciudadesAlias && typeof raw.ciudadesAlias === "object") ? raw.ciudadesAlias : (logCiudadesAlias_ || {});
+    if (base.ciudadesAlias && typeof base.ciudadesAlias === "object") {
+        Object.keys(base.ciudadesAlias).forEach(function (k) {
+            if (base.ciudadesAlias[k]) logCiudadesAlias_[k] = base.ciudadesAlias[k];
+        });
+    }
     window.logTarConceptos = base.conceptos;
     window.logTarifas = base;
     logTarSemillaSiVacio_();

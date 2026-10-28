@@ -30,6 +30,275 @@ function registrarUmsMaestro(ums) {
     if (Array.isArray(ums) && ums.length) _umsDesdeMaestro = ums.slice();
 }
 
+/* —— Filtros/orden estilo Odoo en tablas de Ajustes (opción B) —— */
+var _adminFiltrosState = {};
+var _adminFiltrosPopover = null;
+
+function adminFiltrosEstado_(id) {
+    if (!_adminFiltrosState[id]) _adminFiltrosState[id] = { sortCol: -1, sortDir: "asc", filters: {} };
+    return _adminFiltrosState[id];
+}
+
+function adminFiltrosNorm_(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function adminFiltrosCeldaTxt_(td) {
+    if (!td) return "";
+    const el = td.querySelector("input:not([type=checkbox]):not([type=hidden]):not([type=radio]), select, textarea");
+    if (el) return String(el.value != null ? el.value : "").trim();
+    return String(td.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function adminFiltrosCerrarPopover_() {
+    if (_adminFiltrosPopover && _adminFiltrosPopover.parentNode) _adminFiltrosPopover.parentNode.removeChild(_adminFiltrosPopover);
+    _adminFiltrosPopover = null;
+    document.querySelectorAll(".af-filter.is-on").forEach(function (b) { b.classList.remove("is-on"); });
+}
+
+function adminFiltrosFiltraValor_(haystack, needle) {
+    const n = adminFiltrosNorm_(needle);
+    if (!n) return true;
+    return adminFiltrosNorm_(haystack).indexOf(n) >= 0;
+}
+
+/** Filtra/ordena un array según estado (pipelines de datos: tarifas, ciudades). */
+function adminFiltrosFiltrarLista_(id, lista, getVal) {
+    const st = adminFiltrosEstado_(id);
+    let out = (lista || []).slice();
+    Object.keys(st.filters || {}).forEach(function (col) {
+        const needle = st.filters[col];
+        if (needle == null || needle === "") return;
+        out = out.filter(function (row) {
+            return adminFiltrosFiltraValor_(getVal(row, col), needle);
+        });
+    });
+    if (st.sortCol !== "" && st.sortCol != null && st.sortCol !== -1) {
+        const col = st.sortCol;
+        const dir = st.sortDir === "desc" ? -1 : 1;
+        out.sort(function (a, b) {
+            const va = adminFiltrosNorm_(getVal(a, col));
+            const vb = adminFiltrosNorm_(getVal(b, col));
+            const na = parseFloat(String(getVal(a, col)).replace(",", "."));
+            const nb = parseFloat(String(getVal(b, col)).replace(",", "."));
+            if (isFinite(na) && isFinite(nb) && String(getVal(a, col)).trim() !== "" && String(getVal(b, col)).trim() !== "") {
+                if (na !== nb) return (na < nb ? -1 : 1) * dir;
+            }
+            if (va < vb) return -1 * dir;
+            if (va > vb) return 1 * dir;
+            return 0;
+        });
+    }
+    return out;
+}
+
+function adminFiltrosAplicarDom_(table, id) {
+    if (!table || !table.tBodies[0]) return;
+    const st = adminFiltrosEstado_(id);
+    const body = table.tBodies[0];
+    const rows = Array.prototype.filter.call(body.rows, function (tr) {
+        return tr.cells.length && !tr.querySelector("td[colspan]");
+    });
+    rows.forEach(function (tr) {
+        let ok = true;
+        Object.keys(st.filters || {}).forEach(function (colKey) {
+            const needle = st.filters[colKey];
+            if (needle == null || needle === "") return;
+            const idx = parseInt(colKey, 10);
+            if (isNaN(idx) || !tr.cells[idx]) return;
+            if (!adminFiltrosFiltraValor_(adminFiltrosCeldaTxt_(tr.cells[idx]), needle)) ok = false;
+        });
+        tr.style.display = ok ? "" : "none";
+        tr.setAttribute("data-af-ok", ok ? "1" : "0");
+    });
+    if (st.sortCol >= 0) {
+        const col = st.sortCol;
+        const dir = st.sortDir === "desc" ? -1 : 1;
+        const visibles = rows.slice();
+        visibles.sort(function (a, b) {
+            const va = adminFiltrosCeldaTxt_(a.cells[col]);
+            const vb = adminFiltrosCeldaTxt_(b.cells[col]);
+            const na = parseFloat(String(va).replace(",", "."));
+            const nb = parseFloat(String(vb).replace(",", "."));
+            if (isFinite(na) && isFinite(nb) && String(va).trim() !== "" && String(vb).trim() !== "") {
+                if (na !== nb) return (na < nb ? -1 : 1) * dir;
+            }
+            const xa = adminFiltrosNorm_(va), xb = adminFiltrosNorm_(vb);
+            if (xa < xb) return -1 * dir;
+            if (xa > xb) return 1 * dir;
+            return 0;
+        });
+        visibles.forEach(function (tr) { body.appendChild(tr); });
+    }
+}
+
+/**
+ * Decora encabezados con orden + filtro.
+ * opts: { id, skipLast, mode:'dom'|'data', keys:[], onChange, enumMax }
+ * mode dom: aplica sobre tbody. mode data: solo UI + onChange (el pintar filtra datos).
+ */
+function adminFiltrosEnhance_(table, opts) {
+    opts = opts || {};
+    if (!table || !table.tHead || !table.tHead.rows[0]) return;
+    const id = opts.id || table.getAttribute("data-admin-filtros") || table.id || "tbl";
+    table.setAttribute("data-admin-filtros", id);
+    const st = adminFiltrosEstado_(id);
+    const ths = Array.prototype.slice.call(table.tHead.rows[0].cells);
+    const skipLast = opts.skipLast !== false;
+    const nData = skipLast ? Math.max(0, ths.length - 1) : ths.length;
+    const mode = opts.mode || "dom";
+    const keys = opts.keys || [];
+    const enumMax = opts.enumMax || 14;
+    const body = table.tBodies[0];
+    const dataRows = body ? Array.prototype.filter.call(body.rows, function (tr) {
+        return tr.cells.length && !tr.querySelector("td[colspan]");
+    }) : [];
+
+    table._afOpts = opts;
+    ths.forEach(function (th, i) {
+        if (i >= nData) return;
+        if (th.getAttribute("data-af-skip") === "1") return;
+        const colKey = keys[i] != null ? keys[i] : String(i);
+        if (!th.getAttribute("data-af-label")) {
+            const raw = (th.querySelector(".af-sort") ? th.querySelector(".af-sort").childNodes[0] : null);
+            const fromBtn = raw && raw.nodeType === 3 ? raw.textContent : "";
+            th.setAttribute("data-af-label", (fromBtn || th.textContent || "").replace(/[↑↓▾▲▼]/g, "").trim());
+        }
+        const label = (th.getAttribute("data-af-label") || ("Col " + (i + 1)));
+        th.setAttribute("data-af-col", colKey);
+        th.setAttribute("data-af-idx", String(i));
+
+        const vals = {};
+        if (mode === "dom") {
+            dataRows.forEach(function (tr) {
+                const t = adminFiltrosCeldaTxt_(tr.cells[i]);
+                if (t) vals[t] = (vals[t] || 0) + 1;
+            });
+        }
+        const uniq = Object.keys(vals);
+        const useEnum = mode === "dom" && uniq.length > 0 && uniq.length <= enumMax && uniq.every(function (u) { return u.length <= 40; });
+
+        const sortMark = (String(st.sortCol) === String(colKey) || (typeof st.sortCol === "number" && st.sortCol === i && !keys.length))
+            ? (st.sortDir === "desc" ? " ↓" : " ↑")
+            : "";
+        const hasFilter = !!(st.filters[colKey] || (!keys.length && st.filters[String(i)]));
+        th.innerHTML = "<div class=\"af-th\">" +
+            "<button type=\"button\" class=\"af-sort\" data-af-sort=\"" + escHtml(String(colKey)) + "\" data-af-idx=\"" + i + "\" title=\"Ordenar\">" +
+            escHtml(label) + "<span class=\"af-sort-mark\">" + sortMark + "</span></button>" +
+            "<button type=\"button\" class=\"af-filter" + (hasFilter ? " is-active" : "") + "\" data-af-filter=\"" + escHtml(String(colKey)) + "\" data-af-idx=\"" + i + "\" title=\"Filtrar\" aria-label=\"Filtrar\">" +
+            "<i class=\"bi bi-funnel" + (hasFilter ? "-fill" : "") + "\"></i></button></div>";
+        th._afUseEnum = useEnum;
+        th._afUniq = uniq.sort(function (a, b) { return adminFiltrosNorm_(a).localeCompare(adminFiltrosNorm_(b)); });
+    });
+
+    if (table._afBound) return;
+    table._afBound = true;
+    table.addEventListener("click", function (ev) {
+        const o = table._afOpts || {};
+        const tid = table.getAttribute("data-admin-filtros") || id;
+        const state = adminFiltrosEstado_(tid);
+        const klist = o.keys || [];
+        const sortBtn = ev.target.closest("[data-af-sort]");
+        if (sortBtn && table.contains(sortBtn)) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            adminFiltrosCerrarPopover_();
+            const colKey = sortBtn.getAttribute("data-af-sort");
+            const idx = parseInt(sortBtn.getAttribute("data-af-idx"), 10);
+            const sortVal = klist.length ? colKey : idx;
+            if (String(state.sortCol) === String(sortVal)) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+            else { state.sortCol = sortVal; state.sortDir = "asc"; }
+            if (typeof o.onChange === "function") o.onChange(state);
+            else if ((o.mode || "dom") === "dom") {
+                adminFiltrosEnhance_(table, o);
+                adminFiltrosAplicarDom_(table, tid);
+            }
+            return;
+        }
+        const filBtn = ev.target.closest("[data-af-filter]");
+        if (filBtn && table.contains(filBtn)) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const colKey = filBtn.getAttribute("data-af-filter");
+            const idx = parseInt(filBtn.getAttribute("data-af-idx"), 10);
+            const th = filBtn.closest("th");
+            adminFiltrosCerrarPopover_();
+            filBtn.classList.add("is-on");
+            const pop = document.createElement("div");
+            pop.className = "af-pop";
+            const cur = state.filters[colKey] || state.filters[String(idx)] || "";
+            let bodyHtml = "";
+            if (th && th._afUseEnum && th._afUniq && th._afUniq.length) {
+                bodyHtml = "<select class=\"form-select form-select-sm af-pop-input\">" +
+                    "<option value=\"\">(Todos)</option>" +
+                    th._afUniq.map(function (u) {
+                        return "<option value=\"" + escHtml(u) + "\"" + (u === cur ? " selected" : "") + ">" + escHtml(u) + "</option>";
+                    }).join("") + "</select>";
+            } else {
+                bodyHtml = "<input type=\"search\" class=\"form-control form-control-sm af-pop-input\" placeholder=\"Contiene…\" value=\"" + escHtml(cur) + "\">";
+            }
+            pop.innerHTML = "<div class=\"af-pop-title\">Filtrar</div>" + bodyHtml +
+                "<div class=\"af-pop-actions\">" +
+                "<button type=\"button\" class=\"btn btn-sm btn-link af-pop-clear\">Limpiar</button>" +
+                "<button type=\"button\" class=\"btn btn-sm admin-btn af-pop-ok\">Aplicar</button></div>";
+            document.body.appendChild(pop);
+            _adminFiltrosPopover = pop;
+            const rect = filBtn.getBoundingClientRect();
+            pop.style.left = Math.min(rect.left, window.innerWidth - 220) + "px";
+            pop.style.top = (rect.bottom + 4 + (window.scrollY || 0)) + "px";
+            const inp = pop.querySelector(".af-pop-input");
+            if (inp && inp.focus) setTimeout(function () { inp.focus(); }, 10);
+            const aplicar = function () {
+                const v = inp ? String(inp.value || "").trim() : "";
+                if (v) state.filters[colKey] = v;
+                else delete state.filters[colKey];
+                if (!klist.length) {
+                    if (v) state.filters[String(idx)] = v;
+                    else delete state.filters[String(idx)];
+                }
+                adminFiltrosCerrarPopover_();
+                if (typeof o.onChange === "function") o.onChange(state);
+                else if ((o.mode || "dom") === "dom") {
+                    adminFiltrosEnhance_(table, o);
+                    adminFiltrosAplicarDom_(table, tid);
+                }
+            };
+            pop.querySelector(".af-pop-ok").addEventListener("click", aplicar);
+            pop.querySelector(".af-pop-clear").addEventListener("click", function () {
+                if (inp) inp.value = "";
+                aplicar();
+            });
+            if (inp && inp.tagName === "INPUT") {
+                inp.addEventListener("keydown", function (e) {
+                    if (e.key === "Enter") { e.preventDefault(); aplicar(); }
+                    if (e.key === "Escape") adminFiltrosCerrarPopover_();
+                });
+            }
+        }
+    });
+}
+
+if (typeof document !== "undefined" && !window._afDocClose) {
+    window._afDocClose = true;
+    document.addEventListener("mousedown", function (ev) {
+        if (!_adminFiltrosPopover) return;
+        if (_adminFiltrosPopover.contains(ev.target)) return;
+        if (ev.target.closest && ev.target.closest("[data-af-filter]")) return;
+        adminFiltrosCerrarPopover_();
+    });
+}
+
+/** Tras pintar un tbody de Ajustes: orden + filtro por columna (DOM). */
+function adminFiltrosTrasPintar_(bodyId, extraOpts) {
+    const body = document.getElementById(bodyId);
+    if (!body) return;
+    const table = body.closest("table");
+    if (!table || typeof adminFiltrosEnhance_ !== "function") return;
+    const opts = Object.assign({ id: bodyId, mode: "dom", skipLast: true }, extraOpts || {});
+    adminFiltrosEnhance_(table, opts);
+    if ((opts.mode || "dom") === "dom") adminFiltrosAplicarDom_(table, opts.id || bodyId);
+}
+
 function reglaDefaultUm(codigo) {
     const hit = UMS_MATRIZ_DEFAULT.find(function (u) { return u.um.toLowerCase() === String(codigo || "").toLowerCase(); });
     return hit ? Object.assign({}, hit) : null;
@@ -136,6 +405,7 @@ function pintarTablaUnidadesMatriz() {
     let rows = parseUnidadesMatriz(document.getElementById("cfgUnidades")?.value || (CONFIG_GLOBAL && CONFIG_GLOBAL.unidades));
     if (!rows.length) rows = UMS_MATRIZ_DEFAULT.slice();
     tbody.innerHTML = rows.map(filaUnidadMatrizHtml).join("");
+    adminFiltrosTrasPintar_("unidadesMatrizBody");
 }
 
 function agregarUnidadMatrizUI() {
@@ -252,6 +522,7 @@ function pintarTablaTarifasFijas() {
             '<td class="text-center"><input type="checkbox" class="form-check-input" data-tf="global"' + (t.es_global ? " checked" : "") + '></td>' +
             '<td class="admin-row-actions"><button type="button" class="admin-icon-btn" title="Quitar" onclick="quitarTarifaFijaUI(this)"><i class="bi bi-trash3"></i></button></td></tr>';
     }).join("");
+    adminFiltrosTrasPintar_("tarifasFijasBody");
 }
 
 function agregarTarifaFijaUI() {
@@ -340,6 +611,11 @@ function pintarTablaComisiones() {
             onEnd: function () { poblarSelectComisiones(leerComisionesUI()); }
         });
     }
+    const tblCo = tbody.closest("table");
+    if (tblCo && tblCo.tHead && tblCo.tHead.rows[0] && tblCo.tHead.rows[0].cells[0]) {
+        tblCo.tHead.rows[0].cells[0].setAttribute("data-af-skip", "1");
+    }
+    adminFiltrosTrasPintar_("comisionesBody");
 }
 
 function agregarComisionUI() {
@@ -390,6 +666,7 @@ function pintarTablaPartidas() {
     if (tbody.querySelector("[data-k=\"codigo\"]") && document.activeElement && tbody.contains(document.activeElement)) return;
     const rows = window.logListaPartidas();
     tbody.innerHTML = rows.length ? rows.map(htmlFilaPartida_).join("") : "<tr><td colspan=\"3\">Sin partidas. Agrega una o sincroniza el Excel.</td></tr>";
+    adminFiltrosTrasPintar_("partidasBody");
     if (!tbody._pq) {
         tbody._pq = true;
         tbody.addEventListener("click", function (ev) {
@@ -959,6 +1236,7 @@ function arancelesAplicarVista_() {
     const q = arancelesNormTxt_(_arancelesUiFiltro.q);
     const paisF = arancelesNormTxt_(_arancelesUiFiltro.pais);
     const ord = _arancelesUiFiltro.orden || "pais";
+    const af = typeof adminFiltrosEstado_ === "function" ? adminFiltrosEstado_("arancelesBody") : null;
     const rows = [];
     body.querySelectorAll("tr").forEach(function (tr) {
         if (!tr.querySelector("[data-k=\"pais\"]")) return;
@@ -969,10 +1247,31 @@ function arancelesAplicarVista_() {
             const blob = arancelesNormTxt_([f.pais, f.partida, f.nota, f.descripcion, f.dutiesPct, f.taxesPct].join(" "));
             if (blob.indexOf(q) < 0) ok = false;
         }
+        if (ok && af && af.filters) {
+            Object.keys(af.filters).forEach(function (colKey) {
+                const needle = af.filters[colKey];
+                if (needle == null || needle === "") return;
+                const idx = parseInt(colKey, 10);
+                if (isNaN(idx) || !tr.cells[idx]) return;
+                if (!adminFiltrosFiltraValor_(adminFiltrosCeldaTxt_(tr.cells[idx]), needle)) ok = false;
+            });
+        }
         tr.style.display = ok ? "" : "none";
         rows.push({ tr: tr, f: f, ok: ok });
     });
+    const afSort = af && typeof af.sortCol === "number" && af.sortCol >= 0;
     rows.sort(function (a, b) {
+        if (afSort) {
+            const va = adminFiltrosCeldaTxt_(a.tr.cells[af.sortCol]);
+            const vb = adminFiltrosCeldaTxt_(b.tr.cells[af.sortCol]);
+            const dir = af.sortDir === "desc" ? -1 : 1;
+            const na = parseFloat(String(va).replace(",", "."));
+            const nb = parseFloat(String(vb).replace(",", "."));
+            if (isFinite(na) && isFinite(nb) && String(va).trim() !== "" && String(vb).trim() !== "") {
+                if (na !== nb) return (na < nb ? -1 : 1) * dir;
+            }
+            return adminFiltrosNorm_(va).localeCompare(adminFiltrosNorm_(vb)) * dir;
+        }
         const fa = a.f, fb = b.f;
         if (ord === "partida") return arancelesNormTxt_(fa.partida).localeCompare(arancelesNormTxt_(fb.partida)) || arancelesNormTxt_(fa.pais).localeCompare(arancelesNormTxt_(fb.pais));
         if (ord === "duties") return (Number(fa.dutiesPct) || 0) - (Number(fb.dutiesPct) || 0);
@@ -1154,6 +1453,18 @@ function pintarTablaAranceles() {
             : "<tr><td colspan=\"8\">Sin filas. Agrega una o sincroniza desde Drive.</td></tr>";
         arancelesLlenarFiltroPais_();
         arancelesAplicarVista_();
+        const tblAra = body.closest("table");
+        if (tblAra && typeof adminFiltrosEnhance_ === "function") {
+            adminFiltrosEnhance_(tblAra, {
+                id: "arancelesBody",
+                mode: "data",
+                skipLast: true,
+                onChange: function () {
+                    arancelesAplicarVista_();
+                    adminFiltrosEnhance_(tblAra, tblAra._afOpts);
+                }
+            });
+        }
         if (typeof logAraSimLlenar_ === "function") logAraSimLlenar_();
         if (typeof logPintarSelectPaisCliente === "function") logPintarSelectPaisCliente();
     }).catch(function () {
@@ -1240,6 +1551,7 @@ function pintarUsuariosAdmin_() {
             "<td><span class=\"badge text-bg-danger\">Administrador</span>" + (rescate ? " <span class=\"badge text-bg-secondary\">Rescate</span>" : "") + "</td>" +
             "<td><button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-us=\"quitar\" data-email=\"" + escHtml(email) + "\" title=\"" + (fijo ? escHtml(motivo) : "Quitar") + "\"" + (fijo ? " disabled" : "") + "><i class=\"bi bi-trash\"></i></button></td></tr>";
     }).join("") : "<tr><td colspan=\"3\" class=\"text-muted\">Sin administradores. Agrega al menos uno.</td></tr>";
+    adminFiltrosTrasPintar_("usuariosBody");
 }
 
 async function cargarUsuariosAdmin_() {
@@ -1574,6 +1886,9 @@ function logTarParaGuardar_() {
     });
     out.conceptos = src.conceptos && typeof src.conceptos === "object" ? src.conceptos : { origen: [], destino: [] };
     out.lugares = Array.isArray(src.lugares) ? src.lugares.slice(0, 400) : [];
+    out.ciudadesAlias = (typeof logCiudadesAlias_ !== "undefined" && logCiudadesAlias_ && typeof logCiudadesAlias_ === "object")
+        ? logCiudadesAlias_
+        : (src.ciudadesAlias && typeof src.ciudadesAlias === "object" ? src.ciudadesAlias : {});
     return out;
 }
 
@@ -1739,18 +2054,44 @@ function logTarTexto_(f) {
 
 function logTarFiltradas_(tab) {
     const q = String((document.getElementById("logTarBuscar") || {}).value || "").toLowerCase().trim();
-        const filtroMod = document.getElementById("logTarFiltroMod");
-        const mod = filtroMod && !filtroMod.hidden ? (filtroMod.value || "") : "";
+    const filtroMod = document.getElementById("logTarFiltroMod");
+    const mod = filtroMod && !filtroMod.hidden ? (filtroMod.value || "") : "";
     const solo = !!((document.getElementById("logTarSoloPref") || {}).checked);
-    return (window.logTarifas[tab] || []).filter(function (f) {
+    let filas = (window.logTarifas[tab] || []).filter(function (f) {
         if (mod && f.modalidad && f.modalidad !== mod && f.modalidad !== "todas") return false;
         if (solo && f.preferida !== "S") return false;
         if (q && logTarTexto_(f).indexOf(q) < 0) return false;
         return true;
     });
+    const st = typeof adminFiltrosEstado_ === "function" ? adminFiltrosEstado_("logTar:" + tab) : null;
+    if (st && st.filters) {
+        Object.keys(st.filters).forEach(function (k) {
+            const needle = st.filters[k];
+            if (needle == null || needle === "") return;
+            filas = filas.filter(function (f) {
+                return adminFiltrosFiltraValor_(f[k] == null ? "" : f[k], needle);
+            });
+        });
+    }
+    return filas;
 }
 
-function logTarOrdenar_(filas) {
+function logTarOrdenar_(filas, tab) {
+    const st = typeof adminFiltrosEstado_ === "function" ? adminFiltrosEstado_("logTar:" + (tab || window.logTarTab || "origen")) : null;
+    if (st && st.sortCol && st.sortCol !== -1 && typeof st.sortCol === "string") {
+        const col = st.sortCol;
+        const dir = st.sortDir === "desc" ? -1 : 1;
+        return filas.slice().sort(function (a, b) {
+            const va = a[col] == null ? "" : a[col];
+            const vb = b[col] == null ? "" : b[col];
+            const na = parseFloat(String(va).replace(",", "."));
+            const nb = parseFloat(String(vb).replace(",", "."));
+            if (isFinite(na) && isFinite(nb) && String(va).trim() !== "" && String(vb).trim() !== "") {
+                if (na !== nb) return (na < nb ? -1 : 1) * dir;
+            }
+            return String(va).localeCompare(String(vb), "es") * dir;
+        });
+    }
     const orden = window.logTarOrden || "desc";
     return filas.slice().sort(function (a, b) {
         const da = String(a.fecha || "");
@@ -1809,10 +2150,9 @@ function logTarPintar_() {
     }
     head.innerHTML = "<tr>" + cols.map(function (c) {
         const thCls = ({ forma: "lt-forma", baseVar: "lt-sobre", aplica: "lt-aplica", equipo: "lt-equipo", moneda: "lt-mon", fecha: "lt-fecha" })[c[0]] || "";
-        if (c[0] === "fecha") return "<th class=\"lt-fecha\"><button type=\"button\" class=\"cl-sort\" id=\"logTarOrdenFecha\">Fecha " + ((window.logTarOrden || "desc") === "asc" ? "↑" : "↓") + "</button></th>";
-        return "<th" + (thCls ? " class=\"" + thCls + "\"" : "") + ">" + c[1] + "</th>";
-    }).join("") + "<th></th></tr>";
-    const ordenadas = logTarOrdenar_(logTarFiltradas_(tab));
+        return "<th" + (thCls ? " class=\"" + thCls + "\"" : "") + " data-af-label=\"" + escLogTar_(c[1]) + "\">" + c[1] + "</th>";
+    }).join("") + "<th data-af-skip=\"1\"></th></tr>";
+    const ordenadas = logTarOrdenar_(logTarFiltradas_(tab), tab);
     const tam = Number(window.logTarTam) || 25;
     const pag = window.logTarPagina[tab] || 0;
     const maxPag = Math.max(0, Math.ceil(ordenadas.length / tam) - 1);
@@ -1843,9 +2183,19 @@ function logTarPintar_() {
     }
     logTarAplicarOff_();
     logTarPintarPager_(ordenadas.length, pagOk, tam);
-    const btnOrden = document.getElementById("logTarOrdenFecha");
-    if (btnOrden && !btnOrden.getAttribute("data-on")) {
-        btnOrden.setAttribute("data-on", "1");
+    const tblTar = head.closest("table");
+    if (tblTar && typeof adminFiltrosEnhance_ === "function") {
+        adminFiltrosEnhance_(tblTar, {
+            id: "logTar:" + tab,
+            mode: "data",
+            skipLast: true,
+            keys: cols.map(function (c) { return c[0]; }),
+            onChange: function () {
+                window.logTarPagina[tab] = 0;
+                logTarFlush_();
+                logTarPintar_();
+            }
+        });
     }
 }
 
@@ -1931,9 +2281,17 @@ function logCiudadesPintar_() {
     if (pais && sel.value !== pais) sel.value = pais;
     pais = sel.value || "";
     const q = String((document.getElementById("logCiudadesBuscar") || {}).value || "").toLowerCase().trim();
-    const filas = (!pais || typeof logCiudadesCatalogo_ !== "function") ? [] : logCiudadesCatalogo_(pais).filter(function (x) {
+    let filas = (!pais || typeof logCiudadesCatalogo_ !== "function") ? [] : logCiudadesCatalogo_(pais).filter(function (x) {
         return !q || String(x.nombre || "").toLowerCase().indexOf(q) >= 0;
     });
+    if (typeof adminFiltrosFiltrarLista_ === "function") {
+        filas = adminFiltrosFiltrarLista_("logCiudades", filas, function (row, col) {
+            if (col === "nombre" || col === "0") return row.nombre || "";
+            if (col === "uso" || col === "1") return row.uso || "ciudad";
+            if (col === "origen" || col === "2") return row.origen || "";
+            return row[col] != null ? row[col] : "";
+        });
+    }
     if (!pais) {
         body.innerHTML = "<tr><td colspan=\"4\" class=\"text-muted\">Elige un país para ver sus ciudades.</td></tr>";
     } else if (!filas.length) {
@@ -1948,18 +2306,29 @@ function logCiudadesPintar_() {
             const quitar = x.origen === "App" && x.id
                 ? "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-lg-del=\"" + escLogTar_(x.id) + "\" title=\"Quitar\">×</button>"
                 : "";
-            return "<tr><td>" + escLogTar_(x.nombre) + "</td><td>" + uso + "</td><td>" + escLogTar_(x.origen) + "</td><td>" + quitar + "</td></tr>";
+            const nomInp = "<input type=\"text\" class=\"form-control form-control-sm\" data-lg-renom=\"1\" data-lg-id=\"" + escLogTar_(x.id || "") + "\" data-lg-nombre=\"" + escLogTar_(x.nombre) + "\" data-lg-pais=\"" + escLogTar_(x.pais) + "\" value=\"" + escLogTar_(x.nombre) + "\" title=\"Editar nombre. Se actualizan tarifas y la cotización abierta.\">";
+            return "<tr><td>" + nomInp + "</td><td>" + uso + "</td><td>" + escLogTar_(x.origen) + "</td><td>" + quitar + "</td></tr>";
         }).join("");
     }
     if (info) info.textContent = pais ? (filas.length + " en " + pais) : "";
     const cargando = pais && typeof logCiudadesCargandoPais_ === "function" && logCiudadesCargandoPais_(pais);
     if (cargando) {
-        body.querySelectorAll("select, button").forEach(function (el) { el.disabled = true; });
+        body.querySelectorAll("select, button, input").forEach(function (el) { el.disabled = true; });
         const ag = document.getElementById("logCiudadesAgregar");
         if (ag) ag.disabled = true;
     } else {
         const ag = document.getElementById("logCiudadesAgregar");
         if (ag) ag.disabled = false;
+    }
+    const tblCiu = body.closest("table");
+    if (tblCiu && typeof adminFiltrosEnhance_ === "function") {
+        adminFiltrosEnhance_(tblCiu, {
+            id: "logCiudades",
+            mode: "data",
+            skipLast: true,
+            keys: ["nombre", "uso", "origen"],
+            onChange: function () { logCiudadesPintar_(); }
+        });
     }
     if (typeof logCiudadesBotonGuardar_ === "function") logCiudadesBotonGuardar_();
     if (pais && typeof logCiudadesAsegurarPais_ === "function") logCiudadesAsegurarPais_(pais);
@@ -1993,6 +2362,45 @@ function logCiudadesEnlazar_() {
         const selUso = ev.target.closest("[data-lg-uso]");
         if (!selUso || typeof logCiudadUsoCambiar_ !== "function") return;
         logCiudadUsoCambiar_(selUso.getAttribute("data-lg-pais"), selUso.getAttribute("data-lg-nombre"), selUso.value, selUso.getAttribute("data-lg-id"));
+    });
+    function aplicarRenombre_(inp) {
+        if (!inp || typeof logCiudadRenombrar_ !== "function") return;
+        const pais = inp.getAttribute("data-lg-pais") || "";
+        const viejo = inp.getAttribute("data-lg-nombre") || "";
+        const nuevo = String(inp.value || "").trim();
+        if (!nuevo) {
+            inp.value = viejo;
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion("El nombre no puede quedar vacío.", "warning");
+            return;
+        }
+        if (nuevo === viejo) return;
+        const r = logCiudadRenombrar_(pais, viejo, nuevo, inp.getAttribute("data-lg-id") || "");
+        if (!r || !r.ok) {
+            inp.value = viejo;
+            if (typeof mostrarNotificacion === "function") mostrarNotificacion((r && r.mensaje) || "No se pudo renombrar.", "warning");
+            return;
+        }
+        if (r.mismo) return;
+        inp.setAttribute("data-lg-nombre", nuevo);
+        logCiudadesPintar_();
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("«" + viejo + "» → «" + nuevo + "». Tarifas y cotización abierta actualizadas. Guarda Ajustes para toda la empresa.", "success");
+        }
+    }
+    box.addEventListener("focusout", function (ev) {
+        const inp = ev.target.closest("[data-lg-renom]");
+        if (inp) aplicarRenombre_(inp);
+    });
+    box.addEventListener("keydown", function (ev) {
+        const inp = ev.target.closest("[data-lg-renom]");
+        if (!inp) return;
+        if (ev.key === "Enter") {
+            ev.preventDefault();
+            inp.blur();
+        } else if (ev.key === "Escape") {
+            inp.value = inp.getAttribute("data-lg-nombre") || "";
+            inp.blur();
+        }
     });
     box.addEventListener("click", function (ev) {
         const b = ev.target.closest("[data-lg-del]");
@@ -2829,6 +3237,7 @@ async function cargarTablaCatalogo() {
             infoId: "catalogoPaginacionInfo", navId: "catalogoPagerNums", pageId: "catalogoPagerPagina",
             offset: _catOffset, limit: _catLimit, total: _catTotal, shown: items.length, irFn: "irAPaginaCatalogo"
         });
+        adminFiltrosTrasPintar_("catalogoTablaBody");
     } catch (e) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No se pudo listar. Pega el backend.gs nuevo en Apps Script. ' + escHtml(e.message) + '</td></tr>';
     }

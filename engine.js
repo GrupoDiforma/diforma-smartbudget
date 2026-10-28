@@ -787,7 +787,9 @@ window.reemplazarMatrizDesdeIA = function(nuevaMatriz) {
     itemsPresupuesto = [];
     nuevaMatriz.forEach(m => {
         let nombreLimpio = (m.nombre || "Sin nombre").replace(/^\[.*?\]\s*-?\s*/, '').trim();
+        /* [Matriz Drive] solo lo confirma enriquecerItemsConCatalogo; si viene de la IA, es provisional. */
         let fuenteCorrecta = m.fuente || "[Estimado IA]";
+        if (/matriz\s*drive|cat[aá]logo/i.test(fuenteCorrecta)) fuenteCorrecta = "[Estimado IA]";
         let um = umAlias[m.um] || m.um || "UND";
         if (umsOk.length && !umsOk.some(u => u === um)) {
             const hit = umsOk.find(u => u.toLowerCase() === String(um).toLowerCase());

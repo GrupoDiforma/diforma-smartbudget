@@ -190,7 +190,9 @@ async function buscarOportunidadOdoo() {
         if (data.exito && data.data) {
             const op = data.data;
             const setVal = (id, val) => { const el = document.getElementById(id); if(el) el.value = val || ''; };
-            setVal('noProyecto', op.name); setVal('cliente', op.partner_id ? op.partner_id[1] : ''); setVal('comercial', op.user_id ? op.user_id[1] : '');
+            if (typeof setNombreProyectoUI_ === "function") setNombreProyectoUI_(codigo, op.name);
+            else setVal("noProyecto", op.name);
+            setVal('cliente', op.partner_id ? op.partner_id[1] : ''); setVal('comercial', op.user_id ? op.user_id[1] : '');
             if (op.create_date) setVal('fecha', op.create_date.split(' ')[0]);
             mostrarAlertaOdoo("Oportunidad cargada correctamente", "success");
         } else { mostrarAlertaOdoo(data.mensaje || "Oportunidad no encontrada", "warning"); }
@@ -243,6 +245,8 @@ function asegurarArchivosGrupoEnUI_(ver) {
     if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
 }
 
+var PIN_INDIV_ID_ = "_indiv";
+
 function elementoActivoObj_() {
     const ver = versionActualObj_();
     if (!ver || !ver.elementos) return null;
@@ -250,9 +254,31 @@ function elementoActivoObj_() {
     return ver.elementos.find(function (e) { return e.id === id; }) || ver.elementos[0] || null;
 }
 
+/** Donde vive el pin: pieza activa (grupal) o la versión (individual). */
+function hostPinCotizacion_() {
+    const ver = versionActualObj_();
+    if (!ver) return null;
+    if (esPresupuestoGrupal()) return elementoActivoObj_();
+    return ver;
+}
+
+function idPinCotizacion_(host) {
+    if (!host) return "";
+    if (esPresupuestoGrupal() && host.id) return String(host.id);
+    return PIN_INDIV_ID_;
+}
+
+function hostTienePin_(host) {
+    return !!(host && (host.imgCotizacion || host.imgRef || host.imgCotizacionFileId || host.imgCotizacionNombre));
+}
+
 window.imagenCotizacionElemento = function (elemId) {
     const ver = versionActualObj_();
-    if (!ver || !ver.elementos) return "";
+    if (!ver) return "";
+    if (!esPresupuestoGrupal() || String(elemId) === PIN_INDIV_ID_) {
+        return ver.imgCotizacion || "";
+    }
+    if (!ver.elementos) return "";
     const el = ver.elementos.find(function (e) { return String(e.id) === String(elemId); });
     return (el && el.imgCotizacion) || "";
 };
@@ -262,18 +288,22 @@ window.imgRefCotizacionElemento = function (elemId, verId) {
     const ver = verId
         ? vers.find(function (v) { return String(v.id) === String(verId); })
         : versionActualObj_();
-    if (!ver || !ver.elementos) return "";
+    if (!ver) return "";
+    if (!ver.elementos || !ver.elementos.length || String(elemId) === PIN_INDIV_ID_) {
+        return ver.imgRef || "";
+    }
     const el = ver.elementos.find(function (e) { return String(e.id) === String(elemId); });
     return (el && el.imgRef) || "";
 };
 
 window.archivoEsPinCotizacion = function (file) {
     if (!file || !/^image\//i.test(file.mimeType || "")) return false;
-    const el = elementoActivoObj_();
-    if (!el || (!el.imgCotizacion && !el.imgCotizacionFileId && !el.imgCotizacionNombre)) return false;
-    if (el.imgCotizacionFileId && file.id && file.id === el.imgCotizacionFileId) return true;
-    if (file._pinCotizacion && file._pinCotizacion === el.id) return true;
-    if (el.imgCotizacionNombre && file.name && file.name === el.imgCotizacionNombre) return true;
+    const host = hostPinCotizacion_();
+    const pinId = idPinCotizacion_(host);
+    if (!host || !hostTienePin_(host)) return false;
+    if (host.imgCotizacionFileId && file.id && file.id === host.imgCotizacionFileId) return true;
+    if (file._pinCotizacion && file._pinCotizacion === pinId) return true;
+    if (host.imgCotizacionNombre && file.name && file.name === host.imgCotizacionNombre) return true;
     return false;
 };
 
@@ -284,29 +314,32 @@ function huellaImgCotizacion_(data) {
 }
 
 window.asignarRenderCotizacionElemento = async function (idx) {
-    if (!esPresupuestoGrupal()) return;
     const files = window.archivosGemaBase64 || [];
     const i = idx != null ? idx : (window._visorIdx || 0);
     const f = files[i];
     if (!f || !/^image\//i.test(f.mimeType || "")) {
-        return typeof mostrarNotificacion === "function" && mostrarNotificacion("Elige una imagen (no PDF) para la cotización de esta pieza.", "warning");
+        return typeof mostrarNotificacion === "function" && mostrarNotificacion("Elige una imagen (no PDF) para la cotización.", "warning");
     }
     snapshotVersionActual();
-    const el = elementoActivoObj_();
-    if (!el) return;
+    const host = hostPinCotizacion_();
+    if (!host) return;
+    const pinId = idPinCotizacion_(host);
+    const grupal = esPresupuestoGrupal();
     try {
         const fileId = idArchivoVisor_(f);
-        f._pinCotizacion = el.id;
+        f._pinCotizacion = pinId;
         (window.archivosGemaBase64 || []).forEach(function (otro) {
-            if (otro !== f && otro._pinCotizacion === el.id) delete otro._pinCotizacion;
+            if (otro !== f && otro._pinCotizacion === pinId) delete otro._pinCotizacion;
         });
-        f.elemId = el.id;
-        if (el.imgCotizacionFileId === fileId && el.imgRef) {
-            el.imgCotizacionNombre = f.name || el.imgCotizacionNombre || "";
-            sincronizarArchivosGrupoEnVersion_(versionActualObj_());
+        if (grupal) f.elemId = pinId;
+        if (host.imgCotizacionFileId === fileId && host.imgRef) {
+            host.imgCotizacionNombre = f.name || host.imgCotizacionNombre || "";
+            if (grupal) sincronizarArchivosGrupoEnVersion_(versionActualObj_());
             if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
             if (typeof mostrarNotificacion === "function") {
-                mostrarNotificacion("Ese render ya está en la cotización de «" + (el.nombre || "pieza") + "».", "success");
+                mostrarNotificacion(grupal
+                    ? ("Ese render ya está en la cotización de «" + (host.nombre || "pieza") + "».")
+                    : "Ese render ya está en la cotización.", "success");
             }
             return;
         }
@@ -314,16 +347,18 @@ window.asignarRenderCotizacionElemento = async function (idx) {
         const thumb = typeof window.reducirImagenJpeg === "function"
             ? await window.reducirImagenJpeg(src, 1000, 0.88)
             : src;
-        if (el.imgRef) el.imgRefAnterior = el.imgRef;
-        el.imgCotizacion = thumb;
-        el.imgCotizacionNombre = f.name || "";
-        el.imgCotizacionFileId = fileId;
-        el.imgCotizacionHuella = huellaImgCotizacion_(thumb);
-        delete el.imgRef;
-        sincronizarArchivosGrupoEnVersion_(versionActualObj_());
+        if (host.imgRef) host.imgRefAnterior = host.imgRef;
+        host.imgCotizacion = thumb;
+        host.imgCotizacionNombre = f.name || "";
+        host.imgCotizacionFileId = fileId;
+        host.imgCotizacionHuella = huellaImgCotizacion_(thumb);
+        delete host.imgRef;
+        if (grupal) sincronizarArchivosGrupoEnVersion_(versionActualObj_());
         if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
         if (typeof mostrarNotificacion === "function") {
-            mostrarNotificacion("Este render queda en la cotización de «" + (el.nombre || "pieza") + "». Las demás piezas no lo heredan.", "success");
+            mostrarNotificacion(grupal
+                ? ("Este render queda en la cotización de «" + (host.nombre || "pieza") + "». Las demás piezas no lo heredan.")
+                : "Este render queda en la cotización del proyecto.", "success");
         }
         if (typeof programarGuardarSesion === "function") programarGuardarSesion();
         if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
@@ -332,26 +367,50 @@ window.asignarRenderCotizacionElemento = async function (idx) {
     }
 };
 
+/** Si Individual no tiene pin, usa el render de Odoo del visor. */
+window.asegurarPinOdooIndividual_ = async function () {
+    if (esPresupuestoGrupal()) return false;
+    const host = hostPinCotizacion_();
+    if (!host || hostTienePin_(host)) return false;
+    const files = window.archivosGemaBase64 || [];
+    const ix = files.findIndex(function (f) { return f && f._odoo && /^image\//i.test(f.mimeType || ""); });
+    if (ix < 0) return false;
+    await window.asignarRenderCotizacionElemento(ix);
+    return true;
+};
+
+function extraerPinHost_(host, k, imagenes) {
+    if (!host) return;
+    const data = host.imgCotizacion;
+    const huella = huellaImgCotizacion_(data);
+    const yaEnDrive = !!(host.imgRef && (!huella || !host.imgCotizacionHuella || host.imgCotizacionHuella === huella));
+    if (data && /^data:image\//.test(data) && !yaEnDrive) {
+        imagenes.push({
+            k: k,
+            data: data,
+            reemplaza: host.imgRef || host.imgRefAnterior || ""
+        });
+        host.imgCotizacionHuella = huella;
+        delete host.imgRef;
+    }
+    delete host.imgCotizacion;
+    delete host.imgRefAnterior;
+}
+
 function extraerImagenesPresupuesto_(payload) {
     const imagenes = [];
     (payload.versiones || []).forEach(function (v) {
         delete v.archivosGrupo;
-        (v.elementos || []).forEach(function (el) {
-            const data = el.imgCotizacion;
-            const huella = huellaImgCotizacion_(data);
-            const yaEnDrive = !!(el.imgRef && (!huella || !el.imgCotizacionHuella || el.imgCotizacionHuella === huella));
-            if (data && /^data:image\//.test(data) && !yaEnDrive) {
-                imagenes.push({
-                    k: String(v.id || "V1") + ":" + String(el.id || ""),
-                    data: data,
-                    reemplaza: el.imgRef || el.imgRefAnterior || ""
-                });
-                el.imgCotizacionHuella = huella;
-                delete el.imgRef;
-            }
-            delete el.imgCotizacion;
-            delete el.imgRefAnterior;
-        });
+        const elems = v.elementos || [];
+        if (elems.length) {
+            elems.forEach(function (el) {
+                extraerPinHost_(el, String(v.id || "V1") + ":" + String(el.id || ""), imagenes);
+            });
+            delete v.imgCotizacion;
+            delete v.imgRefAnterior;
+        } else {
+            extraerPinHost_(v, String(v.id || "V1") + ":" + PIN_INDIV_ID_, imagenes);
+        }
     });
     return imagenes;
 }
@@ -400,6 +459,12 @@ function aplicarRefsImagenesVivas_(refs) {
                 if (el.imgCotizacion) el.imgCotizacionHuella = huellaImgCotizacion_(el.imgCotizacion);
             }
         });
+        const kInd = String(v.id || "V1") + ":" + PIN_INDIV_ID_;
+        if (refs[kInd]) {
+            v.imgRef = refs[kInd];
+            delete v.imgRefAnterior;
+            if (v.imgCotizacion) v.imgCotizacionHuella = huellaImgCotizacion_(v.imgCotizacion);
+        }
     });
 }
 
@@ -409,6 +474,7 @@ async function hidratarRendersCotizacionNube_() {
         (v.elementos || []).forEach(function (el) {
             if (el.imgRef && !el.imgCotizacion) dest.push(el);
         });
+        if ((!v.elementos || !v.elementos.length) && v.imgRef && !v.imgCotizacion) dest.push(v);
     });
     if (!dest.length || typeof realizarPeticionBD !== "function") return;
     try {
@@ -441,10 +507,14 @@ async function recuperarRendersDesdeCotizaciones_() {
             if (!(el.imgRef || el.imgCotizacionNombre || el.imgCotizacionHuella || el.imgCotizacionFileId)) return;
             pend.push(el);
         });
+        if (v.elementos && v.elementos.length) return;
+        if (v.imgCotizacion && /^data:image\//.test(v.imgCotizacion)) return;
+        if (!(v.imgRef || v.imgCotizacionNombre || v.imgCotizacionHuella || v.imgCotizacionFileId)) return;
+        pend.push(v);
     });
     if (!pend.length || typeof realizarPeticionBD !== "function") return 0;
-    const codigo = String(document.getElementById("inputCodigo")?.value || "").trim()
-        || String(document.getElementById("noProyecto")?.value || "").trim().split(/\s+/)[0];
+    const codigo = (typeof codigoOportunidadActual_ === "function" ? codigoOportunidadActual_() : "")
+        || String(document.getElementById("inputCodigo")?.value || "").trim();
     if (!codigo) return 0;
     let lista = [];
     try {
@@ -506,25 +576,34 @@ function enfocarRenderPieza_() {
 function ponerRendersCotizacionEnVisor_() {
     const files = window.archivosGemaBase64 || [];
     const ver = versionActualObj_();
-    if (!ver || !ver.elementos) return;
-    ver.elementos.forEach(function (el) {
-        if (!el.imgCotizacion || !/^data:image\//.test(el.imgCotizacion)) return;
-        const ya = files.some(function (f) { return f && f._pinCotizacion === el.id; });
+    if (!ver) return;
+    const pushPin_ = function (host, pinId, nombre) {
+        if (!host || !host.imgCotizacion || !/^data:image\//.test(host.imgCotizacion)) return;
+        const ya = files.some(function (f) { return f && f._pinCotizacion === pinId; });
         if (ya) return;
-        const m = String(el.imgCotizacion).match(/^data:([^;]+);base64,(.+)$/);
+        const m = String(host.imgCotizacion).match(/^data:([^;]+);base64,(.+)$/);
         if (!m) return;
         files.push({
-            id: "pin-" + el.id,
-            name: el.imgCotizacionNombre || ((el.nombre || "Pieza") + ".jpg"),
+            id: host.imgCotizacionFileId || ("pin-" + pinId),
+            name: host.imgCotizacionNombre || nombre || "Cotización.jpg",
             mimeType: m[1],
             data: m[2],
-            elemId: el.id,
-            alcance: "pieza",
-            _pinCotizacion: el.id
+            elemId: pinId === PIN_INDIV_ID_ ? "" : pinId,
+            alcance: pinId === PIN_INDIV_ID_ ? "grupo" : "pieza",
+            _pinCotizacion: pinId
         });
-    });
+    };
+    if (ver.elementos && ver.elementos.length) {
+        ver.elementos.forEach(function (el) {
+            pushPin_(el, el.id, (el.nombre || "Pieza") + ".jpg");
+        });
+    } else {
+        pushPin_(ver, PIN_INDIV_ID_, "Cotización.jpg");
+    }
     window.archivosGemaBase64 = files;
-    const activa = window.elementoActivoId || ver.elementoActivoId;
+    const activa = esPresupuestoGrupal()
+        ? (window.elementoActivoId || ver.elementoActivoId)
+        : PIN_INDIV_ID_;
     const pin = files.findIndex(function (f) { return f && f._pinCotizacion && f._pinCotizacion === activa; });
     if (pin >= 0) window._visorIdx = pin;
     if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
@@ -550,6 +629,9 @@ window.cargarRendersVisor = function (opts) {
             await hidratarRendersCotizacionNube_();
             nPins = await recuperarRendersDesdeCotizaciones_();
             ponerRendersCotizacionEnVisor_();
+            if (typeof window.asegurarPinOdooIndividual_ === "function") {
+                await window.asegurarPinOdooIndividual_();
+            }
             nPins = (window.archivosGemaBase64 || []).filter(function (f) { return f && f._pinCotizacion; }).length || nPins;
         } finally {
             if (btn) btn.disabled = false;
@@ -616,13 +698,25 @@ function sincronizarElementoActivoEnVersion_(ver) {
     if (!ver || !esPresupuestoGrupal()) return ver;
     if (!Array.isArray(ver.elementos) || !ver.elementos.length) {
         const nombre = (ver.fichaComercial && ver.fichaComercial.titulo) || "Pieza 1";
-        ver.elementos = [Object.assign(elementoVacio_(nombre), {
+        const primero = Object.assign(elementoVacio_(nombre), {
             matrizItems: clonarJson_(ver.matrizItems || []),
             escalas: clonarJson_(ver.escalas && ver.escalas.length ? ver.escalas : [{ id: "l1", q: 1 }]),
             historialChat: clonarJson_(ver.historialChat || []),
             faseIA: ver.faseIA || "idle",
             fichaComercial: clonarJson_(ver.fichaComercial || {})
-        })];
+        });
+        if (ver.imgCotizacion) primero.imgCotizacion = ver.imgCotizacion;
+        if (ver.imgRef) primero.imgRef = ver.imgRef;
+        if (ver.imgCotizacionNombre) primero.imgCotizacionNombre = ver.imgCotizacionNombre;
+        if (ver.imgCotizacionFileId) primero.imgCotizacionFileId = ver.imgCotizacionFileId;
+        if (ver.imgCotizacionHuella) primero.imgCotizacionHuella = ver.imgCotizacionHuella;
+        delete ver.imgCotizacion;
+        delete ver.imgRef;
+        delete ver.imgCotizacionNombre;
+        delete ver.imgCotizacionFileId;
+        delete ver.imgCotizacionHuella;
+        delete ver.imgRefAnterior;
+        ver.elementos = [primero];
         ver.elementoActivoId = ver.elementos[0].id;
     }
     const id = ver.elementoActivoId || window.elementoActivoId || ver.elementos[0].id;
@@ -671,6 +765,11 @@ function aplanarVersionesAIndividual_() {
         ver.historialChat = clonarJson_(el.historialChat || ver.historialChat || []);
         ver.faseIA = el.faseIA || ver.faseIA;
         ver.fichaComercial = clonarJson_(el.fichaComercial || ver.fichaComercial || {});
+        if (el.imgCotizacion) ver.imgCotizacion = el.imgCotizacion;
+        if (el.imgRef) ver.imgRef = el.imgRef;
+        if (el.imgCotizacionNombre) ver.imgCotizacionNombre = el.imgCotizacionNombre;
+        if (el.imgCotizacionFileId) ver.imgCotizacionFileId = el.imgCotizacionFileId;
+        if (el.imgCotizacionHuella) ver.imgCotizacionHuella = el.imgCotizacionHuella;
         delete ver.elementos;
         delete ver.elementoActivoId;
         delete ver.briefGrupal;
@@ -744,7 +843,8 @@ function pintarEtiquetasElemento_(nombre, on) {
         }
     });
     const btn = document.getElementById("btnRenderCotizacion");
-    if (btn) btn.classList.toggle("d-none", !on);
+    /* Pin disponible en Individual y Grupal. */
+    if (btn) btn.classList.remove("d-none");
 }
 
 function htmlChipsVersion_() {
@@ -1188,11 +1288,23 @@ async function guardarProyectoBD() {
     if (!codigo) return mostrarNotificacion("Ingresa un código de oportunidad (Paso 1).", "warning");
     snapshotVersionActual();
     const activa = window.versionActivaId || "V1";
+    const fichaTitulo = String((document.getElementById("fichaTitulo") || {}).value || "").trim();
+    let nombreProyecto = String(document.getElementById("noProyecto")?.value || "").trim();
+    if (!nombreProyecto || nombreProyecto === "$") nombreProyecto = fichaTitulo || "";
+    if (typeof nombreProyectoFormato_ === "function") {
+        nombreProyecto = nombreProyectoFormato_(codigo, nombreProyecto || fichaTitulo);
+    } else if (nombreProyecto && nombreProyecto.indexOf(codigo) !== 0) {
+        nombreProyecto = codigo + " " + nombreProyecto;
+    } else if (!nombreProyecto) {
+        nombreProyecto = codigo;
+    }
+    const nomEl = document.getElementById("noProyecto");
+    if (nomEl && nomEl.value !== nombreProyecto) nomEl.value = nombreProyecto;
     const empaquetado = compactarPayloadNube({
         cabecera: {
             noProyecto: codigo,
             cliente: document.getElementById('cliente')?.value || '',
-            nombreProyecto: document.getElementById('noProyecto')?.value || '',
+            nombreProyecto: nombreProyecto,
             tipoPresupuesto: (typeof mercadoActual === "function" ? mercadoActual() : (document.getElementById('badgeTipo')?.innerText || 'NACIONAL')),
             tipoEstructura: tipoEstructuraActual(),
             versionActiva: activa,
@@ -1211,7 +1323,8 @@ async function guardarProyectoBD() {
     try {
         const data = await realizarPeticionBD({
             action: "guardar",
-            payload: empaquetado.payload
+            payload: empaquetado.payload,
+            imagenes: empaquetado.imagenes || []
         }, { timeoutMs: 180000 });
         if (!data || !data.exito) {
             mostrarNotificacion(mensajeGuardarNube_((data && data.mensaje) || "No se pudo guardar."), "danger");
@@ -1428,8 +1541,14 @@ async function cargarProyectoBD(idProyecto) {
         if (data.exito && data.data) {
             textoEsperaNube("Preparando la matriz…");
             const p = data.data; const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
-            setVal('inputCodigo', p.cabecera?.noProyecto); setVal('noProyecto', p.cabecera?.nombreProyecto); setVal('cliente', p.cabecera?.cliente);
-            window._codigoProyectoActivo = String((p.cabecera && p.cabecera.noProyecto) || idProyecto || "").trim();
+            const codigoCab = String((p.cabecera && p.cabecera.noProyecto) || idProyecto || "").trim();
+            let nombreCab = String((p.cabecera && p.cabecera.nombreProyecto) || "").trim();
+            if (typeof nombreProyectoFormato_ === "function") nombreCab = nombreProyectoFormato_(codigoCab, nombreCab);
+            else if (!nombreCab || nombreCab === "$") nombreCab = codigoCab;
+            setVal("inputCodigo", codigoCab);
+            setVal("noProyecto", nombreCab);
+            setVal("cliente", p.cabecera?.cliente);
+            window._codigoProyectoActivo = codigoCab;
             window.odooPistas = p.odooPistas || {};
             /* En Drive solo vive el render con pin de cotización. Planos y fotos del análisis no se recuperan. */
             (p.versiones || []).forEach(function (v) { delete v.archivosGrupo; });
@@ -1453,9 +1572,69 @@ async function cargarProyectoBD(idProyecto) {
 
 var SESION_TRABAJO_KEY = "smartbudget_sesion_v1";
 var _sesionGuardarT = null;
+var _flushPinsDriveP = null;
+var _restauroNecesitaRenders = false;
 
 function idsCabeceraSesion() {
     return ["inputCodigo", "noProyecto", "cliente", "fecha", "comercial", "disenador", "analista", "simFee", "selMercado", "selTipoEstructura"];
+}
+
+/** Versiones sin blobs: en localStorage solo refs Drive + meta del pin. */
+function aligerarVersionesSesion_(versiones) {
+    const v = clonarJson_(versiones || []);
+    v.forEach(function (ver) {
+        delete ver.archivosGrupo;
+        delete ver.imgCotizacion;
+        (ver.elementos || []).forEach(function (el) {
+            delete el.imgCotizacion;
+        });
+    });
+    return v;
+}
+
+function pinsPendientesDrive_() {
+    const imagenes = [];
+    (window.versionesPresupuesto || []).forEach(function (ver) {
+        (ver.elementos || []).forEach(function (el) {
+            const data = el && el.imgCotizacion;
+            if (!data || !/^data:image\//.test(data) || el.imgRef) return;
+            imagenes.push({
+                k: String(ver.id || "V1") + ":" + String(el.id || ""),
+                data: data,
+                reemplaza: el.imgRefAnterior || ""
+            });
+        });
+        if (ver.elementos && ver.elementos.length) return;
+        const dataV = ver.imgCotizacion;
+        if (!dataV || !/^data:image\//.test(dataV) || ver.imgRef) return;
+        imagenes.push({
+            k: String(ver.id || "V1") + ":" + PIN_INDIV_ID_,
+            data: dataV,
+            reemplaza: ver.imgRefAnterior || ""
+        });
+    });
+    return imagenes;
+}
+
+/** Sube a Drive pins que aún no tienen imgRef (si el presupuesto ya existe en la nube). */
+function programarFlushPinsDrive_() {
+    if (_flushPinsDriveP) return;
+    const codigo = String(document.getElementById("inputCodigo")?.value || window._codigoProyectoActivo || "").trim();
+    const imagenes = pinsPendientesDrive_();
+    if (!codigo || !imagenes.length || typeof realizarPeticionBD !== "function") return;
+    _flushPinsDriveP = realizarPeticionBD({
+        action: "presupuesto_imagenes",
+        codigo: codigo,
+        imagenes: imagenes
+    }, { timeoutMs: 120000 }).then(function (r) {
+        if (!r || !r.exito) return;
+        const refs = r.refs || (r.data && r.data.refs) || {};
+        if (Object.keys(refs).length) {
+            aplicarRefsImagenesVivas_(refs);
+            programarGuardarSesion();
+        }
+    }).catch(function () { /* sin nube aún: el pin vive en memoria hasta Guardar en Nube */ })
+    .finally(function () { _flushPinsDriveP = null; });
 }
 
 function cancelarGuardarSesionPendiente() {
@@ -1484,22 +1663,20 @@ function guardarSesionTrabajo() {
             chat: window.historialChatIA || [],
             fase: window.faseIA || "idle",
             comision: document.getElementById("simComision")?.value || "",
-            archivos: window.archivosGemaBase64 || [],
-            versiones: window.versionesPresupuesto || [],
+            /* Renders viven en Drive/Odoo; la sesión no guarda base64. */
+            archivos: [],
+            versiones: aligerarVersionesSesion_(window.versionesPresupuesto || []),
             versionActivaId: window.versionActivaId || "V1",
             locale: typeof localeProyectoActual === "function" ? localeProyectoActual() : (window.localeProyecto || {}),
             odooPistas: window.odooPistas || {}
         };
-        let json = JSON.stringify(payload);
-        if (json.length > 4500000) {
-            payload.archivos = [];
-            json = JSON.stringify(payload);
-        }
-        localStorage.setItem(SESION_TRABAJO_KEY, json);
+        localStorage.setItem(SESION_TRABAJO_KEY, JSON.stringify(payload));
+        programarFlushPinsDrive_();
     } catch (e) {
         try {
             const prev = JSON.parse(localStorage.getItem(SESION_TRABAJO_KEY) || "{}");
             prev.archivos = [];
+            if (Array.isArray(prev.versiones)) prev.versiones = aligerarVersionesSesion_(prev.versiones);
             localStorage.setItem(SESION_TRABAJO_KEY, JSON.stringify(prev));
         } catch (e2) {}
     }
@@ -1513,16 +1690,15 @@ function restaurarSesionTrabajo() {
         (s.items && s.items.length) ||
         (s.chat && s.chat.length) ||
         (s.cabecera && s.cabecera.inputCodigo) ||
-        (s.cabecera && s.cabecera.noProyecto);
+        (s.cabecera && s.cabecera.noProyecto) ||
+        (s.versiones && s.versiones.length);
     if (!tiene) return false;
     idsCabeceraSesion().forEach(function (id) {
         const el = document.getElementById(id);
         if (el && s.cabecera && s.cabecera[id] != null) el.value = s.cabecera[id];
     });
-    if (Array.isArray(s.archivos) && s.archivos.length) {
-        window.archivosGemaBase64 = s.archivos;
-        if (typeof window.actualizarListaUI === "function") window.actualizarListaUI();
-    }
+    /* No rehidratar base64 de sesiones viejas: el visor se llena en segundo plano desde Drive/Odoo. */
+    window.archivosGemaBase64 = [];
     if (s.comision) {
         const sel = document.getElementById("simComision");
         if (sel) sel.value = s.comision;
@@ -1531,6 +1707,7 @@ function restaurarSesionTrabajo() {
     if (typeof aplicarLocaleProyecto === "function") {
         aplicarLocaleProyecto(s.locale || {}, { silencio: true });
     }
+    const versionesLivianas = aligerarVersionesSesion_(s.versiones || []);
     hidratarVersionesDesdePayload({
         cabecera: { tipoPresupuesto: s.cabecera && s.cabecera.selMercado, tipoEstructura: s.cabecera && s.cabecera.selTipoEstructura, versionActiva: s.versionActivaId },
         datosAdicionales: {
@@ -1543,11 +1720,34 @@ function restaurarSesionTrabajo() {
         escalas: s.lotes,
         historialChat: s.chat,
         faseIA: s.fase,
-        versiones: s.versiones,
+        versiones: versionesLivianas,
         versionActivaId: s.versionActivaId
     });
-    if (typeof mostrarNotificacion === "function") mostrarNotificacion("Se restauró el trabajo de esta sesión.", "info");
+    _restauroNecesitaRenders = true;
+    /* Reescribe sesión liviana para que el próximo F5 no parsee megas de base64 viejos. */
+    try {
+        s.archivos = [];
+        s.versiones = versionesLivianas;
+        localStorage.setItem(SESION_TRABAJO_KEY, JSON.stringify(s));
+    } catch (eLite) { /* noop */ }
+    if (typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("Sesión restaurada. Cargando renders en segundo plano…", "info");
+    }
     return true;
+}
+
+function programarCargaRendersTrasSesion_() {
+    if (!_restauroNecesitaRenders && !(document.getElementById("inputCodigo")?.value || "").trim()) return;
+    _restauroNecesitaRenders = false;
+    const run = function () {
+        if (typeof window.cargarRendersVisor === "function") {
+            window.cargarRendersVisor({ silencio: true }).catch(function () {});
+        } else if (typeof window.cargarImagenOdooEnVisor === "function") {
+            window.cargarImagenOdooEnVisor();
+        }
+    };
+    if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 1200 });
+    else setTimeout(run, 80);
 }
 
 async function eliminarProyectoBD(idProyecto) {
@@ -1557,28 +1757,37 @@ async function eliminarProyectoBD(idProyecto) {
 
 // INICIALIZADOR PRINCIPAL
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Cargar configuración maestra y roles
-    if(typeof cargarConfiguracionGlobal === "function") await cargarConfiguracionGlobal();
-    if(typeof poblarSelectComisiones === "function") poblarSelectComisiones();
-    if(typeof verificarAccesoCorporativo === "function") verificarAccesoCorporativo();
-    if (localStorage.getItem("smartbudget_token") && typeof logisticaPrefetchHistorial_ === "function") logisticaPrefetchHistorial_();
-    
-    // 2. Ejecutar funciones externas (Si existen en otros archivos)
-    if(typeof obtenerTRMOficial === "function") await obtenerTRMOficial();
+    /* Red en paralelo: no bloquear la mesa de trabajo. */
+    const pConfig = typeof cargarConfiguracionGlobal === "function"
+        ? cargarConfiguracionGlobal().catch(function () {})
+        : Promise.resolve();
+    const pTrm = typeof obtenerTRMOficial === "function"
+        ? obtenerTRMOficial().catch(function () {})
+        : Promise.resolve();
+
     restaurarSesionTrabajo();
     window._codigoProyectoActivo = String(document.getElementById("inputCodigo")?.value || "").trim();
-    if (typeof window.cargarImagenOdooEnVisor === "function") {
-        const hayOdoo = (window.archivosGemaBase64 || []).some(function (f) { return f && f._odoo; });
-        if (!hayOdoo) window.cargarImagenOdooEnVisor();
-    }
+    /* Normaliza Nombre Proyecto a «código + nombre» y limpia basura (“$”). */
+    (function () {
+        const cod = String(document.getElementById("inputCodigo")?.value || window._codigoProyectoActivo || "").trim();
+        const nomEl = document.getElementById("noProyecto");
+        if (!nomEl || !cod) return;
+        const cur = String(nomEl.value || "").trim();
+        const fmt = typeof nombreProyectoFormato_ === "function"
+            ? nombreProyectoFormato_(cod, cur === "$" ? "" : cur)
+            : (cur && cur !== "$" ? cur : cod);
+        if (fmt && fmt !== cur) {
+            nomEl.value = fmt;
+            if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        }
+    })();
     asegurarV1_();
     pintarSelectorVersiones();
     pintarBarraElementos();
-    if(typeof renderizarTablaItems === "function") renderizarTablaItems();
-    if(typeof inicializarDragAndDropArchivos === "function") inicializarDragAndDropArchivos();
-    if(typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
-    
-    // 3. Listeners
+    if (typeof renderizarTablaItems === "function") renderizarTablaItems();
+    if (typeof inicializarDragAndDropArchivos === "function") inicializarDragAndDropArchivos();
+    if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
+
     ['simTRM', 'simComision', 'simFee'].forEach(id => { const el = document.getElementById(id); if(el) el.onchange = () => { if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero(); if (id === "simFee" && typeof logisticaFeeLibreCambio_ === "function") logisticaFeeLibreCambio_(); programarGuardarSesion(); }; });
     idsCabeceraSesion().forEach(function (id) {
         const el = document.getElementById(id);
@@ -1593,4 +1802,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
     if (typeof pintarLocaleProyecto === "function") pintarLocaleProyecto();
+
+    programarCargaRendersTrasSesion_();
+
+    await pConfig;
+    if (typeof poblarSelectComisiones === "function") poblarSelectComisiones();
+    if (typeof verificarAccesoCorporativo === "function") verificarAccesoCorporativo();
+    if (localStorage.getItem("smartbudget_token") && typeof logisticaPrefetchHistorial_ === "function") {
+        logisticaPrefetchHistorial_();
+    }
+    await pTrm;
 });

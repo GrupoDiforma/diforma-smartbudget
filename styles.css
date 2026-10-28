@@ -1137,20 +1137,54 @@ body.logistica-activa {
 html, body { overflow-x: hidden; }
 .ia-split {
     min-height: 520px;
+    align-items: stretch;
+}
+.ia-split > [class*="col-"] {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.ia-chat-card {
+    min-height: 0;
+}
+.ia-chat-composer {
+    flex: 1 1 auto;
+    min-height: 120px;
+    align-items: stretch;
+}
+.ia-chat-composer .chat-input {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 120px;
+    align-self: stretch;
 }
 @media (min-width: 992px) {
     .ia-split { min-height: min(68vh, 740px); }
     .ia-split > [class*="col-"] { min-height: 0; }
-    .chat-box { max-height: none; flex: 1 1 auto; }
+    /* Historial compacto; el textarea crece hasta alinear con el pie del visor. */
+    .chat-box {
+        flex: 0 1 38%;
+        max-height: none;
+        min-height: 160px;
+    }
+    .ia-chat-composer {
+        flex: 1 1 42%;
+        min-height: 180px;
+    }
+    .ia-chat-composer .chat-input {
+        min-height: 180px;
+        resize: none;
+    }
 }
 .chat-box {
     background: #fbfbfb;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    min-height: 220px;
+    min-height: 160px;
     max-height: 300px;
     min-width: 0;
+    flex: 1 1 auto;
 }
 .visor-panel {
     background: #fff;
@@ -1396,6 +1430,7 @@ html, body { overflow-x: hidden; }
     min-height: 72px;
     line-height: 1.4;
     white-space: pre-wrap;
+    field-sizing: fixed;
 }
 .lista-archivos {
     max-height: 220px;
@@ -1569,6 +1604,29 @@ html, body { overflow-x: hidden; }
 .aiu-usd { font-size: 0.85rem; color: #333; font-weight: 600; }
 .catalogo-tabla-wrap { max-height: 360px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
 .catalogo-tabla { font-size: 0.78rem; margin-bottom: 0; border-collapse: separate; border-spacing: 0; table-layout: fixed; width: 100%; }
+/* Consulta de catálogo: Nombre ancho, Costo COP compacto */
+#modalCatalogoConsulta .catalogo-tabla .cat-c-col-cat,
+#modalCatalogoConsulta .catalogo-tabla td:nth-child(1) { width: 12%; }
+#modalCatalogoConsulta .catalogo-tabla .cat-c-col-prov,
+#modalCatalogoConsulta .catalogo-tabla td:nth-child(2) { width: 10%; }
+#modalCatalogoConsulta .catalogo-tabla .cat-c-col-nombre,
+#modalCatalogoConsulta .catalogo-tabla td:nth-child(3) {
+    width: 52%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    word-break: break-word;
+}
+#modalCatalogoConsulta .catalogo-tabla .cat-c-col-um,
+#modalCatalogoConsulta .catalogo-tabla td:nth-child(4) { width: 7%; }
+#modalCatalogoConsulta .catalogo-tabla .cat-c-col-costo,
+#modalCatalogoConsulta .catalogo-tabla td:nth-child(5) {
+    width: 11%;
+    text-align: right;
+    white-space: nowrap;
+}
+#modalCatalogoConsulta .catalogo-tabla .cat-c-col-vig,
+#modalCatalogoConsulta .catalogo-tabla td:nth-child(6) { width: 8%; text-align: center; }
 .catalogo-tabla thead th {
     position: sticky;
     top: 0;
@@ -1717,6 +1775,65 @@ html, body { overflow-x: hidden; }
     cursor: pointer;
 }
 .cl-sort:hover { color: var(--diforma-red); }
+
+/* Encabezados Ajustes: orden + filtro por columna */
+.af-th {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
+    vertical-align: middle;
+}
+.af-sort {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+}
+.af-sort:hover { color: var(--diforma-red); }
+.af-sort-mark { font-weight: 700; opacity: 0.85; }
+.af-filter {
+    border: 0;
+    background: transparent;
+    padding: 0 2px;
+    line-height: 1;
+    color: #9ca3af;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.af-filter:hover,
+.af-filter.is-on,
+.af-filter.is-active { color: var(--diforma-red); background: rgba(196, 30, 58, 0.06); }
+.af-filter i { font-size: 0.72rem; }
+.af-pop {
+    position: absolute;
+    z-index: 2000;
+    min-width: 180px;
+    max-width: 260px;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid var(--sb-line);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+.af-pop-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--sb-muted);
+    margin-bottom: 6px;
+}
+.af-pop-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+}
 #logTarBody tr.lt-pref td:first-child { box-shadow: inset 3px 0 0 #2f7d4a; }
 #logTarBody tr.lt-vieja { background: #fff8e8; }
 #logTarBody .log-tar-grupo td { background: #f4f4f5; font-weight: 600; font-size: 0.75rem; }

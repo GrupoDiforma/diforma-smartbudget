@@ -2725,6 +2725,11 @@
         var conts = (cfg.contenedores && cfg.contenedores.length) ? cfg.contenedores : contenedoresCustomDesdeDb_();
         var cb = document.getElementById("sim3dContsBody");
         if (cb) cb.innerHTML = conts.map(function (c) { return filaCatalogoHtml_("cont", c); }).join("");
+        if (typeof adminFiltrosTrasPintar_ === "function") {
+            adminFiltrosTrasPintar_("sim3dPalletsBody");
+            adminFiltrosTrasPintar_("sim3dMastersBody");
+            adminFiltrosTrasPintar_("sim3dContsBody");
+        }
         slSim3dRefrescarSelectsPallet_();
         setVal("sim3dPalletEU", cfg.mercadoPallet.EU || "EUR");
         setVal("sim3dPalletUS", cfg.mercadoPallet.US || "GMA");

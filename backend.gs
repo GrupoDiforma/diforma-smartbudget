@@ -869,7 +869,19 @@ function proxyOdooBuscar(codigo) {
     var campos = pedidos.filter(function (f) { return meta[f]; });
     if (!campos.length) campos = ["name", "partner_id", "user_id", "create_date", "pricelist_id"];
     var records = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], campos, 1, 0, "");
-    return (!records || records.length === 0) ? { exito: false, mensaje: "No encontrada" } : { exito: true, data: records[0] };
+    if (!records || records.length === 0) return { exito: false, mensaje: "No encontrada" };
+    var rec = records[0];
+    /* Idioma del cliente (res.partner.lang): es lo que suele corregirse en Odoo y manda sobre un lang viejo del lead. */
+    if (rec.partner_id) {
+      try {
+        var pid = Array.isArray(rec.partner_id) ? rec.partner_id[0] : rec.partner_id;
+        if (pid) {
+          var partner = odooLeerRegistro_("res.partner", pid, ["lang"]);
+          if (partner && partner.lang) rec.partner_lang = partner.lang;
+        }
+      } catch (eLang) {}
+    }
+    return { exito: true, data: rec };
   } catch (e) {
     return { exito: false, mensaje: String(e.message || e) };
   }
@@ -3369,6 +3381,7 @@ function refImagenEnDatos_(datos, k) {
   var vers = (datos && datos.versiones) || [];
   for (var i = 0; i < vers.length; i++) {
     if (String(vers[i].id || "V1") !== vid) continue;
+    if (eid === "_indiv" && vers[i].imgRef) return String(vers[i].imgRef);
     var els = vers[i].elementos || [];
     for (var j = 0; j < els.length; j++) {
       if (String(els[j].id || "") === eid && els[j].imgRef) return String(els[j].imgRef);
@@ -3435,6 +3448,9 @@ function aplicarRefsImagenesPresupuesto_(datos, refs) {
       if (refs[k]) el.imgRef = refs[k];
       delete el.imgCotizacion;
     });
+    var kInd = String(v.id || "V1") + ":_indiv";
+    if (refs[kInd]) v.imgRef = refs[kInd];
+    delete v.imgCotizacion;
   });
 }
 

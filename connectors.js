@@ -296,15 +296,47 @@ window.traerImagenOdoo = function (codigo, force) {
     return prom;
 };
 
+/** Código de oportunidad (17667-B), nunca el título de Nombre Proyecto ni basura como "$". */
+function codigoOportunidadActual_() {
+    const input = String((document.getElementById("inputCodigo") || {}).value || "").trim();
+    if (input) return input;
+    const activo = String(window._codigoProyectoActivo || "").trim();
+    if (activo) return activo;
+    const nombre = String((document.getElementById("noProyecto") || {}).value || "").trim();
+    const tok = (nombre.split(/\s+/)[0] || "").trim();
+    /* Solo si parece código (empieza con dígito), no un símbolo suelto. */
+    if (/^\d/.test(tok)) return tok;
+    return "";
+}
+window.codigoOportunidadActual_ = codigoOportunidadActual_;
+
+/** Nombre Proyecto visible: siempre «código + nombre» (ej. 17716-A EXHIBICION MURO). */
+function nombreProyectoFormato_(codigo, nombre) {
+    const cod = String(codigo || "").trim();
+    let nom = String(nombre || "").trim();
+    if (nom === "$") nom = "";
+    if (!cod) return nom;
+    if (!nom) return cod;
+    const esc = cod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp("^" + esc + "(?:\\s|$)", "i").test(nom)) return nom;
+    if (nom.toLowerCase() === cod.toLowerCase()) return cod;
+    return cod + " " + nom;
+}
+window.nombreProyectoFormato_ = nombreProyectoFormato_;
+
+function setNombreProyectoUI_(codigo, nombre) {
+    const el = document.getElementById("noProyecto");
+    if (!el) return "";
+    el.value = nombreProyectoFormato_(codigo, nombre);
+    return el.value;
+}
+window.setNombreProyectoUI_ = setNombreProyectoUI_;
+
 /** Pone la imagen de Odoo del proyecto en el visor del Paso 2 (sin duplicar la descarga). */
 window.cargarImagenOdooEnVisor = async function (opts) {
     opts = opts || {};
     const avisar = !!opts.avisar;
-    const codigoActual = function () {
-        const nombre = String(document.getElementById("noProyecto")?.value || "").trim();
-        return (nombre.split(/\s+/)[0] || String(document.getElementById("inputCodigo")?.value || "")).trim();
-    };
-    const codigo = codigoActual();
+    const codigo = codigoOportunidadActual_();
     if (!codigo) {
         if (avisar && typeof mostrarNotificacion === "function") {
             mostrarNotificacion("No hay código de proyecto. Búscalo en Odoo o ábrelo del historial.", "warning");
@@ -312,7 +344,7 @@ window.cargarImagenOdooEnVisor = async function (opts) {
         return;
     }
     const r = await window.traerImagenOdoo(codigo, !!opts.force);
-    if (codigoActual() !== codigo) return;
+    if (codigoOportunidadActual_() !== codigo) return;
     if (r.estado !== "ok" || /svg/i.test(r.mime || "")) {
         if (avisar && typeof mostrarNotificacion === "function") {
             mostrarNotificacion(r.mensaje || "Odoo no trajo imagen para este código.", r.estado === "sin" ? "warning" : "danger");
@@ -324,9 +356,10 @@ window.cargarImagenOdooEnVisor = async function (opts) {
     const lista = (window.archivosGemaBase64 || []).filter(function (f) { return !f._odoo; });
     (window.archivosGemaBase64 || []).filter(function (f) { return f._odoo; }).forEach(revocarUrlArchivo_);
     const odoo = { id: "odoo-" + codigo, name: "Imagen Odoo · " + codigo + ".jpg", mimeType: m[1], data: m[2], _odoo: true, alcance: "grupo" };
-    const elPin = typeof elementoActivoObj_ === "function" ? elementoActivoObj_() : null;
-    if (elPin && (elPin.imgCotizacionFileId === odoo.id || elPin.imgCotizacionNombre === odoo.name)) {
-        odoo._pinCotizacion = elPin.id;
+    const host = typeof hostPinCotizacion_ === "function" ? hostPinCotizacion_() : null;
+    const pinId = typeof idPinCotizacion_ === "function" ? idPinCotizacion_(host) : "";
+    if (host && pinId && (host.imgCotizacionFileId === odoo.id || host.imgCotizacionNombre === odoo.name)) {
+        odoo._pinCotizacion = pinId;
     }
     lista.unshift(odoo);
     window.archivosGemaBase64 = lista;
@@ -334,8 +367,15 @@ window.cargarImagenOdooEnVisor = async function (opts) {
     window._pdfDoc = null;
     window._pdfIdx = -1;
     window.actualizarListaUI();
+    /* Individual: si aún no hay pin, el render de Odoo queda en cotización por defecto. */
+    if (typeof window.asegurarPinOdooIndividual_ === "function") {
+        try { await window.asegurarPinOdooIndividual_(); } catch (ePin) { /* noop */ }
+    }
     if (avisar && typeof mostrarNotificacion === "function") {
-        mostrarNotificacion("Imagen de Odoo en el visor. Márcala Pieza si no debe verse en las otras.", "success");
+        const grupal = typeof esPresupuestoGrupal === "function" && esPresupuestoGrupal();
+        mostrarNotificacion(grupal
+            ? "Imagen de Odoo en el visor. Márcala Pieza si no debe verse en las otras."
+            : "Imagen de Odoo en el visor (pin de cotización por defecto). Puedes cambiarlo a otro render.", "success");
     }
 };
 
@@ -460,16 +500,18 @@ function pintarVisorArchivos_(vis) {
 
 function pintarBotonPinCotizacion_() {
     const btn = document.getElementById("btnRenderCotizacion");
-    if (!btn || btn.classList.contains("d-none")) return;
+    if (!btn) return;
+    btn.classList.remove("d-none");
     const f = (window.archivosGemaBase64 || [])[window._visorIdx];
     const pinned = typeof window.archivoEsPinCotizacion === "function" && window.archivoEsPinCotizacion(f);
+    const grupal = typeof esPresupuestoGrupal === "function" && esPresupuestoGrupal();
     btn.classList.toggle("is-pin", pinned);
     btn.innerHTML = pinned
         ? '<i class="bi bi-pin-angle-fill me-1"></i>En cotización'
         : '<i class="bi bi-pin-angle me-1"></i>Cotización';
     btn.title = pinned
-        ? "Esta imagen es la de la cotización de esta pieza"
-        : "Usar esta imagen en la cotización de este elemento";
+        ? (grupal ? "Esta imagen es la de la cotización de esta pieza" : "Esta imagen es la de la cotización del proyecto")
+        : (grupal ? "Usar esta imagen en la cotización de este elemento" : "Usar esta imagen en la cotización del proyecto");
 }
 
 function pintarBotonAlcanceGrupo_() {
@@ -661,10 +703,50 @@ function paisEsImperial_(pais) {
     return /estados unidos|united states|\busa\b|u\.s\.a|puerto rico/.test(p);
 }
 
+/** Normaliza lang_code / lang_id / idioma de Odoo (string, many2one o etiqueta). */
+function textoLangOdoo_(v) {
+    if (v === false || v == null || v === "") return "";
+    if (Array.isArray(v)) return etiquetaOdoo_(v);
+    if (typeof v === "object" && v.name) return String(v.name || "");
+    return String(v).trim();
+}
+
+/** Detecta en/es aunque Odoo mande en_US, English, Inglés o [id, "English / US"]. */
+function idiomaDesdeLangOdoo_(raw) {
+    const lang = String(raw || "").toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ").trim();
+    if (!lang) return "";
+    if (/^en([_-]|$)/.test(lang) || /\benglish\b/.test(lang) || /\bingles\b/.test(lang)) return "en";
+    if (/^es([_-]|$)/.test(lang) || /\bspanish\b/.test(lang) || /\bespanol\b/.test(lang)) return "es";
+    /* Etiquetas tipo "English / United States" (many2one stringify raro). */
+    if (lang.indexOf("english") >= 0 || lang.indexOf("ingles") >= 0) return "en";
+    if (lang.indexOf("spanish") >= 0 || lang.indexOf("espanol") >= 0) return "es";
+    return "";
+}
+
 function mapearLocaleOdoo(rec) {
     rec = rec || {};
-    const lang = String(rec.lang_code || rec.idioma || "").toLowerCase();
-    const idioma = lang.indexOf("en") === 0 ? "en" : "es";
+    /* partner_lang primero: idioma del cliente en Odoo; el lead a veces conserva un lang_code viejo. */
+    const candidatos = [
+        textoLangOdoo_(rec.partner_lang),
+        textoLangOdoo_(rec.lang_code),
+        textoLangOdoo_(rec.lang_id),
+        textoLangOdoo_(rec.idioma),
+        textoLangOdoo_(rec.lang)
+    ];
+    let langRaw = "";
+    let idioma = "es";
+    for (let i = 0; i < candidatos.length; i++) {
+        if (!candidatos[i]) continue;
+        const det = idiomaDesdeLangOdoo_(candidatos[i]);
+        if (det) {
+            langRaw = candidatos[i];
+            idioma = det;
+            break;
+        }
+        if (!langRaw) langRaw = candidatos[i];
+    }
     const tipo = String(rec.tipo_medida == null ? "" : rec.tipo_medida);
     const pais = etiquetaOdoo_(rec.country_id);
     let sistema = "metrico";
@@ -675,9 +757,9 @@ function mapearLocaleOdoo(rec) {
         idioma: idioma,
         sistema: sistema,
         pais: pais,
-        langOdoo: rec.lang_code || rec.idioma || "",
+        langOdoo: langRaw || textoLangOdoo_(rec.lang_code) || textoLangOdoo_(rec.idioma) || "",
         medidaOdoo: tipo,
-        etiquetaIdioma: etiquetaOdoo_(rec.lang_id),
+        etiquetaIdioma: etiquetaOdoo_(rec.lang_id) || langRaw,
         etiquetaMedida: tipo === "2" ? "Sistema Ingles" : "Sistema Internacional"
     };
 }
@@ -1194,7 +1276,7 @@ function aplicarImportacionOdoo_(rec, cod) {
 
     setVal('inputCodigo', cod);
     window._codigoProyectoActivo = String(cod || "").trim();
-    setVal('noProyecto', rec.name || cod);
+    setNombreProyectoUI_(cod, rec.name || "");
     setVal('cliente', rec.partner_id ? rec.partner_id[1] : '');
     setVal('fecha', rec.create_date ? rec.create_date.substring(0, 10) : '');
     setVal('comercial', rec.id_vendedor ? rec.id_vendedor[1] : (rec.user_id ? rec.user_id[1] : ''));
@@ -1235,18 +1317,40 @@ async function abrirProyectoGuardadoDesdeBusqueda() {
     window._importOdooPendiente = null;
     if (typeof ocultarAvisoCodigoGuardado === "function") ocultarAvisoCodigoGuardado();
     await cargarProyectoBD(id);
-    const paisOdoo = rec && typeof mapearLocaleOdoo === "function" ? String((mapearLocaleOdoo(rec) || {}).pais || "").trim() : "";
-    if (paisOdoo && typeof localeProyectoActual === "function" && !localeProyectoActual().pais && typeof aplicarLocaleProyecto === "function") {
-        aplicarLocaleProyecto({ pais: paisOdoo }, { silencio: true });
+    /* Completa Nombre Proyecto (código + nombre) desde Odoo si faltaba o estaba incompleto. */
+    if (rec) {
+        const codigoUi = String((document.getElementById("inputCodigo") || {}).value || "").trim();
+        const nomEl = document.getElementById("noProyecto");
+        const cur = nomEl ? String(nomEl.value || "").trim() : "";
+        const formateado = nombreProyectoFormato_(codigoUi, rec.name || cur);
+        if (nomEl && formateado && formateado !== cur) {
+            nomEl.value = formateado;
+            if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        }
+    }
+    /* Buscar trae locale fresco de Odoo: aplica idioma/sistema/país aunque el guardado tuviera el valor viejo. */
+    if (rec && typeof mapearLocaleOdoo === "function" && typeof aplicarLocaleProyecto === "function") {
+        const loc = mapearLocaleOdoo(rec);
+        aplicarLocaleProyecto(loc, { silencio: true });
+        if (typeof logisticaTrasPresupuesto_ === "function") {
+            try { logisticaTrasPresupuesto_(); } catch (eLog) { /* noop */ }
+        }
+        if (typeof guardarSesionTrabajo === "function") guardarSesionTrabajo();
+        else if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        const idiomaTxt = loc.idioma === "en" ? "English" : "Español";
+        if (typeof mostrarAlertaOdoo === "function") {
+            mostrarAlertaOdoo("Proyecto abierto. Idioma/sistema actualizados desde Odoo: " + idiomaTxt + (loc.pais ? " · " + loc.pais : ""), "success");
+        }
+    }
+    if (typeof window.cargarRendersVisor === "function") {
+        try { await window.cargarRendersVisor({ silencio: false }); } catch (eR) { /* noop */ }
     }
 }
 
 function codigoProyectoEnPantalla_() {
-    const activo = String(window._codigoProyectoActivo || "").trim();
-    if (activo) return activo;
-    const nombre = String(document.getElementById("noProyecto")?.value || "").trim();
-    if (nombre) return nombre.split(/\s+/)[0] || "";
-    return String(document.getElementById("inputCodigo")?.value || "").trim();
+    return (typeof codigoOportunidadActual_ === "function" ? codigoOportunidadActual_() : "")
+        || String(window._codigoProyectoActivo || "").trim()
+        || String((document.getElementById("inputCodigo") || {}).value || "").trim();
 }
 
 async function buscarProyectoOdooServerless() {

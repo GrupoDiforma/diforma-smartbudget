@@ -505,16 +505,42 @@ function bloqueGrupalParaPrompt() {
 }
 
 function nombreCortoItem(s) {
-    return String(s || "").replace(/\([^)]*\)/g, " ").replace(/=.*/, " ").replace(/\s+/g, " ").trim();
+    /* Conserva el título antes del primer "—" o " - " de la cuenta; el = cortaba calibre/tira. */
+    let t = String(s || "").replace(/\([^)]*\)/g, " ");
+    const sep = t.search(/\s[—–\-]\s/);
+    if (sep > 0) t = t.slice(0, sep);
+    else t = t.replace(/=.*/, " ");
+    return t.replace(/\s+/g, " ").trim();
 }
 
 function normalizarTextoCatalogo(s) {
-    return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[×*]/g, "x").replace(/[^a-z0-9x]+/g, " ").trim();
+    let t = String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    /* Abreviaturas de matriz → tokens del maestro. */
+    t = t.replace(/\btc\b/g, "tubo cuadrado");
+    t = t.replace(/\btr\b/g, "tubo redondo");
+    t = t.replace(/\bcua\b/g, "cuadrado");
+    t = t.replace(/\bc\.?\s*(\d{1,2})\b/g, "cal $1");
+    t = t.replace(/\bcal\.?\s*(\d{1,2})\b/g, "cal $1");
+    t = t.replace(/(\d)\s*\/\s*(\d)/g, "$1/$2");
+    t = t.replace(/[×*]/g, "x");
+    t = t.replace(/[^a-z0-9x./]+/g, " ").trim();
+    return t;
 }
 
 function tokensCatalogo(s) {
-    const stop = /^(de|la|el|en|con|para|por|und|mm|del|las|los|una|un|m2|incl|merma|and|the|corte|obra|mano|exactos|laterales|version|pulg)$/;
-    return normalizarTextoCatalogo(s).split(/\s+/).filter(function (w) { return w.length >= 2 && !stop.test(w); });
+    const stop = /^(de|la|el|en|con|para|por|und|mm|del|las|los|una|un|m2|incl|merma|and|the|corte|obra|mano|exactos|laterales|version|pulg|chasis|izq|der|tira|tiras)$/;
+    const raw = normalizarTextoCatalogo(s);
+    const out = [];
+    raw.split(/\s+/).forEach(function (w) {
+        if (!w || w.length < 2 || stop.test(w)) return;
+        if (/^\d+\/\d+$/.test(w)) {
+            out.push(w);
+            out.push(w.replace("/", ""));
+            return;
+        }
+        out.push(w);
+    });
+    return out;
 }
 
 function extraerDimsCatalogo(s) {
@@ -555,7 +581,9 @@ function umCatalogoCompatible_(umItem, umCat) {
 
 function extraerCalibreCatalogo(s) {
     const t = normalizarTextoCatalogo(s);
-    const m = t.match(/\b(?:cal|calibre|ga)\s*(\d{1,2})\b/) || t.match(/\b(\d{2})\s*(?:cal|ga)\b/);
+    const m = t.match(/\b(?:cal|calibre|ga)\s*(\d{1,2})\b/)
+        || t.match(/\b(\d{2})\s*(?:cal|ga)\b/)
+        || t.match(/\bcal(\d{1,2})\b/);
     return m ? m[1] : "";
 }
 
@@ -646,6 +674,10 @@ function mejorFilaCatalogo(nombre, indice, umItem) {
 async function enriquecerItemsConCatalogo(items) {
     if (!items || !items.length) return items;
     const tarifas = (typeof listaTarifasFijas === "function") ? listaTarifasFijas() : [];
+    /* Solo el cruce real puede etiquetar [Matriz Drive]. Si la IA lo puso a ojo, lo bajamos. */
+    items.forEach(function (it) {
+        if (/matriz\s*drive|cat[aá]logo/i.test(it.fuente || "")) it.fuente = "[Estimado IA]";
+    });
     items.forEach(function (it) {
         if (/tarifa/i.test(it.fuente || "")) return;
         const t = mejorTarifaParaItem(it.nombre, tarifas);
@@ -663,16 +695,26 @@ async function enriquecerItemsConCatalogo(items) {
     if (!pendientes.length) return items;
     const indice = await buscarCatalogoPorTokens(pendientes);
     let cruzados = 0;
+    let corregidos = 0;
     pendientes.forEach(function (it) {
         const hit = mejorFilaCatalogo(it.nombre, indice, it.um);
-        if (!hit || !(Number(hit.costo_cop) > 0)) return;
-        it.fuente = "[Matriz Drive]";
-        it.costoUnitario = Number(hit.costo_cop);
-        if (hit.um) it.um = hit.um;
-        cruzados++;
+        if (hit && Number(hit.costo_cop) > 0) {
+            const prev = Number(it.costoUnitario) || 0;
+            it.fuente = "[Matriz Drive]";
+            it.costoUnitario = Number(hit.costo_cop);
+            if (hit.um) it.um = hit.um;
+            cruzados++;
+            if (prev > 0 && Math.abs(prev - it.costoUnitario) / Math.max(it.costoUnitario, 1) > 0.15) corregidos++;
+            return;
+        }
+        /* Sin fila del maestro: no dejar FUENTE = Matriz con precio inventado. */
+        if (!/estimado|manual|tarifa|odoo/i.test(it.fuente || "")) it.fuente = "[Estimado IA]";
+        else if (!it.fuente) it.fuente = "[Estimado IA]";
     });
     if (cruzados && typeof mostrarNotificacion === "function") {
-        mostrarNotificacion(cruzados + " ítem(s) cruzados con Catalogo_Maestro.", "info");
+        let msg = cruzados + " ítem(s) cruzados con Catalogo_Maestro.";
+        if (corregidos) msg += " " + corregidos + " con precio distinto al que puso la IA.";
+        mostrarNotificacion(msg, "info");
     }
     return items;
 }
