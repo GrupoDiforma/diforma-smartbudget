@@ -10782,9 +10782,13 @@ function logTarCargoFijo_(f, ctx, veces) {
     const usd = logTarUsd_(f.precio, f.moneda);
     if (usd == null) return { faltaTrm: true };
     let n = Math.max(1, parseInt(ctx && ctx.embarques, 10) || 1);
-    const eqTar = String(f.equipo || "").toLowerCase();
-    if (eqTar === "20" || eqTar === "40" || eqTar === "40hc") {
-        n = eqTar === "20" ? ctx.c20 : (eqTar === "40" ? ctx.c40 : ctx.c40hc);
+    /* Destino/origen: Contenedor 20 / 40 / 40HC / 40+40HC → solo ese equipo (evita cobrar doble DTHC). */
+    const eqTar = String(f.equipo || "").toLowerCase().replace(/\s+/g, "");
+    if (eqTar === "20" || eqTar === "40" || eqTar === "40hc" || eqTar === "40/40hc" || eqTar === "40+40hc") {
+        if (eqTar === "20") n = Number(ctx.c20) || 0;
+        else if (eqTar === "40") n = Number(ctx.c40) || 0;
+        else if (eqTar === "40hc") n = Number(ctx.c40hc) || 0;
+        else n = (Number(ctx.c40) || 0) + (Number(ctx.c40hc) || 0);
         if (!(n > 0)) return { skip: true };
     } else if (f.aplica === "contenedor") {
         n = veces != null ? veces : ctx.contN;

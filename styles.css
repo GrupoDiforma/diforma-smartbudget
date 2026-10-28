@@ -1723,6 +1723,23 @@ html, body { overflow-x: hidden; }
 #logTarBody .lt-num { width: 5.6rem; }
 #logTarBody .lt-lugar { min-width: 12.5rem; width: 12.5rem; }
 #logTarBody .lt-concepto { min-width: 13.5rem; }
+#logTarBody .lt-forma,
+#logTarHead .lt-forma { min-width: 6.5rem; width: 6.5rem; }
+#logTarBody .lt-sobre,
+#logTarHead .lt-sobre { min-width: 7.5rem; width: 7.5rem; }
+#logTarBody .lt-aplica,
+#logTarHead .lt-aplica { min-width: 7.2rem; width: 7.2rem; }
+#logTarBody .lt-equipo,
+#logTarHead .lt-equipo { min-width: 7.8rem; width: 7.8rem; }
+#logTarBody select.lt-forma,
+#logTarBody select.lt-sobre,
+#logTarBody select.lt-aplica,
+#logTarBody select.lt-equipo {
+    min-width: 100%;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #1f2937;
+}
 .lt-menu {
     position: fixed;
     z-index: 5000;

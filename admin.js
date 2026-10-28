@@ -1425,7 +1425,7 @@ var LOG_TAR_DESC = {
     fcl: "Una fila por puerto y tipo de contenedor. Los otros cargos se suman cuando no van dentro del flete. Entra la preferida.",
     lcl: "Una fila por puerto. Se cobra el precio por el mayor entre toneladas y m³, y después el mínimo.",
     seguro: "Un porcentaje del valor de la mercancía, según la modalidad, con mínimo.",
-    destino: "Un cargo por país, ciudad y modalidad. Si Forma es Fijo, Precio es el valor del cargo. Si Forma es Variable y Sobre es Valor, Precio es el porcentaje de la mercancía (0,125 significa 0,125 %). Si Sobre es Otros cargos, Precio es el porcentaje de otros cargos de esta misma ruta: en el recuadro escribe sus conceptos tal como están en la columna Concepto, separados por coma. Ejemplo: Inland Fuel, Precio 42, y en el recuadro Container Drayage, Container Empty Return.",
+    destino: "Un cargo por país, ciudad y modalidad. Si Forma es Fijo, Precio es el valor del cargo. Si Forma es Variable y Sobre es Valor, Precio es el porcentaje de la mercancía (0,125 significa 0,125 %). Si Sobre es Otros cargos, Precio es el porcentaje de otros cargos de esta misma ruta: en el recuadro escribe sus conceptos tal como están en la columna Concepto, separados por coma. Ejemplo: Inland Fuel, Precio 42, y en el recuadro Container Drayage, Container Empty Return. Contenedor: déjalo en «Cualquiera» si el cargo no depende del tamaño; pon 20, 40, 40HC o 40/40HC cuando el precio cambia según el equipo (así no se cobra doble el DTHC u otro THC).",
 };
 
 var LOG_TAR_COLS = {
@@ -1435,7 +1435,7 @@ var LOG_TAR_COLS = {
     fcl: [["preferida", "Pref"], ["origen", "Origen"], ["pais", "País"], ["puerto", "Puerto"], ["equipo", "Contenedor"], ["precio", "Flete"], ["moneda", "Moneda"], ["otros", "Otros no incluidos"], ["naviera", "Naviera"], ["transito", "Tránsito"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
     lcl: [["preferida", "Pref"], ["origen", "Origen"], ["pais", "País"], ["puerto", "Puerto"], ["precio", "Por ton / m³"], ["minimo", "Mínimo"], ["moneda", "Moneda"], ["naviera", "Naviera"], ["transito", "Tránsito"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
     seguro: [["preferida", "Pref"], ["modalidad", "Modalidad"], ["precio", "%"], ["minimo", "Mínimo"], ["moneda", "Moneda"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]],
-    destino: [["preferida", "Pref"], ["pais", "País"], ["ciudad", "Ciudad"], ["modalidad", "Modalidad"], ["concepto", "Concepto"], ["forma", "Forma"], ["baseVar", "Sobre"], ["aplica", "Aplica"], ["precio", "Precio"], ["moneda", "Moneda"], ["minimo", "Mínimo"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]]
+    destino: [["preferida", "Pref"], ["pais", "País"], ["ciudad", "Ciudad"], ["modalidad", "Modalidad"], ["concepto", "Concepto"], ["forma", "Forma"], ["baseVar", "Sobre"], ["aplica", "Aplica"], ["equipo", "Contenedor"], ["precio", "Precio"], ["moneda", "Moneda"], ["minimo", "Mínimo"], ["proveedor", "Proveedor"], ["fecha", "Fecha"]]
 };
 
 var LOG_TAR_SUG_ORIGEN = ["Agenciamiento", "SAE", "Planilla", "Document fee", "AMS", "Aeropuerto", "Due agent", "Due carrier", "Maniobras", "SOLAS", "Handling", "Camión urbano", "Emisión BL", "Gastos operativos"];
@@ -1462,7 +1462,7 @@ function logTarNueva_(tab) {
     if (tab === "fcl") return Object.assign(base, { pais: "", puerto: "", equipo: "40", precio: "", otros: [], naviera: "", transito: "" });
     if (tab === "lcl") return Object.assign(base, { pais: "", puerto: "", precio: "", minimo: "", naviera: "", transito: "" });
     if (tab === "seguro") return { id: base.id, preferida: "S", modalidad: "aerea", precio: "", minimo: "", moneda: "USD", proveedor: "", fecha: base.fecha };
-    return Object.assign(base, { pais: "", ciudad: "", modalidad: "fcl", concepto: "", forma: "fijo", baseVar: "valor", aplica: "embarque", precio: "", minimo: "" });
+    return Object.assign(base, { pais: "", ciudad: "", modalidad: "fcl", concepto: "", forma: "fijo", baseVar: "valor", aplica: "embarque", equipo: "", precio: "", minimo: "" });
 }
 
 function logTarNormalizarFila_(f) {
@@ -1610,8 +1610,14 @@ function logTarMods_(tab) {
 }
 
 function logTarSelect_(opciones, valor, k, cls) {
-    return "<select data-k=\"" + k + "\" class=\"form-select form-select-sm " + (cls || "") + "\">" + opciones.map(function (o) {
-        return "<option value=\"" + escLogTar_(o[0]) + "\"" + (String(valor || "") === String(o[0]) ? " selected" : "") + ">" + escLogTar_(o[1]) + "</option>";
+    const v = String(valor == null ? "" : valor);
+    let label = "";
+    opciones.forEach(function (o) {
+        if (String(o[0]) === v) label = String(o[1] || o[0] || "");
+    });
+    if (!label && opciones[0]) label = String(opciones[0][1] || "");
+    return "<select data-k=\"" + k + "\" class=\"form-select form-select-sm " + (cls || "") + "\" title=\"" + escLogTar_(label) + "\">" + opciones.map(function (o) {
+        return "<option value=\"" + escLogTar_(o[0]) + "\"" + (v === String(o[0]) ? " selected" : "") + ">" + escLogTar_(o[1]) + "</option>";
     }).join("") + "</select>";
 }
 
@@ -1626,21 +1632,27 @@ function logTarCelda_(tab, f, col) {
         return "<input data-k=\"" + k + "\" type=\"checkbox\"" + (f[k] === "S" ? " checked" : "") + ">";
     }
     if (k === "modalidad") return logTarSelect_(logTarMods_(tab), f.modalidad, "modalidad");
-    if (k === "forma") return logTarSelect_([["fijo", "Fijo"], ["variable", "Variable"]], f.forma || "fijo", "forma");
+    if (k === "forma") return logTarSelect_([["fijo", "Fijo"], ["variable", "Variable"]], f.forma || "fijo", "forma", "lt-forma");
     if (k === "baseVar") {
-        let html = logTarSelect_([["peso", "Peso"], ["volumen", "Volumen"], ["wm", "Ton / m³"], ["valor", "Valor"], ["cargos", "Otros cargos"]], f.baseVar || "valor", "baseVar", f.forma === "variable" ? "" : "lt-off");
+        let html = logTarSelect_([["peso", "Peso"], ["volumen", "Volumen"], ["wm", "Ton / m³"], ["valor", "Valor"], ["cargos", "Otros cargos"]], f.baseVar || "valor", "baseVar", "lt-sobre" + (f.forma === "variable" ? "" : " lt-off"));
         if (f.forma === "variable" && f.baseVar === "cargos") {
             html += "<input data-k=\"baseCargos\" class=\"form-control form-control-sm mt-1\" placeholder=\"Container Drayage, Container Empty Return\" title=\"Conceptos de esta misma ruta. El precio de la fila es el porcentaje de esos cargos.\" value=\"" + escLogTar_(f.baseCargos || "") + "\">";
             html += "<div class=\"lt-ayuda\">Nombres de los otros cargos de esta ruta, separados por coma. El precio de esta fila es el porcentaje, no un valor en dólares.</div>";
         }
         return html;
     }
-    if (k === "aplica") return logTarSelect_([["embarque", "Embarque"], ["contenedor", "Contenedor"]], f.aplica || "embarque", "aplica", f.forma === "variable" ? "lt-off" : "");
+    if (k === "aplica") {
+        const offAplica = f.forma === "variable" || (tab === "destino" && f.equipo) ? " lt-off" : "";
+        return logTarSelect_([["embarque", "Embarque"], ["contenedor", "Contenedor"]], f.aplica || "embarque", "aplica", "lt-aplica" + offAplica);
+    }
     if (k === "moneda") return logTarSelect_([["USD", "USD"], ["COP", "COP"]], f.moneda || "USD", "moneda", "lt-mon");
     if (k === "equipo") {
-        const ops = tab === "fcl" ? [["20", "20"], ["40", "40"], ["40hc", "40HC"]] : [["", "—"], ["20", "20"], ["40", "40"], ["40hc", "40HC"]];
+        const ops = tab === "destino"
+            ? [["", "Cualquiera"], ["20", "20'"], ["40", "40'"], ["40hc", "40HC"], ["40/40hc", "40' / 40HC"]]
+            : (tab === "fcl" ? [["20", "20"], ["40", "40"], ["40hc", "40HC"]] : [["", "—"], ["20", "20"], ["40", "40"], ["40hc", "40HC"]]);
         const off = tab === "interno" && f.modalidad !== "fcl" ? "lt-off" : "";
-        return logTarSelect_(ops, f.equipo || (tab === "fcl" ? "40" : ""), "equipo", off);
+        const clsEq = "lt-equipo" + (off ? " " + off : "");
+        return logTarSelect_(ops, f.equipo || (tab === "fcl" ? "40" : ""), "equipo", clsEq);
     }
     if (k === "cobro") {
         const off = tab === "interno" && f.modalidad === "lcl" ? "" : "lt-off";
@@ -1796,8 +1808,9 @@ function logTarPintar_() {
         agr.hidden = ops.length < 2;
     }
     head.innerHTML = "<tr>" + cols.map(function (c) {
-        if (c[0] === "fecha") return "<th><button type=\"button\" class=\"cl-sort\" id=\"logTarOrdenFecha\">Fecha " + ((window.logTarOrden || "desc") === "asc" ? "↑" : "↓") + "</button></th>";
-        return "<th>" + c[1] + "</th>";
+        const thCls = ({ forma: "lt-forma", baseVar: "lt-sobre", aplica: "lt-aplica", equipo: "lt-equipo", moneda: "lt-mon", fecha: "lt-fecha" })[c[0]] || "";
+        if (c[0] === "fecha") return "<th class=\"lt-fecha\"><button type=\"button\" class=\"cl-sort\" id=\"logTarOrdenFecha\">Fecha " + ((window.logTarOrden || "desc") === "asc" ? "↑" : "↓") + "</button></th>";
+        return "<th" + (thCls ? " class=\"" + thCls + "\"" : "") + ">" + c[1] + "</th>";
     }).join("") + "<th></th></tr>";
     const ordenadas = logTarOrdenar_(logTarFiltradas_(tab));
     const tam = Number(window.logTarTam) || 25;
@@ -2045,7 +2058,7 @@ function logTarInit_() {
         if (!row) return;
         if (row.preferida === "S") logTarDejarUnaPreferida_(tab, row);
         const kPinta = ev.target.getAttribute("data-k");
-        if (kPinta === "forma" || kPinta === "baseVar") logTarPintar_();
+        if (kPinta === "forma" || kPinta === "baseVar" || kPinta === "equipo") logTarPintar_();
         else tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
     });
     body.addEventListener("change", function (ev) {
@@ -2064,7 +2077,7 @@ function logTarInit_() {
             if ((kCampo === "pais" || kCampo === "ciudad" || kCampo === "puerto") && typeof logRefrescarCiudadesEnv_ === "function") {
                 logRefrescarCiudadesEnv_(false);
             }
-            if (kCampo === "pais") logTarPintar_();
+            if (kCampo === "pais" || kCampo === "forma" || kCampo === "baseVar" || kCampo === "equipo") logTarPintar_();
             if (window.logTarTab === "interno" && (kCampo === "modalidad" || kCampo === "cobro")) {
                 if (kCampo === "cobro") {
                     const trCob = ev.target.closest("tr[data-id]");
