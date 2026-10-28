@@ -861,6 +861,27 @@
     <div class="sl-modal-f"><button type="button" class="btn btn-sm btn-outline-secondary" onclick="cerrarModalCaja()">Cancelar</button><button type="button" class="btn btn-sm btn-primary" onclick="guardarItem()">Guardar</button></div>
   </div>
 
+  <div class="modal fade" id="modalConfirmacionApp" tabindex="-1" aria-labelledby="confirmAppTitulo" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered sb-modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header sb-modal-header">
+          <div>
+            <h5 class="modal-title" id="confirmAppTitulo">Confirmar</h5>
+            <p class="sb-modal-sub mb-0 d-none" id="confirmAppSub"></p>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0" id="confirmAppMensaje">¿Continuar?</p>
+        </div>
+        <div class="modal-footer sb-modal-footer">
+          <button type="button" class="btn btn-outline-secondary" id="confirmAppCancelar" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-diforma-blue" id="confirmAppOk">Aceptar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="modalLogGuardar" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -1952,12 +1973,12 @@
   
   <script src="admin.js?v=1.0.84"></script>
     <script src="seguridad.js?v=1.0.26"></script>
-    <script src="app.js?v=1.0.61"></script>
+    <script src="app.js?v=1.0.62"></script>
   <script src="engine.js?v=1.0.41"></script>
   <script src="connectors.js?v=1.0.50"></script>
   <script src="ia-core.js?v=1.0.50"></script>
   <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.237"></script>
+  <script src="logistica.js?v=1.0.238"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>

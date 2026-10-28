@@ -53,6 +53,63 @@ window.mostrarEsperaNube = mostrarEsperaNube;
 window.textoEsperaNube = textoEsperaNube;
 window.ocultarEsperaNube = ocultarEsperaNube;
 
+/**
+ * Confirmación con identidad SmartBudget (reemplazo de window.confirm).
+ * @returns {Promise<boolean>}
+ */
+window.mostrarConfirmacionApp = function (opts) {
+    opts = opts || {};
+    const el = document.getElementById("modalConfirmacionApp");
+    if (!el || typeof bootstrap === "undefined") {
+        return Promise.resolve(!!window.confirm(String(opts.mensaje || opts.message || "¿Continuar?")));
+    }
+    return new Promise(function (resolve) {
+        const tit = document.getElementById("confirmAppTitulo");
+        const sub = document.getElementById("confirmAppSub");
+        const msg = document.getElementById("confirmAppMensaje");
+        const btnOk = document.getElementById("confirmAppOk");
+        const btnNo = document.getElementById("confirmAppCancelar");
+        if (tit) tit.textContent = opts.titulo || opts.title || "Confirmar";
+        if (sub) {
+            const s = String(opts.subtitulo || opts.sub || "").trim();
+            sub.textContent = s;
+            sub.classList.toggle("d-none", !s);
+        }
+        if (msg) msg.textContent = opts.mensaje || opts.message || "¿Continuar?";
+        if (btnOk) {
+            btnOk.textContent = opts.okTexto || opts.okText || "Aceptar";
+            btnOk.className = "btn " + (opts.peligro || opts.danger
+                ? "btn-outline-danger"
+                : "btn-diforma-blue");
+        }
+        if (btnNo) btnNo.textContent = opts.cancelarTexto || opts.cancelText || "Cancelar";
+        let decidido = false;
+        const cerrar = function (ok) {
+            if (decidido) return;
+            decidido = true;
+            btnOk && btnOk.removeEventListener("click", onOk);
+            btnNo && btnNo.removeEventListener("click", onNo);
+            el.removeEventListener("hidden.bs.modal", onHide);
+            resolve(!!ok);
+            const inst = bootstrap.Modal.getInstance(el);
+            if (inst) inst.hide();
+        };
+        const onOk = function () { cerrar(true); };
+        const onNo = function () { cerrar(false); };
+        const onHide = function () { cerrar(false); };
+        if (btnOk) btnOk.addEventListener("click", onOk);
+        if (btnNo) btnNo.addEventListener("click", onNo);
+        el.addEventListener("hidden.bs.modal", onHide);
+        /* Encima de otros modales (p. ej. historial de cotizaciones). */
+        el.style.zIndex = "1085";
+        const modal = bootstrap.Modal.getOrCreateInstance(el, { backdrop: "static", keyboard: true });
+        modal.show();
+        const backdrops = document.querySelectorAll(".modal-backdrop");
+        const last = backdrops[backdrops.length - 1];
+        if (last) last.style.zIndex = "1080";
+    });
+};
+
 function mostrarNotificacion(mensaje, tipo = 'info') {
     const container = document.getElementById('toastContainer');
     if (!container) return;

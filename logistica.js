@@ -8303,7 +8303,23 @@ function logisticaPintarHistorial_() {
 
 /** Reabre una cotización guardada: texto y precios congelados, imágenes desde Drive en segundo plano. */
 async function logisticaAbrirGuardada_(id, rev) {
-    if (logQuote.sucio && !window.confirm("Hay cambios sin guardar en la cotización actual. ¿Abrir la guardada y descartarlos?")) return;
+    if (logQuote.sucio) {
+        const ok = typeof window.mostrarConfirmacionApp === "function"
+            ? await window.mostrarConfirmacionApp({
+                titulo: "Cambios sin guardar",
+                subtitulo: "Cotización actual",
+                mensaje: "Hay cambios sin guardar en la cotización actual. ¿Abrir la guardada y descartarlos?",
+                okTexto: "Abrir y descartar",
+                cancelarTexto: "Seguir editando",
+                peligro: true
+            })
+            : window.confirm("Hay cambios sin guardar en la cotización actual. ¿Abrir la guardada y descartarlos?");
+        if (!ok) return;
+    }
+    const histEl = document.getElementById("modalLogHist");
+    if (histEl && histEl.classList.contains("show")) {
+        bootstrap.Modal.getOrCreateInstance(histEl).hide();
+    }
     if (typeof mostrarEsperaNube === "function") mostrarEsperaNube("Abriendo la cotización…");
     let d;
     try {
@@ -8490,7 +8506,6 @@ function logisticaInitHistorial_() {
             }
             const b = ev.target.closest("[data-hid]");
             if (!b) return;
-            bootstrap.Modal.getOrCreateInstance(document.getElementById("modalLogHist")).hide();
             logisticaAbrirGuardada_(b.getAttribute("data-hid"), parseInt(b.getAttribute("data-hrev"), 10));
         });
     }
