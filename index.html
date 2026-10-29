@@ -485,8 +485,8 @@
                     </div>
                     <div class="log-dest">
                     <div>
-                      <label class="form-label small mb-1" for="logDestCiudad">Ciudad</label>
-                      <select id="logDestCiudad" class="form-select form-select-sm" title="Ciudades y puertos ya cargados en Ajustes → Logística. Así el nombre coincide con la tarifa.">
+                      <label class="form-label small mb-1" for="logDestCiudad">Ciudad (tarifas)</label>
+                      <select id="logDestCiudad" class="form-select form-select-sm" title="Ciudad/puerto de las tarifas en Ajustes. Con ella se calculan flete, destino, etc.">
                         <option value="">Elige</option>
                       </select>
                     </div>
@@ -501,6 +501,10 @@
                       <input type="text" id="logDestCodigo" class="form-control form-control-sm" maxlength="3" placeholder="ISO" autocomplete="off">
                       <div id="logCodigoMenu" class="log-menu" hidden></div>
                     </div>
+                    </div>
+                    <div id="logDestTituloWrap" class="log-field">
+                      <label class="form-label small mb-1" for="logDestTitulo">Ciudad en gran total</label>
+                      <input type="text" id="logDestTitulo" class="form-control form-control-sm" maxlength="60" placeholder="Igual a ciudad de tarifas" autocomplete="off" title="Ciudad que sale en GRAND TOTAL (ej. Dover FL). Déjala vacía para usar la de tarifas (ej. Tampa). No cambia los cálculos logísticos.">
                     </div>
                     <div>
                       <label class="form-label small mb-1" for="logDestPuerto">Puerto</label>
@@ -1979,7 +1983,7 @@
   <script src="connectors.js?v=1.0.53"></script>
   <script src="ia-core.js?v=1.0.51"></script>
   <script src="export-excel.js?v=1.0.53"></script>
-  <script src="logistica.js?v=1.0.243"></script>
+  <script src="logistica.js?v=1.0.245"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>

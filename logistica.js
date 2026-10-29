@@ -1290,6 +1290,7 @@ function logEnvDef_() {
     return {
         modalidad: "aerea", incoterm: "EXW",
         destinoCiudad: "", destinoPais: "", destinoCodigo: "", destinoPuerto: "",
+        destinoTitulo: "",
         contenedores: { c20: 0, c40: 0, c40hc: 0 },
         contenedoresManual: false, embarques: 1,
         activo: true, modoCosto: "detalle", resumenPct: 100, mercado: "",
@@ -1326,6 +1327,7 @@ function logEnvEscNorm_(src, base) {
         destinoPais: logPaisEnEspanol_(String(s.destinoPais != null ? s.destinoPais : (b.destinoPais || "")).trim()),
         destinoCodigo: String(s.destinoCodigo != null ? s.destinoCodigo : (b.destinoCodigo || "")).trim().toUpperCase(),
         destinoPuerto: String(s.destinoPuerto != null ? s.destinoPuerto : (b.destinoPuerto || "")).trim(),
+        destinoTitulo: String(s.destinoTitulo != null ? s.destinoTitulo : (b.destinoTitulo || "")).trim(),
         contenedores: logContenedoresNorm_(s.contenedores || b.contenedores),
         contenedoresManual: s.contenedoresManual != null ? !!s.contenedoresManual : !!b.contenedoresManual,
         embarques: isFinite(emb) && emb > 0 ? emb : 1,
@@ -1355,7 +1357,8 @@ function logEnvVistaEsc_(escId) {
             destinoCiudad: e.destinoCiudad,
             destinoPais: e.destinoPais,
             destinoCodigo: e.destinoCodigo,
-            destinoPuerto: e.destinoPuerto
+            destinoPuerto: e.destinoPuerto,
+            destinoTitulo: e.destinoTitulo || ""
         };
     }
     const st = logEnvEscDe_(e, escId) || logEnvEscSemilla_(e);
@@ -1365,7 +1368,10 @@ function logEnvVistaEsc_(escId) {
         destinoCiudad: st.destinoCiudad || e.destinoCiudad,
         destinoPais: st.destinoPais || e.destinoPais,
         destinoCodigo: st.destinoCodigo || e.destinoCodigo,
-        destinoPuerto: st.destinoPuerto || e.destinoPuerto
+        destinoPuerto: st.destinoPuerto || e.destinoPuerto,
+        destinoTitulo: st.destinoTitulo != null && String(st.destinoTitulo).trim()
+            ? String(st.destinoTitulo).trim()
+            : (e.destinoTitulo || "")
     };
 }
 
@@ -2218,6 +2224,7 @@ function logEnvNormalizar_(src) {
     d.destinoCodigo = String(e.destinoCodigo || "").trim().toUpperCase();
     if (!d.destinoCodigo && d.destinoPais) d.destinoCodigo = logEnvCodigoDePais_(d.destinoPais) || "";
     d.destinoPuerto = String(e.destinoPuerto || "").trim();
+    d.destinoTitulo = String(e.destinoTitulo || "").trim();
     d.contenedores = logContenedoresNorm_(e.contenedores);
     const sumaCont = d.contenedores.c20 + d.contenedores.c40 + d.contenedores.c40hc;
     if (e.contenedoresManual === false) d.contenedoresManual = false;
@@ -2860,33 +2867,35 @@ function logEnvTitulo_(cual, T, mon, esEn, escId) {
     ];
     if (viejos.some(function (v) { return String(custom || "").trim().toUpperCase() === v.toUpperCase(); })) custom = "";
     const conMoneda_ = function (txt) { return logSufijoMon_(txt, mon); };
+    const escMon_ = function (s) { return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
+    const quitarMonedaFinal_ = function (t) {
+        return String(t || "").trim()
+            .replace(new RegExp("\\s*·\\s*" + escMon_(mon) + "\\s*$", "i"), "")
+            .replace(new RegExp("\\s*\\(" + escMon_(mon) + "\\)\\s*$", "i"), "")
+            .trim();
+    };
     if (cual !== "gran" && String(custom || "").trim()) return String(custom).trim();
     if (cual === "prod") {
         if (!logEsCotizacionExterior_()) return logSufijoMon_(esEn ? "SUBTOTAL PRICE" : "PRECIO SUBTOTAL", mon);
         return logSufijoMon_(esEn ? "EXW SUBTOTAL PRICE" : "PRECIO SUBTOTAL EXWORKS", mon);
     }
     if (cual === "log") return logSufijoMon_(esEn ? "TOTAL LOGISTICS PRICE" : "PRECIO TOTAL LOGÍSTICA", mon);
-    if (cual === "gran" && typeof logPagoAsegurar_ === "function" && logPagoAsegurar_().iva && !String(custom || "").trim()) {
+    /* Título editado a mano en el PDF: se respeta tal cual (ya no se vuelve a pegar la ciudad de tarifas). */
+    if (cual === "gran" && String(custom || "").trim()) {
+        return conMoneda_(quitarMonedaFinal_(custom));
+    }
+    if (cual === "gran" && typeof logPagoAsegurar_ === "function" && logPagoAsegurar_().iva) {
         return logSufijoMon_(esEn ? "TOTAL PRICE BEFORE VAT" : "PRECIO TOTAL ANTES DE IVA", mon);
     }
     if (!logEsCotizacionExterior_()) {
-        return conMoneda_(String(custom || "").trim() || (esEn ? "GRAND TOTAL BEFORE VAT" : "GRAN TOTAL SIN IVA"));
+        return conMoneda_(esEn ? "GRAND TOTAL BEFORE VAT" : "GRAN TOTAL SIN IVA");
     }
     const cabeza = esEn ? "GRAND TOTAL" : "GRAN TOTAL";
-    let frase = String(custom || "").trim().replace(new RegExp("\\s*\\(" + mon + "\\)\\s*$", "i"), "").trim();
-    frase = frase.replace(/^(GRAND TOTAL|GRAN TOTAL)\s+/i, "").trim();
-    const ciudad = (vista.destinoCiudad || "").trim().toUpperCase();
+    /* Ciudad del título: destinoTitulo (p. ej. Dover) o, si vacío, la de tarifas (Tampa). */
+    const ciudad = String(vista.destinoTitulo || vista.destinoCiudad || "").trim().toUpperCase();
     const cod = (vista.destinoCodigo || "").trim().toUpperCase();
-    const esc_ = function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); };
-    if (ciudad) frase = frase.replace(new RegExp("\\s+" + esc_(ciudad) + (cod ? "(?:\\s+" + esc_(cod) + ")?" : "") + "\\s*$", "i"), "").trim();
-    if (cod) frase = frase.replace(new RegExp("\\s+" + esc_(cod) + "\\s*$", "i"), "").trim();
     const incNow = String(vista.incoterm || "EXW").toUpperCase();
-    const mInc = /^(EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b\s*(.*)$/i.exec(frase);
-    if (!frase) frase = incNow;
-    else if (mInc && mInc[1].toUpperCase() !== incNow) frase = incNow;
-    else if (mInc) frase = (incNow + " " + (mInc[2] || "")).trim();
-    else frase = (incNow + " " + frase).trim();
-    return conMoneda_(cabeza + " " + frase + (ciudad ? " " + ciudad : "") + (cod ? " " + cod : ""));
+    return conMoneda_(cabeza + " " + incNow + (ciudad ? " " + ciudad : "") + (cod ? " " + cod : ""));
 }
 
 function logEnvLineaPdf_(T, esEn, escId) {
@@ -8832,7 +8841,8 @@ function logisticaConstruirHTML(opts, imprimir) {
         "body.paginado .page-body{padding-bottom:calc(var(--ftr-h) + .06in)!important}" +
         "body.paginado .page-inner{margin-left:var(--mx)!important;margin-right:var(--mx)!important}" +
         "body.paginado .page>.ftr{position:absolute!important;left:0!important;right:0!important;bottom:0!important;height:var(--ftr-h)!important;min-height:var(--ftr-h)!important;max-height:var(--ftr-h)!important;padding-left:var(--mx)!important;padding-right:var(--mx)!important}" +
-        "body.paginado .page .pnum{display:none}" +
+        /* Página X de Y encima del pie (no usar el pie del navegador: márgenes «Ninguno»). */
+        "body.paginado .page .pnum{display:block!important;position:absolute!important;right:var(--mx)!important;bottom:calc(var(--ftr-h) + .04in)!important;font-size:7.5pt!important;color:#777!important;z-index:3!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
         "body:not(.paginado) .pages{display:none!important}" +
         "body:not(.paginado) .hdr{position:fixed;top:0;left:0;right:0;z-index:5}" +
         "body:not(.paginado) .ftr{position:fixed;bottom:0;left:0;right:0;z-index:5;height:var(--ftr-h)}" +
@@ -9010,6 +9020,7 @@ function logisticaLeerEnvUi_() {
     const destinoPais = ((document.getElementById("logDestPais") || {}).value || "").trim();
     const destinoCodigo = ((document.getElementById("logDestCodigo") || {}).value || "").trim().toUpperCase();
     const destinoPuerto = ((document.getElementById("logDestPuerto") || {}).value || "").trim();
+    const destinoTitulo = ((document.getElementById("logDestTitulo") || {}).value || "").trim();
     /* Con opciones: modalidad/Incoterm/destino van a la opción activa; el global refleja esa opción. */
     const escAct = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
     if (escAct) {
@@ -9022,6 +9033,7 @@ function logisticaLeerEnvUi_() {
         st.destinoPais = destinoPais;
         st.destinoCodigo = destinoCodigo;
         st.destinoPuerto = destinoPuerto;
+        st.destinoTitulo = destinoTitulo;
     }
     prev.modalidad = modalidad;
     prev.incoterm = incoterm;
@@ -9029,6 +9041,7 @@ function logisticaLeerEnvUi_() {
     prev.destinoPais = destinoPais;
     prev.destinoCodigo = destinoCodigo;
     prev.destinoPuerto = destinoPuerto;
+    prev.destinoTitulo = destinoTitulo;
     prev.contenedores = logContenedoresNorm_({
         c20: (document.getElementById("logC20") || {}).value,
         c40: (document.getElementById("logC40") || {}).value,
@@ -9728,6 +9741,7 @@ function logisticaPintarEnv_(forzar) {
         e0.destinoPais = st.destinoPais != null ? st.destinoPais : e0.destinoPais;
         e0.destinoCodigo = st.destinoCodigo != null ? st.destinoCodigo : e0.destinoCodigo;
         e0.destinoPuerto = st.destinoPuerto != null ? st.destinoPuerto : e0.destinoPuerto;
+        if (st.destinoTitulo != null) e0.destinoTitulo = st.destinoTitulo;
     }
     logEnvAsegurarLineas_(esEn, false, escUi);
     logAplicarAranceles_();
@@ -9765,6 +9779,10 @@ function logisticaPintarEnv_(forzar) {
     logSetSiNoFoco_("logDestCiudad", ciudadElegida || vista.destinoCiudad);
     logSetSiNoFoco_("logDestCodigo", vista.destinoCodigo || logEnvCodigoDePais_(paisElegido || vista.destinoPais));
     logSetSiNoFoco_("logDestPuerto", puertoElegido || vista.destinoPuerto);
+    const phTit = (vista.destinoCiudad || "").trim() || (esEn ? "Same as tariff city" : "Igual a ciudad de tarifas");
+    const elTit = document.getElementById("logDestTitulo");
+    if (elTit) elTit.placeholder = phTit;
+    logSetSiNoFoco_("logDestTitulo", vista.destinoTitulo || "");
     logSetSiNoFoco_("logResumenPct", e.resumenPct);
     const costosOn = escUi ? logEnvActivo_(escUi) : (e.activo !== false);
     const swOn = document.getElementById("logCostosOn");
@@ -9782,7 +9800,7 @@ function logisticaPintarEnv_(forzar) {
     document.querySelectorAll("input[name=\"logModoCosto\"]").forEach(function (r) { r.checked = r.value === e.modoCosto; });
     const selMer = document.getElementById("logMercado");
     if (selMer && document.activeElement !== selMer) selMer.value = exterior ? "EXPORTACION" : "NACIONAL";
-    ["logModalidadWrap", "logIncotermWrap", "logDestPaisWrap", "logDestCodigoWrap"].forEach(function (id) {
+    ["logModalidadWrap", "logIncotermWrap", "logDestPaisWrap", "logDestCodigoWrap", "logDestTituloWrap"].forEach(function (id) {
         const el = document.getElementById(id);
         if (el) el.classList.toggle("d-none", !exterior);
     });
@@ -10029,7 +10047,10 @@ function logisticaOnEnvUi_(ev) {
             ln.arancelFirma = "";
         });
     }
-    if (t && (t.id === "logIncoterm" || t.id === "logMercado") && (logQuote.env.incoterm !== incAntes || t.id === "logMercado")) logQuote.env.titGran = "";
+    if (t && (t.id === "logIncoterm" || t.id === "logMercado" || t.id === "logDestTitulo")
+        && (logQuote.env.incoterm !== incAntes || t.id === "logMercado" || t.id === "logDestTitulo")) {
+        logQuote.env.titGran = "";
+    }
     if (t && t.id === "logMercado") logQuote.env.plantilla = "";
     logMarcarSucio_();
     const despues = logQuote.env.modalidad + "|" + logQuote.env.incoterm + "|" + logQuote.env.mercado;
@@ -12311,7 +12332,7 @@ function logisticaInit() {
     logCargarAranceles_();
     if (document.getElementById("fichaPartida")) logPintarSelectPartida_("");
     logisticaInitIa_();
-    ["logMercado", "logModalidad", "logIncoterm", "logDestCiudad", "logDestPais", "logDestCodigo", "logDestPuerto", "logResumenPct", "logMargenLog", "logCostosOn", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc", "logEmbarques"].forEach(function (id) {
+    ["logMercado", "logModalidad", "logIncoterm", "logDestCiudad", "logDestPais", "logDestCodigo", "logDestPuerto", "logDestTitulo", "logResumenPct", "logMargenLog", "logCostosOn", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc", "logEmbarques"].forEach(function (id) {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener("change", logisticaOnEnvUi_);
