@@ -40,14 +40,18 @@ REGLA B — procesos y mano de obra
 
 REGLA C — clasificación
 Categorías: "Materias Primas", "Procesos Externos", "Procesos Internos", "Mano de Obra", "Empaque y Fletes", "Comercialización".
-Ítem "Fletes / Transporte Local" con es_global true (se diluye Costo/Q en cada rango).
-Cajas máster / corrugado del pedido, elaboración de troquel (el DADO, no el golpe), moldes y setup CNC: es_global true. cantidad = unidades de ese ítem en el LOTE (ej. 2 cajas), costoUnitario = COP de una de esas unidades para TODO el pedido, NUNCA por cada producto del rango.
+Ítem "Fletes / Transporte Local" (flete del PEDIDO): es_global true (se diluye Costo/Q). Si el analista dice flete por unidad/mueble: es_global false.
+Empaque (caja, caja máster, corrugado, huacal…): sigue la entrevista y la ficha.
+- 1 producto por caja (und=1 o “1 caja por mueble/pieza”): es_global false. cantidad = cajas por pieza (casi siempre 1). costoUnitario = COP de UNA caja. NO diluir entre Q.
+- Varias piezas en una caja (und>1, ej. 200 cenefas/caja): es_global true. cantidad = nº de cajas del LOTE. costoUnitario = COP de una caja (o del empaque del lote). La app diluye Costo/Q. PROHIBIDO copiar el valor de toda la caja a cada una de las 200.
+Elaboración de troquel (el DADO, no el golpe), moldes y setup CNC: es_global true, salvo que el analista diga explícitamente que es por unidad.
 Troquelado mecánico (golpe por pieza o pliego), materiales y MO: es_global false.
+Si el analista pide pasar un ítem de global a unitario (o al revés), respeta es_global en el JSON; no lo contradigas solo por el nombre.
 
 REGLA D — TRM
 Importaciones: TRM base + 100 COP. Exportaciones: TRM base - 100 COP.
 
-Ítems globales (moldes, elaboración de troquel/dado, CNC setup, fletes de lote, cajas máster): es_global true. El resto false.`;
+Ítems globales por defecto: moldes, elaboración de troquel/dado, CNC setup, flete de pedido, y empaque solo si und>1. Empaque 1 caja/mueble y el resto: es_global false.`;
 
 function umPermitidas() {
     if (typeof unidadesParaPrompt === "function") {
@@ -310,13 +314,7 @@ function avisarEmpaqueVsPieza_() {
 async function aplicarCotizacionEnUI(cotizacion) {
     if (!cotizacion) return false;
     let ok = false;
-    if (Array.isArray(cotizacion.items)) {
-        if (typeof window.aplicarRangosDesdeIA === 'function') window.aplicarRangosDesdeIA(cotizacion.rangos);
-        await enriquecerItemsConCatalogo(cotizacion.items);
-        window.reemplazarMatrizDesdeIA(cotizacion.items);
-        window.faseIA = 'matriz';
-        ok = true;
-    }
+    /* Ficha primero: inferirEsGlobal_ lee und/porPieza (1 caja por mueble → no forzar $ LOTE). */
     if (cotizacion.ficha && typeof aplicarFichaComercial === "function") {
         rellenarEmpUndDesdeChat_(cotizacion.ficha);
         rellenarEmpPesoDesdeChat_(cotizacion.ficha);
@@ -324,7 +322,14 @@ async function aplicarCotizacionEnUI(cotizacion) {
         avisarEmpaqueVsPieza_();
         ok = true;
     }
-    if (Array.isArray(cotizacion.items)) avisarCubicacionCorta_();
+    if (Array.isArray(cotizacion.items)) {
+        if (typeof window.aplicarRangosDesdeIA === 'function') window.aplicarRangosDesdeIA(cotizacion.rangos);
+        await enriquecerItemsConCatalogo(cotizacion.items);
+        window.reemplazarMatrizDesdeIA(cotizacion.items);
+        window.faseIA = 'matriz';
+        ok = true;
+        avisarCubicacionCorta_();
+    }
     return ok;
 }
 
@@ -685,7 +690,8 @@ async function enriquecerItemsConCatalogo(items) {
         it.fuente = "[Tarifa Fija]";
         it.costoUnitario = t.costo;
         if (t.um) it.um = t.um;
-        if (t.es_global) it.es_global = true;
+        /* No pisar un es_global false explícito (ej. caja por mueble). */
+        if (t.es_global && !esGlobalExplicitoFalse_(it.es_global)) it.es_global = true;
     });
     const pendientes = items.filter(function (it) {
         if (/tarifa|odoo|manual/i.test(it.fuente || "")) return false;
@@ -794,7 +800,7 @@ Primero un párrafo corto EN ESPAÑOL (chat interno). AL FINAL un único JSON (s
 nombre de cada ítem: título + cuenta con cifras (pieza, tolerancia, merma, tiras de 6 m). ficha.titulo y ficha.descripcion en ${langF}. descripcion de ficha: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo). La receta de costo va en items.nombre, no en la ficha.
 Medidas de ficha SOLO en ${umF}, tomadas del PDF/render o de lo que confirmó el analista. PROHIBIDO copiar dim_diseno u otras medidas del Lead Odoo.
 empaque: una caja (campos planos ancho/fondo/alto/unidades/peso) O varias si el producto es modular: empaque.cajas:[{nombre,ancho,fondo,alto,unidades,porPieza,peso}]. Caja un poco MAYOR que la pieza si va armada. PROHIBIDO caja más baja que el mueble salvo KD. unidades = productos por esa caja; porPieza = cajas de ese tipo por cada producto (modular). Una de las dos. peso = de UNA caja, kg si cm / lb si in; solo si lo dijeron; si no, 0. PROHIBIDO estimarlo por el render.
-costoUnitario en COP sin IVA. Para es_global true, costoUnitario es el costo del LOTE (o por cada cantidad del lote), NO por producto. No rellenes costos[] en ítems globales: la app hace costoUnitario/Q. PROHIBIDO poner el valor de una caja o un flete en cada unidad del rango (ej. 5.000 cenefas).`;
+costoUnitario en COP sin IVA. Empaque: si ficha/entrevista dice 1 caja por mueble (und=1), es_global false y costoUnitario = COP de UNA caja (cantidad = cajas/pieza). Si und>1 (varias piezas/caja), es_global true; no pongas el valor de toda la caja en cada pieza del rango. Para otros globales (flete de pedido, dado, molde, setup): costoUnitario = del LOTE; no rellenes costos[]; la app hace Costo/Q.`;
     }
     return `${base}
 
@@ -810,7 +816,7 @@ JSON con {"rangos":[...],"ficha":{...},"items":[...]} SOLO si el analista pide E
 Si solo aclara o discute: texto, sin JSON.
 Si pide cambiar solo ficha/medidas/empaque (sin tocar costos): puedes devolver solo {"ficha":{...}} al final.
 Puede adjuntar archivos extra: úsalos. No pidas recargar la página.
-Al rellenar costos (solo si pidió ajustar matriz): flete, cajas máster, elaboración de troquel (dado) y setup van con es_global true y costoUnitario = COP del lote (o por caja del lote). NO copies esos valores a costos[] ni los pongas como precio de cada producto. La app diluye Costo/Q. PROHIBIDO asignar una caja o un flete entero a cada unidad del rango (ej. 5.000 cenefas). Troquelado por golpe y materiales por pieza: es_global false.
+Al rellenar costos (solo si pidió ajustar matriz): respeta la entrevista/ficha. Empaque 1 caja por mueble → es_global false, costoUnitario = COP de UNA caja. Empaque compartido (und>1), flete de pedido, elaboración de troquel (dado) y setup → es_global true (diluye Costo/Q); PROHIBIDO copiar ese valor a cada unidad del rango (ej. 5.000 cenefas). Si pide “pásalo a unitario”, pon es_global false y NO lo vuelvas a marcar global por el nombre. Troquelado por golpe y materiales por pieza: es_global false.
 
 === FICHA ACTUAL ===
 ${JSON.stringify(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : {})}

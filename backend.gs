@@ -548,6 +548,53 @@ function odooSearchRead_(model, domain, fields, limit, offset, order) {
   return rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, model, "search_read", [domain || []], kw]);
 }
 
+/**
+ * Lead de Brief (crm.lead) por código de oportunidad.
+ * El name en Odoo es «17661-B REGRESO A CLASES». Antes se usaba ilike+limit 1
+ * sin orden y podía cruzar mal o devolver un lead sin imagen.
+ * Prioridad: name = código, o name que EMPIEZA por «código » (case-insensitive).
+ */
+function odooLeadPorCodigo_(codigo, campos) {
+  codigo = String(codigo || "").trim().split(/\s+/)[0];
+  if (!codigo) return null;
+  var fields = campos && campos.length ? campos.slice() : ["name"];
+  if (fields.indexOf("name") < 0) fields.unshift("name");
+  var rows = [];
+  try {
+    rows = odooSearchRead_("crm.lead", [["name", "=ilike", codigo + " %"]], fields, 8, 0, "write_date desc") || [];
+  } catch (e1) { rows = []; }
+  if (!rows.length) {
+    try {
+      rows = odooSearchRead_("crm.lead", [["name", "=ilike", codigo]], fields, 5, 0, "write_date desc") || [];
+    } catch (e2) { rows = []; }
+  }
+  if (!rows.length) {
+    try {
+      rows = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], fields, 12, 0, "write_date desc") || [];
+    } catch (e3) { rows = []; }
+  }
+  if (!rows.length) return null;
+  var codU = codigo.toUpperCase();
+  var best = null;
+  var bestScore = -1;
+  for (var i = 0; i < rows.length; i++) {
+    var n = String(rows[i].name || "").replace(/\s+/g, " ").trim().toUpperCase();
+    var score = 0;
+    if (n === codU) score = 100;
+    else if (n.indexOf(codU + " ") === 0) score = 90;
+    else if (n.indexOf(codU + "-") === 0) score = 85;
+    else if (n.indexOf(codU) === 0) score = 70;
+    else if (n.indexOf(codU) >= 0) score = 15;
+    if (score > bestScore) {
+      bestScore = score;
+      best = rows[i];
+    }
+  }
+  /* Exigir prefijo real del código; un ilike flojo no basta. */
+  if (bestScore < 70) return null;
+  return best;
+}
+
 /** Catálogo res.country de Odoo: nombre y código ISO. Lo usa el menú de Envío. */
 function proxyOdooPaises() {
   try {
@@ -857,7 +904,7 @@ function odooModeloCiudades_() {
 }
 
 function proxyOdooBuscar(codigo) {
-  codigo = String(codigo || "").trim();
+  codigo = String(codigo || "").trim().split(/\s+/)[0];
   if (!codigo) return { exito: false, mensaje: "Falta el código." };
   try {
     var pedidos = [
@@ -868,9 +915,8 @@ function proxyOdooBuscar(codigo) {
     var meta = odooCamposExistentes_("crm.lead", pedidos);
     var campos = pedidos.filter(function (f) { return meta[f]; });
     if (!campos.length) campos = ["name", "partner_id", "user_id", "create_date", "pricelist_id"];
-    var records = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], campos, 1, 0, "");
-    if (!records || records.length === 0) return { exito: false, mensaje: "No encontrada" };
-    var rec = records[0];
+    var rec = odooLeadPorCodigo_(codigo, campos);
+    if (!rec) return { exito: false, mensaje: "No hay oportunidad en Odoo cuyo nombre empiece por «" + codigo + "»." };
     /* Idioma del cliente (res.partner.lang): es lo que suele corregirse en Odoo y manda sobre un lang viejo del lead. */
     if (rec.partner_id) {
       try {
@@ -943,14 +989,13 @@ function odooPersona_(model, id) {
 }
 
 function proxyOdooCotizacionDatos(codigo) {
-  codigo = String(codigo || "").trim();
+  codigo = String(codigo || "").trim().split(/\s+/)[0];
   if (!codigo) return { exito: false, mensaje: "Falta el código del proyecto." };
   var pedidos = ["name", "partner_id", "contact_id", "id_vendedor", "user_id", "contact_name", "partner_name", "email_from", "phone", "function"];
   var meta = odooCamposExistentes_("crm.lead", pedidos);
   var campos = pedidos.filter(function (f) { return meta[f]; });
-  var recs = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], campos, 1, 0, "");
-  if (!recs || !recs.length) return { exito: false, mensaje: "No encontrada" };
-  var lead = recs[0];
+  var lead = odooLeadPorCodigo_(codigo, campos);
+  if (!lead) return { exito: false, mensaje: "No hay oportunidad en Odoo cuyo nombre empiece por «" + codigo + "»." };
   var avisos = [];
 
   var contacto = { nombre: "", cargo: "", correo: "", telefono: "" };
@@ -1007,7 +1052,8 @@ function odooMimeImagen_(b64) {
 }
 
 function proxyOdooImagenProyecto(codigo, campoForzado) {
-  codigo = String(codigo || "").trim();
+  /* Solo el token de código (evita «17717-B 17661-B TITULO» en ilike). */
+  codigo = String(codigo || "").trim().split(/\s+/)[0];
   if (!codigo) return { exito: false, mensaje: "Falta el código del proyecto." };
   var c = odooCredenciales_();
   var uid = odooUid_();
@@ -1015,22 +1061,36 @@ function proxyOdooImagenProyecto(codigo, campoForzado) {
   var binarios = Object.keys(meta).filter(function (f) {
     return meta[f].type === "binary" && !/_filename$|_name$/.test(f);
   });
+  /* Prioridad: render/Brief/Studio, luego image_1920→128 (kanban de Odoo). */
   var prioridad = function (f) {
+    var label = f + " " + ((meta[f] && meta[f].string) || "");
+    if (/render|brief|imagen.?proyecto|x_studio.*(imagen|foto|render|image)/i.test(label)) return 300;
     var m = f.match(/^image_(\d+)$/);
-    if (m) return 100 - Math.min(99, Math.round(Number(m[1]) / 20)); // 128, 256, 512... de menor a mayor
-    if (/imagen|image|foto|render|thumb/i.test(f + " " + (meta[f].string || ""))) return 10;
+    if (m) {
+      var size = Number(m[1]) || 0;
+      if (size >= 1024) return 220 + Math.min(40, size / 100);
+      if (size >= 512) return 180;
+      if (size >= 256) return 140;
+      return 110;
+    }
+    if (/imagen|image|foto|thumb|picture/i.test(label)) return 90;
     return 1;
   };
   binarios.sort(function (a, b) { return prioridad(b) - prioridad(a); });
   if (campoForzado && meta[campoForzado]) binarios = [campoForzado];
   if (!binarios.length) return { exito: false, mensaje: "El modelo crm.lead no tiene campos de imagen.", candidatos: [] };
 
-  var ids = odooSearchRead_("crm.lead", [["name", "ilike", codigo]], ["name"], 1, 0, "");
-  if (!ids || !ids.length) return { exito: false, mensaje: "No encontrada" };
-  var id = ids[0].id;
+  var lead = odooLeadPorCodigo_(codigo, ["name"]);
+  if (!lead) {
+    return {
+      exito: false,
+      mensaje: "No hay oportunidad en Odoo cuyo nombre empiece por «" + codigo + "». Revisa el CÓD. OPORTUNIDAD (en Brief debe verse «" + codigo + " …»)."
+    };
+  }
+  var id = lead.id;
 
   var vistos = [];
-  for (var i = 0; i < binarios.length && i < 8; i++) {
+  for (var i = 0; i < binarios.length && i < 14; i++) {
     var f = binarios[i];
     var r = rpcCallGAS("object", "execute_kw", [c.db, uid, c.pwd, "crm.lead", "read", [[id]], { fields: [f] }]);
     var b64 = r && r[0] && r[0][f];
@@ -1044,12 +1104,17 @@ function proxyOdooImagenProyecto(codigo, campoForzado) {
           mime: odooMimeImagen_(b64),
           base64: b64,
           kb: Math.round(b64.length * 0.75 / 1024),
+          leadName: lead.name || "",
           candidatos: vistos
         }
       };
     }
   }
-  return { exito: false, mensaje: "El proyecto no tiene imagen en: " + vistos.join(", "), candidatos: vistos };
+  return {
+    exito: false,
+    mensaje: "El lead «" + (lead.name || codigo) + "» no tiene imagen en: " + vistos.join(", "),
+    candidatos: vistos
+  };
 }
 
 // ==========================================

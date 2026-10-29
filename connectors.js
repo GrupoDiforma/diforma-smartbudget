@@ -264,7 +264,9 @@ window.imgOdooCache = {};
  * Devuelve { estado: "ok" | "sin" | "error", orig (1600 px), url (1000 px), campo, mime, mensaje }.
  */
 window.traerImagenOdoo = function (codigo, force) {
-    codigo = String(codigo || "").trim();
+    codigo = (typeof codigoOportunidadLimpio_ === "function")
+        ? codigoOportunidadLimpio_(codigo)
+        : String(codigo || "").trim().split(/\s+/)[0];
     if (!codigo) return Promise.resolve({ estado: "sin", mensaje: "Sin código de proyecto." });
     const prev = window.imgOdooCache[codigo];
     if (prev && !force) return prev;
@@ -281,7 +283,10 @@ window.traerImagenOdoo = function (codigo, force) {
                 return { estado: "ok", orig: orig, url: url, campo: d.etiqueta || d.campo || "", mime: esSvg ? d.mime : "image/jpeg", mensaje: "" };
             }
             const m = String((resp && resp.mensaje) || "Sin respuesta.");
-            return { estado: /no tiene imagen|no tiene campos de imagen/i.test(m) ? "sin" : "error", mensaje: m };
+            return {
+                estado: /no tiene imagen|no tiene campos de imagen|no hay oportunidad|no encontrada/i.test(m) ? "sin" : "error",
+                mensaje: m
+            };
         } catch (e) {
             const m = String((e && e.message) || e);
             return { estado: "error", mensaje: /Acción no válida/i.test(m) ? "falta pegar el backend.gs actualizado en Apps Script." : m };
@@ -296,31 +301,64 @@ window.traerImagenOdoo = function (codigo, force) {
     return prom;
 };
 
+/** Token tipo código de oportunidad: 17667-B, 17717-A2, etc. */
+function esTokenCodigoOportunidad_(tok) {
+    return /^\d{3,8}-[A-Za-z0-9]+$/i.test(String(tok || "").trim());
+}
+window.esTokenCodigoOportunidad_ = esTokenCodigoOportunidad_;
+
+/**
+ * Quita uno o varios códigos de oportunidad al inicio del texto.
+ * Evita «17717-B 17661-B REGRESO…» cuando Odoo ya traía un código viejo en name
+ * y la app anteponía el código buscado.
+ */
+function nombreSinCodigosOportunidad_(texto, codigoPreferido) {
+    let t = String(texto == null ? "" : texto).replace(/\s+/g, " ").trim();
+    if (!t || t === "$") return "";
+    const pref = String(codigoPreferido || "").trim();
+    if (pref) {
+        const esc = pref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        t = t.replace(new RegExp("^" + esc + "(?:\\s+|$)", "i"), "").trim();
+    }
+    while (t) {
+        const parts = t.split(/\s+/);
+        if (!parts.length || !esTokenCodigoOportunidad_(parts[0])) break;
+        t = parts.length > 1 ? parts.slice(1).join(" ").trim() : "";
+    }
+    return t;
+}
+window.nombreSinCodigosOportunidad_ = nombreSinCodigosOportunidad_;
+
+/** Solo el código limpio (sin título ni espacios). */
+function codigoOportunidadLimpio_(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    const tok = (s.split(/\s+/)[0] || "").trim();
+    if (esTokenCodigoOportunidad_(tok) || /^\d/.test(tok)) return tok;
+    return "";
+}
+
 /** Código de oportunidad (17667-B), nunca el título de Nombre Proyecto ni basura como "$". */
 function codigoOportunidadActual_() {
-    const input = String((document.getElementById("inputCodigo") || {}).value || "").trim();
+    const input = codigoOportunidadLimpio_((document.getElementById("inputCodigo") || {}).value);
     if (input) return input;
-    const activo = String(window._codigoProyectoActivo || "").trim();
+    const activo = codigoOportunidadLimpio_(window._codigoProyectoActivo);
     if (activo) return activo;
     const nombre = String((document.getElementById("noProyecto") || {}).value || "").trim();
     const tok = (nombre.split(/\s+/)[0] || "").trim();
-    /* Solo si parece código (empieza con dígito), no un símbolo suelto. */
-    if (/^\d/.test(tok)) return tok;
+    if (esTokenCodigoOportunidad_(tok) || /^\d/.test(tok)) return tok;
     return "";
 }
 window.codigoOportunidadActual_ = codigoOportunidadActual_;
+window.codigoOportunidadLimpio_ = codigoOportunidadLimpio_;
 
-/** Nombre Proyecto visible: siempre «código + nombre» (ej. 17716-A EXHIBICION MURO). */
+/** Nombre Proyecto visible: siempre «código + título» (ej. 17716-A EXHIBICION MURO). */
 function nombreProyectoFormato_(codigo, nombre) {
-    const cod = String(codigo || "").trim();
-    let nom = String(nombre || "").trim();
-    if (nom === "$") nom = "";
-    if (!cod) return nom;
-    if (!nom) return cod;
-    const esc = cod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp("^" + esc + "(?:\\s|$)", "i").test(nom)) return nom;
-    if (nom.toLowerCase() === cod.toLowerCase()) return cod;
-    return cod + " " + nom;
+    const cod = codigoOportunidadLimpio_(codigo) || String(codigo || "").trim();
+    const titulo = nombreSinCodigosOportunidad_(nombre, cod);
+    if (!cod) return titulo;
+    if (!titulo) return cod;
+    return cod + " " + titulo;
 }
 window.nombreProyectoFormato_ = nombreProyectoFormato_;
 

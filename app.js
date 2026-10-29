@@ -233,8 +233,11 @@ async function realizarPeticionBD(payload, opts) {
 async function buscarOportunidadOdoo() {
     const input = document.getElementById('inputCodigo');
     if (!input) return;
-    const codigo = input.value.trim();
+    const codigo = (typeof codigoOportunidadLimpio_ === "function")
+        ? codigoOportunidadLimpio_(input.value)
+        : String(input.value || "").trim().split(/\s+/)[0];
     if (!codigo) return mostrarNotificacion("Ingresa un código válido", "warning");
+    if (input.value.trim() !== codigo) input.value = codigo;
 
     const btn = document.querySelector('button[onclick="buscarOportunidadOdoo()"]') || input.nextElementSibling;
     const btnOriginalText = btn ? btn.innerText : 'Buscar';
@@ -247,10 +250,12 @@ async function buscarOportunidadOdoo() {
         if (data.exito && data.data) {
             const op = data.data;
             const setVal = (id, val) => { const el = document.getElementById(id); if(el) el.value = val || ''; };
+            /* Formato limpio: quita códigos viejos del name de Odoo (evita 17717-B 17661-B …). */
             if (typeof setNombreProyectoUI_ === "function") setNombreProyectoUI_(codigo, op.name);
             else setVal("noProyecto", op.name);
             setVal('cliente', op.partner_id ? op.partner_id[1] : ''); setVal('comercial', op.user_id ? op.user_id[1] : '');
             if (op.create_date) setVal('fecha', op.create_date.split(' ')[0]);
+            window._codigoProyectoActivo = codigo;
             mostrarAlertaOdoo("Oportunidad cargada correctamente", "success");
         } else { mostrarAlertaOdoo(data.mensaje || "Oportunidad no encontrada", "warning"); }
     } catch(e) { mostrarAlertaOdoo("Error conectando con Odoo", "danger"); }
@@ -695,9 +700,11 @@ window.cargarRendersVisor = function (opts) {
             if (!opts.silencio && typeof ocultarEsperaNube === "function") ocultarEsperaNube();
         }
         if (!opts.silencio && typeof mostrarNotificacion === "function") {
+            const cod = (typeof codigoOportunidadActual_ === "function" ? codigoOportunidadActual_() : "")
+                || String((document.getElementById("inputCodigo") || {}).value || "").trim();
             const partes = [];
-            if (odooOk) partes.push("La imagen de Odoo quedó como Grupo.");
-            else partes.push("Odoo no trajo imagen para este código.");
+            if (odooOk) partes.push("La imagen de Odoo («" + cod + "») quedó como Grupo.");
+            else partes.push("Odoo no trajo imagen para «" + (cod || "sin código") + "». En Brief el name debe empezar por ese código (ej. 17661-B REGRESO…).");
             if (nPins) partes.push(nPins + " render" + (nPins === 1 ? "" : "s") + " con pin de cotización.");
             else partes.push("No hay renders con pin de cotización para recuperar.");
             mostrarNotificacion(partes.join(" "), odooOk || nPins ? "success" : "warning");
@@ -1756,6 +1763,8 @@ function restaurarSesionTrabajo() {
     });
     /* No rehidratar base64 de sesiones viejas: el visor se llena en segundo plano desde Drive/Odoo. */
     window.archivosGemaBase64 = [];
+    /* El select aún no tiene opciones (poblarSelectComisiones va después de CONFIG). */
+    window._comisionSesionPendiente = s.comision || "";
     if (s.comision) {
         const sel = document.getElementById("simComision");
         if (sel) sel.value = s.comision;
@@ -1864,9 +1873,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await pConfig;
     if (typeof poblarSelectComisiones === "function") poblarSelectComisiones();
+    /* La matriz ya se pintó sin CONFIG: ahora sí salen la ficha AIU y la comisión hacia Logística. */
+    if (typeof renderizarTablaItems === "function") renderizarTablaItems();
+    else if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
     if (typeof verificarAccesoCorporativo === "function") verificarAccesoCorporativo();
     if (localStorage.getItem("smartbudget_token") && typeof logisticaPrefetchHistorial_ === "function") {
         logisticaPrefetchHistorial_();
     }
     await pTrm;
+    if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
 });

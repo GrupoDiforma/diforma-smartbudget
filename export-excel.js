@@ -358,6 +358,9 @@ function aplicarRangosExcel(ws, lots) {
 
 /** No. Proyecto sin el código. El código ya va en su propia celda. */
 function nombreProyectoSinCodigo_(texto, codigo) {
+    if (typeof nombreSinCodigosOportunidad_ === "function") {
+        return nombreSinCodigosOportunidad_(texto, codigo);
+    }
     let t = String(texto || "").replace(/\s+/g, " ").trim();
     const c = String(codigo || "").trim();
     if (!t) return "";

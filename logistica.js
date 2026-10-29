@@ -520,7 +520,9 @@ function logisticaLeerProyecto_() {
         return el ? String(el.value || "").trim() : "";
     };
     const nombre = v("noProyecto");
-    const codigo = (v("inputCodigo") || nombre.split(/\s+/)[0] || "").trim();
+    const codigo = (typeof codigoOportunidadLimpio_ === "function")
+        ? (codigoOportunidadLimpio_(v("inputCodigo")) || codigoOportunidadLimpio_(nombre))
+        : (v("inputCodigo") || nombre.split(/\s+/)[0] || "").trim();
     let idioma = "es";
     try { idioma = localeProyectoActual().idioma === "en" ? "en" : "es"; } catch (e) { /* sin locale: español */ }
     return {
@@ -940,6 +942,8 @@ function logisticaActualizarPresupuestoDesdeCostos_() {
             if (fila.snap) fila.snap.trm = trm;
         });
     }
+    /* Precios vivos traen la comisión de Costos: alinear el % de la cotización. */
+    logComisionSincronizarDesdeCostos_({ forzar: true });
     logMarcarSucio_();
     logisticaRefrescarTabla_();
     if (typeof mostrarNotificacion !== "function") return;
@@ -1005,6 +1009,7 @@ function logisticaSincronizarProyecto() {
         try { sis = localeProyectoActual().sistema === "imperial" ? "imperial" : "metrico"; } catch (e) { /* cm */ }
         selS.value = sis;
     }
+    logComisionSincronizarDesdeCostos_();
     logisticaActualizarVista();
     logisticaCargarOdoo_(false);
     logisticaCargarImagenOdoo_(false);
@@ -4533,6 +4538,7 @@ function logisticaTrasPresupuesto_() {
         logTrasPresupuestoTimer_ = 0;
         try { if (typeof snapshotVersionActual === "function") snapshotVersionActual(); } catch (e) { /* sigue con la matriz en memoria */ }
         logRevisarInsumosLog_();
+        logComisionSincronizarDesdeCostos_();
         logAlinearPreciosVivos_();
         if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
     }, 40);
@@ -5654,13 +5660,51 @@ function logComisionDesdeCostos_() {
     const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
     const fee = parseFloat((document.getElementById("simFee") || {}).value);
     const p = isNaN(pct) ? 0 : pct;
+    let nombre = "";
+    if (typeof listaComisiones === "function") {
+        const hit = listaComisiones().find(function (r) { return Math.abs(Number(r.pct) - p) < 0.001; });
+        if (hit) nombre = hit.nombre;
+    }
+    if (!nombre && opt) {
+        nombre = String(opt.textContent || "").replace(/\s*\([^)]*%\)\s*$/, "").trim();
+    }
     return {
         pct: p,
         pctBase: p,
-        nombre: opt ? String(opt.textContent || "").trim() : "",
+        nombre: nombre,
         fee: isNaN(fee) ? 0 : fee,
         valorManual: null
     };
+}
+
+/**
+ * Trae el % de comisión desde Costos (#simComision) a la cotización abierta.
+ * Si el usuario ya desvió el % respecto al origen (pct ≠ pctBase u override por opción),
+ * no se pisa — salvo forzar (p. ej. «Actualiza Presupuesto»).
+ * Cotizaciones del historial (abierta) tampoco se tocan sin forzar.
+ */
+function logComisionSincronizarDesdeCostos_(opts) {
+    opts = opts || {};
+    if (!logQuote || !logQuote.inicializado) return false;
+    if (logQuote.abierta && !opts.forzar) return false;
+    const c = logComisionAsegurar_();
+    const d = logComisionDesdeCostos_();
+    const desviada = Math.abs((Number(c.pct) || 0) - (Number(c.pctBase) || 0)) > 0.001
+        || (c.porEsc && Object.keys(c.porEsc).length)
+        || (c.valorManual && Object.keys(c.valorManual).length);
+    if (desviada && !opts.forzar) return false;
+    const mismo = Math.abs((Number(c.pct) || 0) - d.pct) < 0.001
+        && Math.abs((Number(c.pctBase) || 0) - d.pct) < 0.001
+        && Math.abs((Number(c.fee) || 0) - d.fee) < 0.001
+        && String(c.nombre || "") === String(d.nombre || "");
+    if (mismo) return false;
+    c.pct = d.pct;
+    c.pctBase = d.pct;
+    c.fee = d.fee;
+    c.nombre = d.nombre;
+    c.valorManual = null;
+    c.porEsc = {};
+    return true;
 }
 
 function logComisionNormalizar_(o) {
@@ -6909,8 +6953,15 @@ let logOtro = { lista: [], q: "", id: "", payload: null, selElem: {} };
 
 function logCodigoDePayload_(p) {
     const cab = (p && p.cabecera) || {};
+    /* Preferir noProyecto (código limpio); nombreProyecto puede traer «17717-B 17661-B TITULO». */
+    const id = String(cab.noProyecto || "").trim();
+    if (id && !/\s/.test(id)) return id;
+    if (typeof codigoOportunidadLimpio_ === "function") {
+        const limpio = codigoOportunidadLimpio_(id || cab.nombreProyecto || "");
+        if (limpio) return limpio;
+    }
     const nom = String(cab.nombreProyecto || cab.noProyecto || "").trim();
-    return (nom.split(/\s+/)[0] || String(cab.noProyecto || "")).trim();
+    return (nom.split(/\s+/)[0] || "").trim();
 }
 
 function logVersionesDePayload_(p) {

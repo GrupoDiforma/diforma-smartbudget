@@ -148,9 +148,20 @@ function calcularPreciosVersion_(ver) {
 function actualizarSimuladorFinanciero() {
     const panel = document.getElementById('panelFinanciero');
     if (!panel) return;
-    if (!CONFIG_GLOBAL || itemsPresupuesto.length === 0) { 
-        panel.innerHTML = '<div class="col-12 text-center text-muted py-4 border rounded bg-white" style="font-size:0.85rem;">Agrega materiales a la matriz.</div>'; 
-        return; 
+    /* La matriz se restaura antes de que llegue CONFIG; no borrar la ficha con el mensaje equivocado. */
+    if (!CONFIG_GLOBAL) {
+        if (!itemsPresupuesto.length) {
+            panel.innerHTML = '<div class="col-12 text-center text-muted py-4 border rounded bg-white" style="font-size:0.85rem;">Agrega materiales a la matriz.</div>';
+        } else if (!panel.dataset.aiuEsperaCfg) {
+            panel.dataset.aiuEsperaCfg = "1";
+            panel.innerHTML = '<div class="col-12 text-center text-muted py-4 border rounded bg-white" style="font-size:0.85rem;">Cargando parámetros AIU…</div>';
+        }
+        return;
+    }
+    delete panel.dataset.aiuEsperaCfg;
+    if (itemsPresupuesto.length === 0) {
+        panel.innerHTML = '<div class="col-12 text-center text-muted py-4 border rounded bg-white" style="font-size:0.85rem;">Agrega materiales a la matriz.</div>';
+        return;
     }
 
     const trm = parseFloat(document.getElementById('simTRM')?.value) || trmActualGlobal;
@@ -334,12 +345,69 @@ function esProcesoPorPieza_(n) {
     return false;
 }
 
+/** Flag explícito false/N/0 desde JSON o UI (no pisar con heurística de nombre). */
+function esGlobalExplicitoFalse_(v) {
+    return v === false || v === "N" || v === "n" || v === 0 || v === "0" || v === "false" || v === "FALSE";
+}
+
+function esGlobalExplicitoTrue_(v) {
+    return v === true || v === "S" || v === "s" || v === 1 || v === "1" || v === "true" || v === "TRUE";
+}
+
+/** Empaque / packaging en el nombre del ítem. */
+function conceptoEsEmpaque_(n) {
+    n = String(n || "");
+    return /caja|m[aá]ster|master|corrugado|embalaje|packag|cart[oó]n\s*(doble|m[aá]ster)|huacal|estiba\s*de\s*env[ií]o/i.test(n);
+}
+
+/** La entrevista/nombre ya dice que el costo es por mueble/unidad/pieza. */
+function nombreSugierePorPieza_(n) {
+    n = String(n || "");
+    if (/por\s*(mueble|unidad|pieza|producto|expositor|display)|1\s*(caja|und|unidad)\s*por\s*(mueble|unidad|pieza|producto)/i.test(n)) return true;
+    if (/=\s*1\s*und\b|cantidad\s*1\s*und\s*por|unitario\s*por\s*(mueble|pieza)/i.test(n)) return true;
+    return false;
+}
+
+/** Lee ficha: und=1 → 1 producto/caja (costo por pieza). und>1 → varias piezas comparten caja (lote). */
+function empaqueFichaResumen_() {
+    let cajas = [];
+    try {
+        if (typeof leerFichaComercialUI === "function") {
+            const f = leerFichaComercialUI();
+            cajas = (typeof fichaEmpCajasDe_ === "function") ? fichaEmpCajasDe_(f) : (f && f.empCajas) || [];
+        } else if (typeof fichaEmpCajasDe_ === "function") {
+            cajas = fichaEmpCajasDe_({});
+        }
+    } catch (e) { cajas = []; }
+    let porPieza = false;
+    let compartido = false;
+    let hayDato = false;
+    (cajas || []).forEach(function (c) {
+        if (!c) return;
+        const und = Number(c.und);
+        const pp = Number(c.porPieza);
+        if (!(und > 0) && !(pp > 0)) return;
+        hayDato = true;
+        if (und === 1 || (pp >= 1 && !(und > 1))) porPieza = true;
+        if (und > 1) compartido = true;
+    });
+    return { hayDato: hayDato, porPieza: porPieza, compartido: compartido };
+}
+
 function nombreSugiereGlobal_(n) {
     n = String(n || "");
     if (esProcesoPorPieza_(n)) return false;
+    if (nombreSugierePorPieza_(n)) return false;
     if (/transporte|flete|fletes|transport/i.test(n)) return true;
     if (/elaboraci[oó]n de troquel|troquel litogr[aá]fico|molde de|setup\s*cnc|preparaci[oó]n (cnc|de m[aá]quina)/i.test(n)) return true;
-    if (/cajas? de cart[oó]n|caja m[aá]ster|corrugado m[aá]ster|embalaje protegido/i.test(n)) return true;
+    /* Caja/máster: solo sugiere global si la ficha dice varias piezas por caja.
+       Si es 1 caja por mueble (o no hay dato de empaque), no forzar global. */
+    if (conceptoEsEmpaque_(n)) {
+        const emp = empaqueFichaResumen_();
+        if (emp.porPieza) return false;
+        if (emp.compartido) return true;
+        return false;
+    }
     return false;
 }
 
@@ -347,7 +415,15 @@ function inferirEsGlobal_(m) {
     if (!m) return false;
     const n = String(m.nombre || "");
     if (esProcesoPorPieza_(n)) return false;
-    if (m.es_global === true || m.es_global === "S" || m.es_global === 1) return true;
+    /* Respetar decisión explícita de la IA / analista. */
+    if (esGlobalExplicitoFalse_(m.es_global)) return false;
+    if (nombreSugierePorPieza_(n)) return false;
+    if (conceptoEsEmpaque_(n)) {
+        const emp = empaqueFichaResumen_();
+        if (emp.porPieza) return false;
+        if (emp.compartido) return true;
+    }
+    if (esGlobalExplicitoTrue_(m.es_global)) return true;
     if (nombreSugiereGlobal_(n)) return true;
     if (typeof listaTarifasFijas === "function" && typeof mejorTarifaParaItem === "function" && typeof scoreCatalogo === "function") {
         const t = mejorTarifaParaItem(n, listaTarifasFijas());
@@ -720,7 +796,13 @@ function alternarEsGlobal(id, on) {
         }
         diluirCostosGlobales_(i);
     } else {
+        /* Al pasar a unitario: usar el valor de lote (costoUnitario) en cada Q, no el diluido. */
         i.es_global = false;
+        const base = Number(i.costoUnitario) || 0;
+        i.costos = i.costos || {};
+        lotesSimulacion.forEach(function (l) {
+            i.costos[l.id] = base;
+        });
     }
     renderizarTablaItems();
 }

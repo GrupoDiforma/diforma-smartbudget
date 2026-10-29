@@ -3807,29 +3807,101 @@ async function guardarConfiguracion() {
 function poblarSelectComisiones(lista) {
     const sel = document.getElementById('simComision');
     if (!sel) return;
+    const prev = sel.value;
+    const pendiente = window._comisionSesionPendiente;
     const rows = lista || parseComisiones(CONFIG_GLOBAL && CONFIG_GLOBAL.comisiones);
     sel.innerHTML = rows.map(function (c) {
         return '<option value="' + escHtml(c.pct) + '">' + escHtml(c.nombre) + ' (' + escHtml(c.pct) + '%)</option>';
     }).join('');
+    const aplicar = function (v) {
+        if (v == null || v === "") return false;
+        sel.value = String(v);
+        if (sel.value === String(v)) return true;
+        const n = parseFloat(v);
+        if (isNaN(n)) return false;
+        const hit = rows.find(function (r) { return Math.abs(Number(r.pct) - n) < 0.001; });
+        if (!hit) return false;
+        sel.value = String(hit.pct);
+        return true;
+    };
+    if (aplicar(pendiente)) window._comisionSesionPendiente = "";
+    else aplicar(prev);
+}
+
+/** Asa de esquina para estirar un modal (CSS resize no funciona bien con Bootstrap). */
+function habilitarResizeModal_(modal) {
+    const dialog = modal && modal.querySelector(".modal-dialog");
+    const content = modal && modal.querySelector(".modal-content");
+    if (!dialog || !content || content.querySelector(".sb-modal-resize")) return;
+    const hz = document.createElement("div");
+    hz.className = "sb-modal-resize";
+    hz.title = "Estirar ventana";
+    hz.setAttribute("aria-hidden", "true");
+    content.appendChild(hz);
+    hz.addEventListener("mousedown", function (e) {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = dialog.getBoundingClientRect();
+        dialog.style.margin = "0";
+        dialog.style.position = "fixed";
+        dialog.style.left = rect.left + "px";
+        dialog.style.top = rect.top + "px";
+        dialog.style.transform = "none";
+        dialog.style.maxWidth = "none";
+        dialog.style.width = rect.width + "px";
+        dialog.style.height = rect.height + "px";
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startW = rect.width;
+        const startH = rect.height;
+        hz.classList.add("is-resizing");
+        function move(ev) {
+            const nw = Math.max(560, Math.min(window.innerWidth - 12, startW + (ev.clientX - startX)));
+            const nh = Math.max(360, Math.min(window.innerHeight - 12, startH + (ev.clientY - startY)));
+            dialog.style.width = nw + "px";
+            dialog.style.height = nh + "px";
+        }
+        function up() {
+            hz.classList.remove("is-resizing");
+            document.removeEventListener("mousemove", move);
+            document.removeEventListener("mouseup", up);
+        }
+        document.addEventListener("mousemove", move);
+        document.addEventListener("mouseup", up);
+    });
 }
 
 function habilitarVentanasFlotantes() {
     document.querySelectorAll(".modal").forEach(function (modal) {
         const dialog = modal.querySelector(".modal-dialog");
         const handle = modal.querySelector(".sb-modal-header");
-        if (!dialog || !handle || handle.dataset.dragBound) return;
+        if (!dialog || !handle) return;
+        if (modal.id === "modalCatalogoConsulta") habilitarResizeModal_(modal);
+        if (handle.dataset.dragBound) return;
         handle.dataset.dragBound = "1";
         modal.addEventListener("hidden.bs.modal", function () {
+            const keepSize = modal.id === "modalCatalogoConsulta";
+            const w = keepSize ? dialog.style.width : "";
+            const h = keepSize ? dialog.style.height : "";
             dialog.style.position = "";
             dialog.style.left = "";
             dialog.style.top = "";
             dialog.style.margin = "";
             dialog.style.transform = "";
+            if (keepSize) {
+                if (w) dialog.style.width = w;
+                if (h) dialog.style.height = h;
+                dialog.style.maxWidth = "none";
+            } else {
+                dialog.style.width = "";
+                dialog.style.height = "";
+            }
             if (modal.id === "modalAdmin" && typeof poblarSelectComisiones === "function") poblarSelectComisiones();
         });
         handle.addEventListener("mousedown", function (e) {
             if (e.button !== 0) return;
-            if (e.target.closest("button, .btn-close, a, input, select, textarea")) return;
+            if (e.target.closest("button, .btn-close, a, input, select, textarea, .sb-modal-resize")) return;
             e.preventDefault();
             const rect = dialog.getBoundingClientRect();
             const dx = e.clientX - rect.left;
@@ -3839,6 +3911,8 @@ function habilitarVentanasFlotantes() {
             dialog.style.left = rect.left + "px";
             dialog.style.top = rect.top + "px";
             dialog.style.transform = "none";
+            if (!dialog.style.width) dialog.style.width = rect.width + "px";
+            if (!dialog.style.height && modal.id === "modalCatalogoConsulta") dialog.style.height = rect.height + "px";
             handle.classList.add("is-dragging");
             function move(ev) {
                 const x = Math.max(8, Math.min(ev.clientX - dx, window.innerWidth - 96));
