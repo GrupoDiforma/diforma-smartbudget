@@ -747,7 +747,7 @@
 
   <div id="loading-overlay" class="sl-loading" style="display:none"><div class="sl-loading-inner"><div class="spinner-border text-primary"></div><div class="mt-2 fw-semibold">Optimizando carga…</div></div></div>
   <div id="toast-msg" class="sl-toast"></div>
-  <input type="file" id="file-input" class="d-none" accept=".json,.load" onchange="cargarArchivoInput(event)">
+  <input type="file" id="file-input" class="d-none" accept=".load,.json,.xml,text/xml,application/xml" onchange="cargarArchivoInput(event)">
   <input type="file" id="excel-file-input" class="d-none" accept=".csv,.txt" onchange="cargarExcelCSV(event)">
 
   <div id="modal-containers" class="sl-modal draggable-modal" style="display:none">
@@ -1984,7 +1984,7 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
   <script src="smartload/viewer3d.js?v=1.0.10"></script>
-  <script src="smartload/engine.js?v=1.0.9"></script>
-  <script src="simulador3d.js?v=1.0.30"></script>
+  <script src="smartload/engine.js?v=1.0.11"></script>
+  <script src="simulador3d.js?v=1.0.31"></script>
 </body>
 </html>

@@ -506,48 +506,304 @@ async function guardarArchivo(forceSaveAs = false) {
   descargarBlob_();
 }
 
+/** Abre .load: input file es más fiable en rutas UNC/red que showOpenFilePicker. */
 async function abrirArchivo() {
+    const inp = document.getElementById("file-input");
+    if (inp) {
+        try { inp.value = ""; } catch (eClr) { /* noop */ }
+        inp.click();
+        return;
+    }
     if (window.showOpenFilePicker) {
         try {
             const [fileHandle] = await window.showOpenFilePicker({
-                types: [{ description: 'Archivos Load!', accept: {'text/xml': ['.load'], 'application/json': ['.json']} }]
+                excludeAcceptAllOption: false,
+                types: [{
+                    description: "Archivos Load!",
+                    accept: {
+                        "text/xml": [".load", ".xml"],
+                        "application/xml": [".load", ".xml"],
+                        "application/json": [".json"],
+                        "application/octet-stream": [".load"]
+                    }
+                }]
             });
-            currentFileHandle = fileHandle; 
+            currentFileHandle = fileHandle;
             const file = await fileHandle.getFile();
             cargarContenidoArchivo(file);
-        } catch(e) { console.log(e); }
-    } else {
-        document.getElementById('file-input').click();
+        } catch (e) {
+            if (e && e.name === "AbortError") return;
+            console.error(e);
+            mostrarToast("⚠️ No se pudo abrir el archivo. " + (e && e.message ? e.message : ""));
+            alert("No se pudo abrir el archivo Load!.\n" + (e && e.message ? e.message : e));
+        }
+        return;
     }
+    alert("Este navegador no permite seleccionar archivos.");
 }
 
 function cargarArchivoInput(event) {
-    const file = event.target.files[0]; 
-    if (!file) return; 
-    currentFileHandle = null; 
+    const file = event.target.files[0];
+    if (!file) return;
+    currentFileHandle = null;
     cargarContenidoArchivo(file);
 }
 
+function loadXmlTagName_(node) {
+    const raw = (node && (node.localName || node.nodeName || node.tagName)) || "";
+    return String(raw).replace(/^.*:/, "").toLowerCase();
+}
+
+/** Hijos elemento directos (XML: children a veces vacío → usar childNodes). */
+function loadXmlDirectChildren_(parent, tagName) {
+    const out = [];
+    if (!parent) return out;
+    const want = String(tagName || "").toLowerCase();
+    const nodes = parent.childNodes || [];
+    for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (!n || n.nodeType !== 1) continue;
+        if (loadXmlTagName_(n) === want) out.push(n);
+    }
+    return out;
+}
+
+/** Contenedores reales de Load! (hijos de <load>), no los <container ref> de <package>. */
+function loadXmlTopContainers_(xmlDoc) {
+    const root = xmlDoc && xmlDoc.documentElement;
+    if (!root) return [];
+    let list = loadXmlDirectChildren_(root, "container").filter(function (n) {
+        return !!(n.getAttribute("id") || n.getElementsByTagName("width").length);
+    });
+    if (list.length) return list;
+    /* Fallback: cualquier container con width (por si el árbol viene raro). */
+    return Array.from(xmlDoc.getElementsByTagName("container")).filter(function (n) {
+        return n.getElementsByTagName("width").length > 0;
+    });
+}
+
+function loadXmlTipoKey_(typeStr) {
+    const str = String(typeStr || "").toLowerCase();
+    if (str.includes("high cube") || str.includes("hc")) return "40hc";
+    if (str.includes("20")) return "20ft";
+    if (str.includes("40")) return "40ft";
+    return "40ft";
+}
+
+function loadXmlChildText_(node, tag) {
+    if (!node) return "";
+    const want = String(tag || "").toLowerCase();
+    const kids = node.childNodes || [];
+    for (let i = 0; i < kids.length; i++) {
+        const n = kids[i];
+        if (!n || n.nodeType !== 1) continue;
+        if (loadXmlTagName_(n) === want) {
+            return n.textContent != null ? String(n.textContent).trim() : "";
+        }
+    }
+    const el = node.getElementsByTagName(tag)[0];
+    return el && el.textContent != null ? String(el.textContent).trim() : "";
+}
+
+function loadXmlHasFlag_(node, tag) {
+    if (!node) return false;
+    const want = String(tag || "").toLowerCase();
+    const kids = node.childNodes || [];
+    for (let i = 0; i < kids.length; i++) {
+        const n = kids[i];
+        if (n && n.nodeType === 1 && loadXmlTagName_(n) === want) return true;
+    }
+    return node.getElementsByTagName(tag).length > 0;
+}
+
+/** True si el archivo ya trae colocación útil (no solo qty clonada en 0,0,0). */
+function loadTieneColocacion_(insts) {
+    if (!insts || !insts.length) return false;
+    const placed = insts.filter(function (inst) { return (Number(inst.drawW) || 0) > 0; });
+    if (!placed.length) return false;
+    const conts = {};
+    placed.forEach(function (inst) { conts[inst.contIdx] = true; });
+    if (Object.keys(conts).length > 1) return true;
+    if (placed.some(function (inst) {
+        return Math.abs(Number(inst.x) || 0) > 0.01
+            || Math.abs(Number(inst.y) || 0) > 0.01
+            || Math.abs(Number(inst.z) || 0) > 0.01;
+    })) return true;
+    return placed.length === 1;
+}
+
+function loadStripBom_(text) {
+    let s = String(text == null ? "" : text);
+    if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1);
+    return s;
+}
+
+function loadEsXmlLoad_(text) {
+    const head = loadStripBom_(text).trim().slice(0, 400).toLowerCase();
+    return head.indexOf("<load") >= 0 || (head.indexOf("<?xml") >= 0 && String(text).toLowerCase().indexOf("<load") >= 0);
+}
+
+function loadImportarContenedorNodo_(cNode, index, contIdMap) {
+    const cId = cNode.getAttribute("id") || ("c" + (index + 1));
+    const cTypeStr = loadXmlChildText_(cNode, "type");
+    const tipoKey = loadXmlTipoKey_(cTypeStr);
+    const xmlW = (parseInt(loadXmlChildText_(cNode, "width"), 10) || 0) / 10;
+    const xmlH = (parseInt(loadXmlChildText_(cNode, "height"), 10) || 0) / 10;
+    const xmlD = (parseInt(loadXmlChildText_(cNode, "length"), 10) || 0) / 10;
+    const xmlMaxWgt = parseInt(loadXmlChildText_(cNode, "maxload"), 10) || 0;
+    const cont = crearContenedor(tipoKey);
+    cont.nombre = cTypeStr || cont.nombre;
+    if (xmlW > 0) cont.w = xmlW;
+    if (xmlH > 0) cont.h = xmlH;
+    if (xmlD > 0) cont.d = xmlD;
+    if (xmlMaxWgt > 0) cont.maxWeight = xmlMaxWgt;
+    cont.maxVol = (cont.w * cont.h * cont.d) / 1000000;
+    contenedoresFisicos.push(cont);
+    contIdMap[cId] = index;
+}
+
+function loadImportarPackingItemNodo_(node, contIdMap) {
+    const desc = loadXmlChildText_(node, "description") || "Item Load!";
+    const w = (parseInt(loadXmlChildText_(node, "width"), 10) || 0) / 10;
+    const h = (parseInt(loadXmlChildText_(node, "height"), 10) || 0) / 10;
+    const d = (parseInt(loadXmlChildText_(node, "depth"), 10) || 0) / 10;
+    const weight = parseFloat(loadXmlChildText_(node, "weight")) || 0;
+    const shape = loadShapeExport_(loadXmlChildText_(node, "shape") || "box");
+    const colorIdx = parseInt(loadXmlChildText_(node, "colorindex"), 10) || 0;
+    const colorObj = colorPalette.find(function (c) { return c.index === colorIdx; }) || colorPalette[0];
+    const noTilt = loadXmlHasFlag_(node, "notilt");
+    const noTurn = loadXmlHasFlag_(node, "noturn");
+    const floor = loadXmlHasFlag_(node, "floor") || loadXmlHasFlag_(node, "bottommost");
+    const packages = node.getElementsByTagName("package");
+    const qty = packages.length > 0 ? packages.length : 1;
+    const itemId = generateUUID();
+    listaEmpaque.push({
+        id: itemId, shape: shape, qty: qty, desc: desc,
+        w: w, d: d, h: h, weight: weight, color: colorObj.hex,
+        noTilt: noTilt, noTurn: noTurn, onFloor: floor, dangerous: false
+    });
+    if (!packages.length) return;
+    Array.from(packages).forEach(function (pkg) {
+        const contEl = pkg.getElementsByTagName("container")[0];
+        const cRef = contEl ? contEl.getAttribute("ref") : null;
+        let dirRaw = loadXmlChildText_(pkg, "direction");
+        let dir = parseInt(dirRaw, 10);
+        if (!dir || dir < 1 || dir > 6) dir = 1;
+        const posX = (parseInt(loadXmlChildText_(pkg, "position-x"), 10) || 0) / 10;
+        const posY = (parseInt(loadXmlChildText_(pkg, "position-y"), 10) || 0) / 10;
+        const posZ = (parseInt(loadXmlChildText_(pkg, "position-z"), 10) || 0) / 10;
+        const dims = loadDrawDims_(w, h, d, dir);
+        const contIdx = contIdMap[cRef] !== undefined ? contIdMap[cRef] : 0;
+        const inst = {
+            uuid: generateUUID(), groupId: itemId, shape: shape,
+            w: w, h: h, d: d,
+            drawW: dims.dw, drawH: dims.dh, drawD: dims.dd,
+            x: posX, y: posY, z: posZ,
+            weight: weight, color: colorObj.hex,
+            noTilt: noTilt, noTurn: noTurn, onFloor: floor,
+            locked: false, contIdx: contIdx
+        };
+        instanciasCajas.push(inst);
+        const targetCont = contenedoresFisicos[contIdx];
+        if (targetCont) {
+            targetCont.cajas.push(inst);
+            targetCont.pesoActual += inst.weight || 0;
+            targetCont.volActual += (inst.drawW * inst.drawH * inst.drawD) / 1000000;
+            if (inst.z + inst.drawD > targetCont.lenUsada) targetCont.lenUsada = inst.z + inst.drawD;
+        }
+    });
+}
+
+function loadParseXmlLoadDoc_(fileContent) {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(loadStripBom_(fileContent), "text/xml");
+    const parseErr = xmlDoc.getElementsByTagName("parsererror")[0];
+    if (parseErr) throw new Error("XML Load! inválido");
+    contenedoresFisicos = [];
+    listaEmpaque = [];
+    instanciasCajas = [];
+    const contIdMap = {};
+    const contNodes = loadXmlTopContainers_(xmlDoc);
+    contNodes.forEach(function (cNode, index) {
+        loadImportarContenedorNodo_(cNode, index, contIdMap);
+    });
+    let itemNodes = Array.from(xmlDoc.getElementsByTagName("packinglistitem"));
+    if (!itemNodes.length && xmlDoc.getElementsByTagNameNS) {
+        itemNodes = Array.from(xmlDoc.getElementsByTagNameNS("*", "packinglistitem"));
+    }
+    itemNodes.forEach(function (node) {
+        loadImportarPackingItemNodo_(node, contIdMap);
+    });
+    if (!listaEmpaque.length) {
+        throw new Error("El .load no trae packinglistitem (¿archivo vacío o de otra versión?)");
+    }
+}
+
+function finalizarCargaArchivo_(fileName, preservarColocacion) {
+    if (!Array.isArray(contenedoresFisicos)) contenedoresFisicos = [];
+    if (contenedoresFisicos.length === 0) {
+        const ribbon = document.getElementById("ribbon-cont-type");
+        const defaultType = (ribbon && ribbon.value) || "40ft";
+        contenedoresFisicos.push(crearContenedor(defaultType));
+    }
+    const fnEl = document.getElementById("save-filename");
+    if (fnEl) {
+        fnEl.value = String(fileName || "MiCargaLoad").replace(/\.[^/.]+$/, "");
+        fnEl.dataset.slUserEdit = "1";
+    }
+    const fileInp = document.getElementById("file-input");
+    if (fileInp) fileInp.value = "";
+    const ribbonEl = document.getElementById("ribbon-cont-type");
+    if (ribbonEl && contenedoresFisicos[0] && contenedoresFisicos[0].tipoKey) {
+        try { ribbonEl.value = contenedoresFisicos[0].tipoKey; } catch (eR) { /* noop */ }
+    }
+    actualizarTabla();
+    if (typeof window.slAfterAbrirLoad === "function") {
+        try { window.slAfterAbrirLoad({ fileName: fileName }); } catch (eSl) { console.warn(eSl); }
+    } else if (typeof window.slAfterOptimizar === "function") {
+        try { window.slAfterOptimizar(); } catch (eAf) { /* noop */ }
+    }
+    if (preservarColocacion && loadTieneColocacion_(instanciasCajas)) {
+        actualizarMetricasGlobales();
+        actualizarUIContenedores();
+        mostrarToast("✅ " + (listaEmpaque.length) + " ítem(s) Load! abiertos (posiciones preservadas).");
+        return;
+    }
+    mostrarToast("📥 " + listaEmpaque.length + " ítem(s) cargados. Optimizando…");
+    optimizarCarga();
+}
+
 function cargarContenidoArchivo(file) {
+  if (!file) {
+      mostrarToast("⚠️ No se recibió archivo.");
+      return;
+  }
+  mostrarToast("📂 Leyendo " + (file.name || "archivo") + "…");
   const reader = new FileReader();
+  reader.onerror = function () {
+      console.error("FileReader error", reader.error);
+      alert("No se pudo leer el archivo (¿ruta de red sin permiso?).\nPrueba copiarlo al escritorio y abrirlo de nuevo.");
+      mostrarToast("⚠️ Error leyendo el archivo.");
+  };
   reader.onload = function(e) {
     try {
-      let fileContent = e.target.result;
+      let fileContent = loadStripBom_(e.target.result);
+      let preservar = false;
       if (fileContent.includes("<!-- DiformaSmartLoadData")) {
-          let jsonStr = fileContent.split("<!-- DiformaSmartLoadData")[1].split("-->")[0].trim(); 
+          let jsonStr = fileContent.split("<!-- DiformaSmartLoadData")[1].split("-->")[0].trim();
           let parsedData = JSON.parse(jsonStr);
-          if(parsedData.dbContenedores) { dbContenedores = parsedData.dbContenedores; updateAllContDropdowns(); }
-          listaEmpaque = parsedData.listaEmpaque || []; 
-          instanciasCajas = parsedData.instanciasCajas || []; 
+          if (parsedData.dbContenedores) { dbContenedores = parsedData.dbContenedores; updateAllContDropdowns(); }
+          listaEmpaque = parsedData.listaEmpaque || [];
+          instanciasCajas = parsedData.instanciasCajas || [];
           contenedoresFisicos = [];
-          if(parsedData.contenedoresFisicos) { 
-              parsedData.contenedoresFisicos.forEach(c => {
-                  if (typeof c === 'string') {
+          if (parsedData.contenedoresFisicos) {
+              parsedData.contenedoresFisicos.forEach(function (c) {
+                  if (typeof c === "string") {
                       contenedoresFisicos.push(crearContenedor(c));
                   } else {
                       contenedoresFisicos.push({
-                          tipoKey: c.tipoKey || '40ft',
-                          nombre: c.nombre || 'Container',
+                          tipoKey: c.tipoKey || "40ft",
+                          nombre: c.nombre || "Container",
                           w: parseFloat(c.w || 233),
                           h: parseFloat(c.h || 239),
                           d: parseFloat(c.d || 1201),
@@ -556,106 +812,32 @@ function cargarContenidoArchivo(file) {
                           cajas: [], pesoActual: 0, volActual: 0, lenUsada: 0
                       });
                   }
-              }); 
+              });
           }
-          instanciasCajas.forEach(inst => { 
-              let tc = contenedoresFisicos[inst.contIdx]; 
-              if(tc) { 
-                  tc.cajas.push(inst); 
-                  tc.pesoActual += inst.weight || 0; 
-                  tc.volActual += (inst.drawW * inst.drawH * inst.drawD) / 1000000; 
-                  if (inst.z + inst.drawD > tc.lenUsada) tc.lenUsada = inst.z + inst.drawD; 
-              } 
-          });
-      } else if (fileContent.trim().startsWith("<?xml") || fileContent.trim().startsWith("<load")) {
-          const parser = new DOMParser(); 
-          const xmlDoc = parser.parseFromString(fileContent, "text/xml");
-          let contNodes = xmlDoc.getElementsByTagName("container"); 
-          contenedoresFisicos = []; 
-          let contIdMap = {}; 
-          Array.from(contNodes).forEach((cNode, index) => {
-              let cId = cNode.getAttribute("id"); 
-              let cTypeStr = cNode.getElementsByTagName("type")[0]?.textContent || "";
-              let tipoKey = '40ft'; 
-              let str = cTypeStr.toLowerCase(); 
-              if (str.includes("high cube") || str.includes("hc")) tipoKey = '40hc'; 
-              else if (str.includes("20")) tipoKey = '20ft'; 
-              else if (str.includes("40")) tipoKey = '40ft';
-              
-              let xmlW = parseInt(cNode.getElementsByTagName("width")[0]?.textContent || 0) / 10; 
-              let xmlH = parseInt(cNode.getElementsByTagName("height")[0]?.textContent || 0) / 10; 
-              let xmlD = parseInt(cNode.getElementsByTagName("length")[0]?.textContent || 0) / 10; 
-              let xmlMaxWgt = parseInt(cNode.getElementsByTagName("maxload")[0]?.textContent || 0);
-              
-              let cont = crearContenedor(tipoKey); 
-              cont.nombre = cTypeStr || cont.nombre; 
-              if (xmlW > 0) cont.w = xmlW; 
-              if (xmlH > 0) cont.h = xmlH; 
-              if (xmlD > 0) cont.d = xmlD; 
-              if (xmlMaxWgt > 0) cont.maxWeight = xmlMaxWgt;
-              cont.maxVol = (cont.w * cont.h * cont.d) / 1000000; 
-              contenedoresFisicos.push(cont); 
-              contIdMap[cId] = index;
-          });
-          const itemNodes = xmlDoc.getElementsByTagName("packinglistitem"); 
-          listaEmpaque = []; 
-          instanciasCajas = [];
-          Array.from(itemNodes).forEach(node => {
-              let desc = node.getElementsByTagName("description")[0]?.textContent || "Item Load!"; 
-              let w = parseInt(node.getElementsByTagName("width")[0]?.textContent || 0) / 10; 
-              let h = parseInt(node.getElementsByTagName("height")[0]?.textContent || 0) / 10; 
-              let d = parseInt(node.getElementsByTagName("depth")[0]?.textContent || 0) / 10; 
-              let shape = node.getElementsByTagName("shape")[0]?.textContent || "box";
-              let colorIdx = parseInt(node.getElementsByTagName("colorindex")[0]?.textContent || 0); 
-              let colorObj = colorPalette.find(c => c.index === colorIdx) || colorPalette[0];
-              let noTilt = node.getElementsByTagName("notilt").length > 0; 
-              let noTurn = node.getElementsByTagName("noturn").length > 0; 
-              let floor = node.getElementsByTagName("floor").length > 0 || node.getElementsByTagName("bottommost").length > 0;
-              let packages = node.getElementsByTagName("package"); 
-              let qty = packages.length > 0 ? packages.length : 1; 
-              let itemId = generateUUID();
-              listaEmpaque.push({ id: itemId, shape: shape, qty: qty, desc: desc, w: w, d: d, h: h, weight: 0, color: colorObj.hex, noTilt: noTilt, noTurn: noTurn, onFloor: floor, dangerous: false });
-              if (packages.length > 0) {
-                  Array.from(packages).forEach(pkg => {
-                      let cRef = pkg.getElementsByTagName("container")[0]?.getAttribute("ref"); 
-                      let dir = parseInt(pkg.getElementsByTagName("direction")[0]?.textContent || 1); 
-                      let posX = parseInt(pkg.getElementsByTagName("position-x")[0]?.textContent || 0) / 10; 
-                      let posY = parseInt(pkg.getElementsByTagName("position-y")[0]?.textContent || 0) / 10; 
-                      let posZ = parseInt(pkg.getElementsByTagName("position-z")[0]?.textContent || 0) / 10;
-                      let drawW = w, drawH = h, drawD = d; 
-                      if (dir === 2) { drawW = d; drawH = h; drawD = w; } 
-                      else if (dir === 3) { drawW = w; drawH = d; drawD = h; } 
-                      else if (dir === 4) { drawW = d; drawH = w; drawD = h; } 
-                      else if (dir === 5) { drawW = h; drawH = w; drawD = d; } 
-                      else if (dir === 6) { drawW = h; drawH = d; drawD = w; }
-                      let contIdx = contIdMap[cRef] !== undefined ? contIdMap[cRef] : 0;
-                      let inst = { uuid: generateUUID(), groupId: itemId, shape: shape, w: w, h: h, d: d, drawW: drawW, drawH: drawH, drawD: drawD, x: posX, y: posY, z: posZ, weight: 0, color: colorObj.hex, locked: false, contIdx: contIdx };
-                      instanciasCajas.push(inst);
-                      let targetCont = contenedoresFisicos[contIdx]; 
-                      if(targetCont) { 
-                          targetCont.cajas.push(inst); 
-                          targetCont.pesoActual += inst.weight; 
-                          targetCont.volActual += (inst.drawW * inst.drawH * inst.drawD) / 1000000; 
-                          if (inst.z + inst.drawD > targetCont.lenUsada) targetCont.lenUsada = inst.z + inst.drawD; 
-                      }
-                  });
+          instanciasCajas.forEach(function (inst) {
+              let tc = contenedoresFisicos[inst.contIdx];
+              if (tc) {
+                  tc.cajas.push(inst);
+                  tc.pesoActual += inst.weight || 0;
+                  tc.volActual += (inst.drawW * inst.drawH * inst.drawD) / 1000000;
+                  if (inst.z + inst.drawD > tc.lenUsada) tc.lenUsada = inst.z + inst.drawD;
               }
           });
+          preservar = true;
+      } else if (loadEsXmlLoad_(fileContent)) {
+          loadParseXmlLoadDoc_(fileContent);
+          preservar = true;
+      } else {
+          throw new Error("Formato no reconocido (se espera .load XML de Load! o con datos SmartLoad)");
       }
-      contenedoresFisicos = contenedoresFisicos.filter(c => c.cajas.length > 0);
-      if (contenedoresFisicos.length === 0) { 
-          let defaultType = document.getElementById('ribbon-cont-type').value || '40ft'; 
-          contenedoresFisicos.push(crearContenedor(defaultType)); 
-      }
-      document.getElementById('save-filename').value = file.name.replace(/\.[^/.]+$/, ""); 
-      document.getElementById('file-input').value = ''; 
-      if(contenedoresFisicos.length > 0) { 
-          document.getElementById('ribbon-cont-type').value = contenedoresFisicos[0].tipoKey; 
-      }
-      actualizarTabla(); 
-      optimizarCarga(); 
-    } catch(err) { alert("Error leyendo archivo. Asegúrate de que el formato sea válido."); console.error(err); }
-  }; reader.readAsText(file);
+      finalizarCargaArchivo_(file && file.name, preservar);
+    } catch (err) {
+        console.error(err);
+        mostrarToast("⚠️ Error al abrir .load");
+        alert("Error leyendo archivo Load!.\n" + (err && err.message ? err.message : err));
+    }
+  };
+  reader.readAsText(file);
 }
 
 function obtenerRotaciones(caja) {

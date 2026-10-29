@@ -2561,6 +2561,36 @@
             guardarEscenarioActivo_();
             actualizarResumenAgrupLive_();
         };
+        /** Tras Abrir .load: guarda el packing importado en la opción activa (no lo regenera desde Agrupación). */
+        window.slAfterAbrirLoad = function () {
+            try {
+                if (!slEscenarios.length) {
+                    slEscenarios = [{
+                        id: "load_import",
+                        nombre: "Load!",
+                        logEscId: null,
+                        cajasCrudas: [],
+                        listaEmpaque: [],
+                        instanciasCajas: [],
+                        contenedoresFisicos: [],
+                        mixSugerido: { c20: 0, c40: 0, c40hc: 0 },
+                        modularizado: false,
+                        agrupaciones: [],
+                        loadLetra: "C",
+                        loadVer: "V1"
+                    }];
+                    slEscActivo = 0;
+                }
+                guardarEscenarioActivo_();
+                pintarTabsEscenarios_();
+                pintarListaModulos_();
+                actualizarResumenAgrupLive_();
+                actualizarNombreLoadUI_();
+                if (typeof window.slPersistirEnEnv === "function") {
+                    try { window.slPersistirEnEnv(); } catch (eP) { /* noop */ }
+                }
+            } catch (eAl) { console.warn("slAfterAbrirLoad", eAl); }
+        };
         window.slRebuildModulosPreview = function () {
             setModoVista_("contenedor");
             if (typeof construirEscena3D === "function") construirEscena3D();
