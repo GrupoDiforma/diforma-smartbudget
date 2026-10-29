@@ -533,9 +533,37 @@ body.logistica-activa {
 }
 .log-cubica b { display: block; font-size: 0.68rem; letter-spacing: .04em; text-transform: uppercase; color: #6b6b6b; }
 .log-cubica .log-cubica-num { font-weight: 700; }
-.log-cubica .log-cubica-edit { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.log-cubica .log-cubica-edit { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; align-items: flex-end; }
 .log-cubica .log-cubica-edit label { display: flex; flex-direction: column; gap: 2px; font-size: 0.68rem; letter-spacing: .04em; text-transform: uppercase; color: #6b6b6b; }
 .log-cubica .log-cubica-edit input { width: 7.2rem; text-transform: none; letter-spacing: 0; }
+.log-cub-fact {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 7.2rem;
+    padding: 4px 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    background: #f8fafc;
+}
+.log-cub-fact-lab {
+    font-size: 0.68rem;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: #6b6b6b;
+    font-weight: 600;
+}
+.log-cub-fact .log-cubica-num {
+    font-size: 0.92rem;
+    color: #111;
+    line-height: 1.2;
+}
+.log-cub-fact-nota {
+    font-size: 0.65rem;
+    color: #6b7280;
+    text-transform: none;
+    letter-spacing: 0;
+}
 .log-ia-box {
     background: #fbfbfb;
     border: 1px solid var(--sb-line);
@@ -1491,6 +1519,50 @@ html, body { overflow-x: hidden; }
 .cursor-pointer { cursor: pointer; }
 .table-items input, .table-items select { font-size: 0.8rem; }
 .table-items th.mtx-th { overflow: visible; position: relative; }
+.mtx-q-th { vertical-align: middle; }
+.mtx-q-head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 3px 4px 4px;
+}
+.mtx-q-top {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.mtx-q-lab { font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; }
+.mtx-econ {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    font-size: 0.62rem;
+    font-weight: 600;
+    color: #c8c8c8;
+    cursor: default;
+    line-height: 1;
+}
+.mtx-econ-menos { opacity: 0.8; }
+.mtx-econ input {
+    width: 2.4rem;
+    padding: 0 2px;
+    border: 1px solid #4a4a4a;
+    border-radius: 2px;
+    background: #111;
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.35;
+}
+.mtx-econ input:focus {
+    outline: 1px solid #90caf9;
+    border-color: #90caf9;
+}
 #tablaMatriz td.mtx-unit { overflow: visible; }
 #tablaMatriz td.mtx-unit input { width: 100%; min-width: 0; }
 #tablaMatriz td.mtx-tot {

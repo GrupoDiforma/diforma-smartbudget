@@ -104,11 +104,16 @@ function esFleteGlobal(item) {
 
 function unitarioLote(item, lote, escalas) {
     if (!item || !lote) return 0;
-    if (item.costos && item.costos[lote.id] != null && !lote.pad) return Number(item.costos[lote.id]) || 0;
+    if (item.costos && item.costos[lote.id] != null && !lote.pad) {
+        const base = Number(item.costos[lote.id]) || 0;
+        return typeof costoEfectivoItemLote_ === "function" ? costoEfectivoItemLote_(item, lote) : base;
+    }
     if (lote.pad) {
         const real = (escalas || (typeof lotesSimulacion !== "undefined" ? lotesSimulacion : [])).slice().sort(function (a, b) { return a.q - b.q; });
         const last = real[real.length - 1];
-        if (last && item.costos && item.costos[last.id] != null) return Number(item.costos[last.id]) || 0;
+        if (last && item.costos && item.costos[last.id] != null) {
+            return typeof costoEfectivoItemLote_ === "function" ? costoEfectivoItemLote_(item, last) : (Number(item.costos[last.id]) || 0);
+        }
     }
     return Number(item.costoUnitario) || 0;
 }

@@ -1,8 +1,32 @@
 let itemsPresupuesto = [];
-let lotesSimulacion = [ { id: 'l1', q: 1 } ];
+let lotesSimulacion = [ { id: 'l1', q: 1, econPct: 0 } ];
 let overridesTarjetas = {};
 let trmActualGlobal = 4150;
 const CATEGORIAS = ["Materias Primas", "Procesos Externos", "Procesos Internos", "Mano de Obra", "Empaque y Fletes", "Comercialización"];
+
+/** % de economía de escala de un lote (0–100). Por defecto 0. */
+function loteEconPct_(lt) {
+    const n = Number(lt && lt.econPct);
+    if (!isFinite(n) || n <= 0) return 0;
+    return Math.min(100, n);
+}
+
+/** Factor sobre el costo unitario: 1 = sin descuento, 0.9 = −10%. */
+function loteEconFactor_(lt) {
+    return 1 - loteEconPct_(lt) / 100;
+}
+
+function costoBaseItemLote_(item, ltId) {
+    if (item && item.costos && item.costos[ltId] !== undefined && item.costos[ltId] !== "") {
+        return Number(item.costos[ltId]) || 0;
+    }
+    return Number(item && item.costoUnitario) || 0;
+}
+
+/** Costo unitario ya con economía de escala de la columna Q. */
+function costoEfectivoItemLote_(item, lt) {
+    return costoBaseItemLote_(item, lt && lt.id) * loteEconFactor_(lt);
+}
 
 async function obtenerTRMOficial() {
     try {
@@ -80,7 +104,7 @@ function calcularPrecioLote_(items, lt, ctx, opts) {
     (items || []).forEach(i => {
         if (itemEstaCandado(i)) nCandado++;
         if (!incluirCandado && itemEstaCandado(i)) return;
-        let c = (i.costos && i.costos[lt.id] !== undefined) ? i.costos[lt.id] : (i.costoUnitario || 0);
+        let c = costoEfectivoItemLote_(i, lt);
         let s = (Number(i.cantidad) || 1) * (Number(c) || 0);
         i.categoria === "Comercialización" ? uCom += s : uFab += s;
     });
@@ -580,7 +604,21 @@ function renderizarTablaItems() {
     const merHead = mercadoEsExportacion() ? "EXP" : "NAL";
     const nCand = itemsPresupuesto.filter(itemEstaCandado).length;
     const todosCand = itemsPresupuesto.length > 0 && nCand === itemsPresupuesto.length;
-    lotesSimulacion.forEach(lt => th += `<th colspan="2" class="text-center" style="background:#1a1a1a; color:#e5e5e5;">Q: ${lt.q} · ${merHead} <i class="bi bi-x-circle text-danger ms-1 cursor-pointer" onclick="eliminarLote('${lt.id}')"></i></th>`);
+    lotesSimulacion.forEach(lt => {
+        const ep = loteEconPct_(lt);
+        const epAttr = ep ? String(ep) : "0";
+        th += `<th colspan="2" class="text-center mtx-q-th" style="background:#1a1a1a; color:#e5e5e5;">` +
+            `<div class="mtx-q-head">` +
+            `<div class="mtx-q-top">` +
+            `<span class="mtx-q-lab">Q: ${lt.q} · ${merHead}</span>` +
+            `<i class="bi bi-x-circle text-danger cursor-pointer" title="Quitar este rango" onclick="eliminarLote('${lt.id}')"></i>` +
+            `</div>` +
+            `<label class="mtx-econ" title="Economía de escala (−% sobre todos los $ UNIT. de esta Q). 0 = sin descuento." onclick="event.stopPropagation()">` +
+            `<span class="mtx-econ-menos">−</span>` +
+            `<input type="number" min="0" max="100" step="0.1" value="${epAttr}" onchange="actualizarEconLote('${lt.id}',this.value)" onclick="event.stopPropagation()">` +
+            `<span>%</span></label>` +
+            `</div></th>`;
+    });
     th += `<th rowspan="2" class="text-center mtx-lock-th" title="${todosCand ? "Clic: liberar toda la matriz" : "Clic: candar toda la matriz (no suman; se conservan los valores)"}" style="width:36px;" onclick="alternarCandadosMasivo()"><i class="bi ${todosCand ? "bi-lock-fill" : "bi-unlock"} mtx-lock-head${todosCand ? " mtx-lock-on" : ""}"></i></th><th rowspan="2" class="text-center" style="width:35px;"><i class="bi bi-trash"></i></th></tr><tr>`;
     lotesSimulacion.forEach((lt, i) => {
         const ids = idsUnitTotalLote_(lt, i);
@@ -616,11 +654,13 @@ function renderizarTablaItems() {
             <td><select class="form-select form-select-sm px-1" onchange="actualizarCampo(${i.id},'um',this.value)">${(i.um && !umList.some(u=>u.trim()===i.um)?[i.um,...umList]:umList).map(u=>`<option ${i.um===u.trim()?'selected':''}>${u.trim()}</option>`).join('')}</select></td>
             <td class="mtx-glob">${celdaCostoLote_(i)}</td>`;
         lotesSimulacion.forEach(lt => {
-            let v = i.costos[lt.id] || 0;
-            const unitVal = i.es_global ? (Math.round(v * 100) / 100) : v;
+            const base = costoBaseItemLote_(i, lt.id);
+            const v = costoEfectivoItemLote_(i, lt);
+            const unitVal = i.es_global ? (Math.round(v * 100) / 100) : (Math.round(v * 100) / 100);
             const unitAttr = i.es_global ? "disabled" : "";
-            tb += `<td class="mtx-unit" style="border-left:2px solid #cbd5e1;"><input type="number" step="0.01" class="form-control form-control-sm text-center fw-bold text-primary px-1" value="${unitVal}" ${unitAttr} onchange="actualizarCostoItem(${i.id},'${lt.id}',this.value)"></td>
-            <td class="mtx-tot text-end fw-bold align-middle">$${((v*i.cantidad)||0).toLocaleString('es-CO',{maximumFractionDigits: (Math.abs(v*i.cantidad) < 100 ? 2 : 0)})}</td>`;
+            const tot = (v * (Number(i.cantidad) || 0)) || 0;
+            tb += `<td class="mtx-unit" style="border-left:2px solid #cbd5e1;"><input type="number" step="0.01" class="form-control form-control-sm text-center fw-bold text-primary px-1" value="${unitVal}" ${unitAttr} title="${loteEconPct_(lt) ? ("Base " + (Math.round(base * 100) / 100) + " · −" + loteEconPct_(lt) + "%") : "Costo unitario"}" onchange="actualizarCostoItem(${i.id},'${lt.id}',this.value)"></td>
+            <td class="mtx-tot text-end fw-bold align-middle">$${tot.toLocaleString('es-CO',{maximumFractionDigits: (Math.abs(tot) < 100 ? 2 : 0)})}</td>`;
         });
         tb += `<td class="text-center align-middle"><i class="bi ${itemEstaCandado(i) ? "bi-lock-fill" : "bi-unlock"} mtx-lock" title="${itemEstaCandado(i) ? "Liberar: vuelve a sumar" : "Candar: no suma; conserva el valor"}" onclick="alternarCandado(${i.id})"></i></td><td class="text-center align-middle"><i class="bi bi-trash text-danger cursor-pointer fs-6" onclick="eliminarItem(${i.id})"></i></td></tr>`;
     });
@@ -754,7 +794,7 @@ function confirmarNuevoRango() {
     lotesSimulacion.forEach(l => { if (l.q < q && l.q > closestQ) { closestQ = l.q; closestId = l.id; } });
     
     let nId = 'l_'+Date.now();
-    lotesSimulacion.push({id: nId, q: q}); 
+    lotesSimulacion.push({ id: nId, q: q, econPct: 0 });
     lotesSimulacion.sort((a,b)=>a.q-b.q);
     
     itemsPresupuesto.forEach(i => {
@@ -767,7 +807,28 @@ function confirmarNuevoRango() {
 }
 
 function eliminarLote(id) { if(lotesSimulacion.length<=1) return; lotesSimulacion = lotesSimulacion.filter(l=>l.id!==id); renderizarTablaItems(); }
-function actualizarCostoItem(iId, lId, val) { let item = itemsPresupuesto.find(i=>i.id===iId); if(item) { item.costos[lId] = parseFloat(val)||0; renderizarTablaItems(); } }
+
+/** Economía de escala de la columna Q: rebaja masiva sobre el costo unitario (factor vivo). */
+function actualizarEconLote(id, val) {
+    const lt = lotesSimulacion.find(function (l) { return l.id === id; });
+    if (!lt) return;
+    const n = parseFloat(String(val).replace(",", "."));
+    lt.econPct = (!isFinite(n) || n <= 0) ? 0 : Math.min(100, n);
+    renderizarTablaItems();
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+function actualizarCostoItem(iId, lId, val) {
+    const item = itemsPresupuesto.find(function (i) { return i.id === iId; });
+    if (!item) return;
+    const lt = lotesSimulacion.find(function (l) { return l.id === lId; });
+    const f = loteEconFactor_(lt);
+    const entered = parseFloat(val) || 0;
+    /* La celda muestra el efectivo; al editar se guarda la base sin el % de economía. */
+    item.costos = item.costos || {};
+    item.costos[lId] = f > 0 ? (entered / f) : entered;
+    renderizarTablaItems();
+}
 function celdaCostoLote_(i) {
     const glob = !!i.es_global;
     return '<div class="mtx-glob-wrap">' +
@@ -859,7 +920,7 @@ window.aplicarRangosDesdeIA = function(rangos) {
     let qs = Array.isArray(rangos) ? rangos.map(Number).filter(q => q > 0) : [];
     if (!qs.length) qs = [1, 50, 100];
     qs = [...new Set(qs)].sort((a, b) => a - b);
-    lotesSimulacion = qs.map(q => ({ id: 'l_' + q, q }));
+    lotesSimulacion = qs.map(q => ({ id: 'l_' + q, q: q, econPct: 0 }));
 };
 
 window.reemplazarMatrizDesdeIA = function(nuevaMatriz) {

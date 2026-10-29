@@ -891,6 +891,14 @@ function logisticaRefrescarFilaDesdeCostos_(fila, opts) {
         pctCom: origen.pct,
         feeCom: origen.fee
     };
+    /* Partida: preferir la de la ficha viva de Costos; si no, conservar la de la cotización. */
+    const partFicha = logPartidaFmt_((ficha && ficha.partida) || "");
+    if (partFicha) {
+        fila.partida = partFicha;
+        fila.snap.ficha.partida = partFicha;
+    } else if (typeof fila.partida === "string" && fila.partida) {
+        fila.snap.ficha.partida = logPartidaFmt_(fila.partida);
+    }
     /* solo suelta precios/cantidades escritos a mano; conserva textos y opc/excl */
     if (fila.over) {
         Object.keys(fila.over).forEach(function (k) {
@@ -1404,7 +1412,15 @@ function logEnvEsc_(escId) {
     if (!escId) return null;
     if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
     if (!e.porEsc[escId]) e.porEsc[escId] = logEnvEscSemilla_(e);
-    else e.porEsc[escId] = logEnvEscNorm_(e.porEsc[escId], e);
+    else {
+        /* Normalizar sin pisar modalidad propia con el global de la pestaña activa. */
+        const raw = e.porEsc[escId];
+        const base = Object.assign({}, e, {
+            modalidad: raw.modalidad != null ? raw.modalidad : e.modalidad,
+            incoterm: raw.incoterm != null ? raw.incoterm : e.incoterm
+        });
+        e.porEsc[escId] = logEnvEscNorm_(raw, base);
+    }
     return e.porEsc[escId];
 }
 function logEscKeyTipo_(tipo) {
@@ -2415,36 +2431,76 @@ function logEnvFirma_(e, exterior) {
     return (exterior ? "x" : "n") + "|" + e.modalidad + "|" + e.incoterm;
 }
 
+/** Tipos de costo de TODAS las opciones (p. ej. courier + aéreo). Así no se borran líneas al saltar de modalidad. */
+function logEnvTiposUnion_(exterior) {
+    const e = logEnv_();
+    const escs = logEscList_();
+    const out = [];
+    const add_ = function (tipos) {
+        (tipos || []).forEach(function (t) {
+            if (!t || t === "libre") return;
+            if (out.indexOf(t) < 0) out.push(t);
+        });
+    };
+    if (!escs.length) {
+        add_(logEnvTiposActivos_(e.modalidad, e.incoterm, exterior));
+    } else {
+        escs.forEach(function (esc) {
+            const v = logEnvVistaEsc_(esc.id);
+            add_(logEnvTiposActivos_(v.modalidad, v.incoterm, exterior));
+        });
+    }
+    /* Conservar tipos ya presentes o con valor guardado (t:tipo), aunque la modalidad
+       de una opción se lea mal al saltar de pestaña. */
+    (e.lineas || []).forEach(function (ln) { if (ln && ln.tipo) add_([ln.tipo]); });
+    if (e.porEsc && typeof e.porEsc === "object") {
+        Object.keys(e.porEsc).forEach(function (k) {
+            const st = e.porEsc[k];
+            if (!st || !st.valores) return;
+            Object.keys(st.valores).forEach(function (key) {
+                if (key.indexOf("t:") === 0) add_([key.slice(2)]);
+            });
+        });
+    }
+    return out;
+}
+
 function logEnvAsegurarLineas_(esEn, forzar, escId) {
     const e = logEnv_();
     const exterior = logEsCotizacionExterior_();
     const vista = logEnvVistaEsc_(escId || (logEscList_().length ? logOpcionUiAsegurar_() : ""));
-    const firma = (exterior ? "x" : "n") + "|" + vista.modalidad + "|" + vista.incoterm;
+    const tiposUnion = logEnvTiposUnion_(exterior);
+    /* Firma por unión de tipos: cambiar de Courier↔Aéreo en otra opción no destruye la plantilla. */
+    const firma = (exterior ? "x" : "n") + "|U|" + tiposUnion.slice().sort().join(",");
     /* Si plantilla coincide pero no hay filas, hay que reconstruir (bug al cambiar de opción/Incoterm). */
     if (!forzar && e.plantilla === firma && (e.lineas || []).length) {
         e.lineas.forEach(function (ln) {
             if (ln.tipo === "libre" || ln.conceptoManual) return;
-            ln.concepto = logEnvEtiquetaTipo_(ln.tipo, vista.modalidad, esEn);
+            /* Etiqueta según la opción activa (aéreo vs courier). */
+            if (logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior).indexOf(ln.tipo) >= 0) {
+                ln.concepto = logEnvEtiquetaTipo_(ln.tipo, vista.modalidad, esEn);
+            }
         });
         return e.lineas;
     }
     const prev = e.lineas || [];
-    const tipos = logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior);
-    /* EXW: ningún concepto (tampoco filas libres). */
-    const esExw = exterior && String(vista.incoterm || "").toUpperCase() === "EXW";
-    const libres = esExw ? [] : prev.filter(function (ln) { return ln.tipo === "libre"; });
+    /* Sin opciones y EXW: vacío. Con opciones, la unión manda (una opción EXW no borra las demás). */
+    const esExwSolo = exterior && !logEscList_().length && String(vista.incoterm || "").toUpperCase() === "EXW";
+    const libres = esExwSolo ? [] : prev.filter(function (ln) { return ln.tipo === "libre"; });
     const usados = {};
     let n = 0;
     prev.forEach(function (ln) { n = Math.max(n, parseInt(String(ln.id).replace(/\D/g, ""), 10) || 0); });
-    e.lineas = esExw ? [] : tipos.map(function (tipo) {
+    e.lineas = esExwSolo ? [] : tiposUnion.map(function (tipo) {
         const old = prev.find(function (ln) { return ln.tipo === tipo && !usados[ln.id]; });
         if (old) usados[old.id] = true;
         n += 1;
         return {
             id: old ? old.id : ("c" + n),
             tipo: tipo,
-            concepto: logEnvEtiquetaTipo_(tipo, vista.modalidad, esEn),
-            conceptoManual: false,
+            concepto: (old && old.conceptoManual)
+                ? old.concepto
+                : logEnvEtiquetaTipo_(tipo, vista.modalidad, esEn),
+            conceptoManual: !!(old && old.conceptoManual),
             valor: old ? old.valor : null,
             pct: old ? old.pct : null,
             notas: old ? old.notas : "",
@@ -3604,7 +3660,10 @@ function logFmtM3_(n, idioma) {
 /** Aérea: cm³/6.000. Courier: cm³/5.000. El resto de modalidades no tiene kg vol. */
 function logKgVolDivisor_(escId) {
     if (typeof logEsCotizacionExterior_ === "function" && !logEsCotizacionExterior_()) return null;
-    const mod = logEnvModalidad_(escId || (logEscList_().length ? logOpcionUiSel_ : ""));
+    const k = escId != null && escId !== ""
+        ? escId
+        : (logEscList_().length ? (logEnvEscSel_ || logOpcionUiSel_ || "") : "");
+    const mod = logEnvModalidad_(k);
     if (mod === "aerea") return 6000;
     if (mod === "courier") return 5000;
     return null;
@@ -3645,8 +3704,8 @@ function logKgADoc_(kg) {
 }
 
 /** Kg volumétricos de una caja. Null si la modalidad no es aérea ni courier, o faltan medidas. */
-function logKgVolCaja_(ficha) {
-    const div = logKgVolDivisor_();
+function logKgVolCaja_(ficha, escId) {
+    const div = logKgVolDivisor_(escId);
     const caja = logCajaCm_(ficha);
     if (!div || !caja) return null;
     return caja.w * caja.d * caja.h / div;
@@ -3683,7 +3742,7 @@ function logCubicajeFila_(fila, idioma, escId) {
         m3 += nCajas * vol;
         if (undRef == null && und > 0) undRef = und;
         if (volRef == null) volRef = vol;
-        const kgCaja = logKgVolCaja_(tipo);
+        const kgCaja = logKgVolCaja_(tipo, escId);
         if (kgCaja != null) kgVol += nCajas * kgCaja;
         const pesoCaja = logPesoCajaKg_(tipo);
         if (pesoCaja != null) peso += nCajas * pesoCaja;
@@ -3694,7 +3753,7 @@ function logCubicajeFila_(fila, idioma, escId) {
         const vol = logVolCajaM3_(f);
         const cajas = und > 0 ? Math.ceil(qty / und) : null;
         const m3L = cajas != null && vol != null ? cajas * vol : null;
-        const kgCaja = logKgVolCaja_(f);
+        const kgCaja = logKgVolCaja_(f, escId);
         const kgVolL = cajas != null && kgCaja != null ? cajas * kgCaja : null;
         const pesoCaja = logPesoCajaKg_(f);
         const pesoL = cajas != null && pesoCaja != null ? cajas * pesoCaja : null;
@@ -6470,13 +6529,38 @@ function logEscribirPartidaFicha_(fila, codigo) {
             if (sel && document.activeElement !== sel) sel.value = fmt;
         }
     }
-    if (fila) fila.partida = fmt;
+    if (fila) {
+        fila.partida = fmt;
+        /* Congelado: la cotización guarda la partida en snap.ficha al serializar. */
+        if (fila.snap) {
+            fila.snap.ficha = fila.snap.ficha || {};
+            fila.snap.ficha.partida = fmt;
+        }
+    }
+}
+
+/** Restaura partida desde el snap/ficha si la fila aún no la trae (cotizaciones viejas). */
+function logMigrarPartidasFilas_() {
+    (logQuote.filas || []).forEach(function (fila) {
+        if (!fila || fila.demo != null || (fila.tipo !== "item" && fila.tipo !== "libre")) return;
+        /* Si ya vino en el JSON (aunque vacía), no pisar. */
+        if (Object.prototype.hasOwnProperty.call(fila, "partida") && typeof fila.partida === "string") return;
+        const deSnap = fila.snap && fila.snap.ficha ? fila.snap.ficha.partida : "";
+        if (deSnap) {
+            fila.partida = logPartidaFmt_(deSnap);
+            return;
+        }
+        const deFicha = logPartidaDeElemento_(fila);
+        if (deFicha) fila.partida = deFicha;
+    });
 }
 
 function logAsegurarPartida_(fila) {
     if (!fila || fila.demo != null || (fila.tipo !== "item" && fila.tipo !== "libre")) return;
     if (typeof fila.partida === "string") return;
     const pais = logPaisEnvio_() || logPaisCliente_();
+    const deSnap = fila.snap && fila.snap.ficha ? logPartidaFmt_(fila.snap.ficha.partida || "") : "";
+    if (deSnap && (!pais || logPartidaValidaEnPais_(deSnap, pais))) { fila.partida = deSnap; return; }
     const deFicha = logPartidaDeElemento_(fila);
     if (deFicha && (!pais || logPartidaValidaEnPais_(deFicha, pais))) { fila.partida = deFicha; return; }
     const s = logSugerirPartida_(logTextoPartida_(fila), { pais: pais });
@@ -7849,6 +7933,17 @@ function logisticaSerializar_(idioma) {
             }
             if (fila.proy && proyectos.indexOf(fila.proy) < 0) proyectos.push(fila.proy);
         }
+        /* Partida arancelaria por fila (opción o zona libre): debe sobrevivir al guardar/abrir. */
+        if (fila.tipo === "item" || fila.tipo === "libre") {
+            let part = typeof fila.partida === "string" ? logPartidaFmt_(fila.partida) : "";
+            if (!part && c.snap && c.snap.ficha) part = logPartidaFmt_(c.snap.ficha.partida || "");
+            if (!part) part = logPartidaFmt_(logPartidaDeElemento_(fila) || "");
+            c.partida = part;
+            if (c.snap) {
+                c.snap.ficha = c.snap.ficha || {};
+                c.snap.ficha.partida = part;
+            }
+        }
         if (fila.imgEdit) c.imgEdit = clon(fila.imgEdit);
         logAsegurarImgRefFila_(fila);
         if (fila.imgRef) c.imgRef = fila.imgRef;
@@ -8491,6 +8586,7 @@ async function logisticaAbrirGuardada_(id, rev) {
     logSincronizarModoDesdeEscenarios_();
     if ((logQuote.escenarios || []).length) logMigrarFilasAContenedores_();
     if ((logQuote.escenarios || []).length) logRepararOverClonadoLegado_();
+    logMigrarPartidasFilas_();
     logLayout = {
         cols: (g.layout && g.layout.cols && g.layout.cols.length ? g.layout.cols : LOG_COLUMNAS_DEMO).map(function (c) { return { k: c.k, w: c.w }; }),
         filaAlto: (g.layout && g.layout.filaAlto) || {}
@@ -9104,7 +9200,11 @@ function logisticaLeerEnvUi_() {
     }
     const box = document.getElementById("logEnvLineas");
     if (box) {
-        const escSel = logEscList_().length && logEnvEscSel_ ? logEnvEscSel_ : "";
+        /* Con opciones siempre hay escSel (fallback a la pestaña activa); si no, los
+           costos quedan solo en ln.valor y se pierden al reconstruir Courier↔Aéreo. */
+        const escSel = logEscList_().length
+            ? (logEnvEscSel_ || logOpcionUiAsegurar_() || "")
+            : "";
         let stSel = null;
         if (escSel) {
             if (!prev.porEsc || typeof prev.porEsc !== "object") prev.porEsc = {};
@@ -9135,13 +9235,24 @@ function logisticaLeerEnvUi_() {
             const autoAttr = val ? val.getAttribute("data-auto-val") : null;
             const esAuto = arancel && ln.valor == null && autoAttr != null && autoAttr !== "" &&
                 valorNuevo != null && Math.abs(Number(autoAttr) - valorNuevo) < 0.02;
+            const kt = logEscKeyTipo_(ln.tipo);
             if (arancel && pctEl && pctNuevo !== ln.pct) {
                 ln.fuente = "";
                 ln.arancelManual = true;
                 ln.pct = pctNuevo;
                 ln.valor = null;
                 if (val) val.value = "";
-                if (prev.porEsc) Object.keys(prev.porEsc).forEach(function (k) { delete prev.porEsc[k].valores[ln.id]; if (pctNuevo == null) delete prev.porEsc[k].pcts[ln.id]; else prev.porEsc[k].pcts[ln.id] = pctNuevo; });
+                if (prev.porEsc) Object.keys(prev.porEsc).forEach(function (k) {
+                    delete prev.porEsc[k].valores[ln.id];
+                    if (kt) delete prev.porEsc[k].valores[kt];
+                    if (pctNuevo == null) {
+                        delete prev.porEsc[k].pcts[ln.id];
+                        if (kt) delete prev.porEsc[k].pcts[kt];
+                    } else {
+                        prev.porEsc[k].pcts[ln.id] = pctNuevo;
+                        if (kt) prev.porEsc[k].pcts[kt] = pctNuevo;
+                    }
+                });
             } else if (arancel && esAuto) {
                 /* Costo solo visual desde el %: no guardar valor fijo ni marcar manual. */
             } else if (arancel && val && valorNuevo !== ln.valor) {
@@ -9150,13 +9261,39 @@ function logisticaLeerEnvUi_() {
                 ln.valor = valorNuevo;
                 ln.pct = null;
                 if (pctEl) pctEl.value = "";
-                if (prev.porEsc) Object.keys(prev.porEsc).forEach(function (k) { delete prev.porEsc[k].pcts[ln.id]; if (valorNuevo == null) delete prev.porEsc[k].valores[ln.id]; else prev.porEsc[k].valores[ln.id] = valorNuevo; });
+                if (prev.porEsc) Object.keys(prev.porEsc).forEach(function (k) {
+                    delete prev.porEsc[k].pcts[ln.id];
+                    if (kt) delete prev.porEsc[k].pcts[kt];
+                    if (valorNuevo == null) {
+                        delete prev.porEsc[k].valores[ln.id];
+                        if (kt) delete prev.porEsc[k].valores[kt];
+                    } else {
+                        prev.porEsc[k].valores[ln.id] = valorNuevo;
+                        if (kt) prev.porEsc[k].valores[kt] = valorNuevo;
+                    }
+                });
             } else if (stSel && val) {
-                if (valorNuevo == null) delete stSel.valores[ln.id];
-                else stSel.valores[ln.id] = valorNuevo;
+                /* Guardar por id y por tipo: al reconstruir líneas (Courier↔Aéreo) el id puede cambiar. */
+                if (valorNuevo == null) {
+                    delete stSel.valores[ln.id];
+                    if (kt) delete stSel.valores[kt];
+                } else {
+                    stSel.valores[ln.id] = valorNuevo;
+                    if (kt) stSel.valores[kt] = valorNuevo;
+                }
                 delete stSel.fuentes[ln.id];
+                if (kt) delete stSel.fuentes[kt];
                 if (!escSel || escSel === (logEscList_()[0] || {}).id) ln.valor = valorNuevo;
-                if (pctEl) ln.pct = pctNuevo;
+                if (pctEl) {
+                    ln.pct = pctNuevo;
+                    if (pctNuevo == null) {
+                        delete stSel.pcts[ln.id];
+                        if (kt) delete stSel.pcts[kt];
+                    } else {
+                        stSel.pcts[ln.id] = pctNuevo;
+                        if (kt) stSel.pcts[kt] = pctNuevo;
+                    }
+                }
             } else {
                 if (val) ln.valor = valorNuevo;
                 if (pctEl) ln.pct = pctNuevo;
@@ -9520,13 +9657,47 @@ function logPintarRecalcAviso_() {
     el.classList.remove("d-none");
 }
 
+/** Peso facturable (kg): mayor entre real y volumétrico. */
+function logPesoFacturableKg_(cub) {
+    return Math.max(Number(cub && cub.pesoKg) || 0, Number(cub && cub.kgVol) || 0);
+}
+
+function logisticaPintarPesoFacturable_(cub, idioma, mod) {
+    const wrap = document.getElementById("logCubPesoFactWrap");
+    const valEl = document.getElementById("logCubPesoFact");
+    const notaEl = document.getElementById("logCubPesoFactNota");
+    const volLab = document.getElementById("logCubKgVolLab");
+    const esEn = idioma === "en";
+    const air = mod === "aerea" || mod === "courier";
+    if (volLab) volLab.classList.toggle("d-none", !air);
+    if (wrap) wrap.classList.toggle("d-none", !air);
+    if (!air || !valEl) return;
+    const real = Number(cub && cub.pesoKg) || 0;
+    const vol = Number(cub && cub.kgVol) || 0;
+    const fact = Math.max(real, vol);
+    const um = typeof logPesoUmDoc_ === "function" ? logPesoUmDoc_() : "kg";
+    const shown = typeof logKgADoc_ === "function" ? logKgADoc_(fact) : fact;
+    if (!(fact > 0)) {
+        valEl.textContent = "—";
+        if (notaEl) notaEl.textContent = "";
+        return;
+    }
+    valEl.textContent = logFmtNum_(Math.round(Number(shown) * 100) / 100, idioma, shown % 1 ? 2 : 0) + " " + um;
+    if (!notaEl) return;
+    if (vol > real + 0.0001) notaEl.textContent = esEn ? "(volumetric)" : "(volumétrico)";
+    else if (real > vol + 0.0001) notaEl.textContent = esEn ? "(actual)" : "(real)";
+    else notaEl.textContent = esEn ? "(same)" : "(iguales)";
+}
+
 function logisticaPintarCubicaje_() {
     const nota = document.getElementById("logCubNota");
     const idioma = logisticaLeerOpciones_().idioma;
     const esEn = idioma === "en";
-    const c = logCubicajeTotal_(idioma);
+    const escUi = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
+    const c = logCubicajeTotal_(idioma, escUi || undefined);
     const auto = c.auto || c;
     const e = logEnv_();
+    const vista = logEnvVistaEsc_(escUi);
     const ph = function (n) {
         if (!(Number(n) > 0)) return "0";
         return String(Math.round(Number(n) * 1000) / 1000);
@@ -9540,9 +9711,30 @@ function logisticaPintarCubicaje_() {
     logSetSiNoFoco_("logCubM3", e.cubM3);
     logSetSiNoFoco_("logCubPeso", e.cubPeso);
     logSetSiNoFoco_("logCubKgVol", e.cubKgVol);
+    const volLab = document.getElementById("logCubKgVolLab");
+    const divVol = logKgVolDivisor_(escUi || undefined);
+    if (volLab) {
+        const txtLab = volLab.childNodes[0];
+        if (txtLab && txtLab.nodeType === 3) {
+            txtLab.textContent = divVol
+                ? (esEn ? ("Vol. kg ÷" + divVol.toLocaleString("en-US") + " ") : ("Kg vol ÷" + divVol.toLocaleString("es-CO") + " "))
+                : (esEn ? "Vol. kg " : "Kg vol ");
+        }
+        volLab.title = divVol
+            ? (esEn
+                ? ("Volumetric weight = cm³ ÷ " + divVol + (vista.modalidad === "courier" ? " (courier)" : " (air)") + ". Empty uses packaging.")
+                : ("Peso volumétrico = cm³ ÷ " + divVol + (vista.modalidad === "courier" ? " (courier)" : " (aéreo)") + ". Vacío usa el empaque."))
+            : (esEn ? "Only for air/courier." : "Solo aplica en aéreo/courier.");
+    }
+    logisticaPintarPesoFacturable_(c, idioma, vista.modalidad);
     if (!nota) return;
     const bits = [];
     if (c.filas) bits.push(logFmtNum_(c.cajas, idioma, 0) + (esEn ? " boxes from packaging" : " cajas del empaque"));
+    if (divVol && (vista.modalidad === "aerea" || vista.modalidad === "courier")) {
+        bits.push(esEn
+            ? ("Vol. factor ÷" + divVol + (vista.modalidad === "courier" ? " courier" : " air"))
+            : ("Factor vol. ÷" + divVol.toLocaleString("es-CO") + (vista.modalidad === "courier" ? " courier" : " aéreo")));
+    }
     if (e.cubM3 != null || e.cubPeso != null || e.cubKgVol != null) bits.push(esEn ? "A typed value replaces the calculation. Clear it to use packaging again." : "Lo escrito reemplaza el cálculo. Bórralo para volver al empaque.");
     else if (!c.filas) bits.push(esEn ? "Type the figures, or complete packaging on the commercial sheet." : "Escribe las cifras, o completa el empaque en la ficha.");
     nota.textContent = bits.join(" · ");
@@ -9579,12 +9771,26 @@ function logisticaPintarEscEnv_() {
     const st = logEnvEsc_(x.id);
     const vista = logEnvVistaEsc_(x.id);
     const esFcl = vista.modalidad === "fcl";
+    const esAir = vista.modalidad === "aerea" || vista.modalidad === "courier";
     const esEn = idioma === "en";
     const cub = logCubicajeTotal_(idioma, x.id);
     const auto = cub.auto || cub;
     const sug = esFcl ? logSugerirContenedores_(cub.m3, Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0)) : null;
     const ph = function (n) { return Number(n) > 0 ? String(Math.round(Number(n) * 1000) / 1000) : "0"; };
     const op = logEsc_(x.id);
+    const factKg = logPesoFacturableKg_(cub);
+    const umP = typeof logPesoUmDoc_ === "function" ? logPesoUmDoc_() : "kg";
+    const factShown = typeof logKgADoc_ === "function" ? logKgADoc_(factKg) : factKg;
+    let factTxt = "—";
+    let factNota = "";
+    if (factKg > 0) {
+        factTxt = logFmtNum_(Math.round(Number(factShown) * 100) / 100, idioma, factShown % 1 ? 2 : 0) + " " + umP;
+        const real = Number(cub.pesoKg) || 0;
+        const volN = Number(cub.kgVol) || 0;
+        if (volN > real + 0.0001) factNota = esEn ? "(volumetric)" : "(volumétrico)";
+        else if (real > volN + 0.0001) factNota = esEn ? "(actual)" : "(real)";
+        else factNota = esEn ? "(same)" : "(iguales)";
+    }
     let h = esFcl ? "<div class=\"log-esc-calc-title\">" + (esEn ? "Container calculation" : "Cálculo de contenedores") + "</div>" : "";
     h += "<div class=\"log-esc-card\">" +
         "<div class=\"log-esc-card-h\">" +
@@ -9599,7 +9805,21 @@ function logisticaPintarEscEnv_() {
     }
     h += "<div class=\"log-esc-fields" + (esFcl ? " log-esc-fields-fcl" : "") + "\">" +
         "<label>m³<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.001\" data-op=\"" + op + "\" data-campo=\"cubM3\" placeholder=\"" + ph(auto.m3) + "\" value=\"" + (st.cubM3 == null ? "" : st.cubM3) + "\"></label>" +
-        "<label>" + (esEn ? "Weight kg" : "Peso kg") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.01\" data-op=\"" + op + "\" data-campo=\"cubPeso\" placeholder=\"" + ph(auto.pesoKg) + "\" value=\"" + (st.cubPeso == null ? "" : st.cubPeso) + "\"></label>";
+        "<label>" + (esEn ? "Actual wt kg" : "Peso real kg") + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.01\" data-op=\"" + op + "\" data-campo=\"cubPeso\" placeholder=\"" + ph(auto.pesoKg) + "\" value=\"" + (st.cubPeso == null ? "" : st.cubPeso) + "\"></label>";
+    if (esAir) {
+        const divAir = logKgVolDivisor_(x.id) || (vista.modalidad === "courier" ? 5000 : 6000);
+        const labVol = esEn
+            ? ("Vol. kg ÷" + divAir.toLocaleString("en-US"))
+            : ("Kg vol ÷" + divAir.toLocaleString("es-CO"));
+        h += "<label title=\"" + logEsc_(esEn
+            ? ("cm³ ÷ " + divAir + (vista.modalidad === "courier" ? " for courier" : " for air"))
+            : ("cm³ ÷ " + divAir + (vista.modalidad === "courier" ? " en courier" : " en aéreo"))) + "\">" +
+            logEsc_(labVol) + "<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"0.01\" data-op=\"" + op + "\" data-campo=\"cubKgVol\" placeholder=\"" + ph(auto.kgVol) + "\" value=\"" + (st.cubKgVol == null ? "" : st.cubKgVol) + "\"></label>";
+        h += "<div class=\"log-cub-fact\" title=\"" + (esEn ? "Greater of actual and volumetric weight" : "Mayor entre peso real y volumétrico") + "\">" +
+            "<span class=\"log-cub-fact-lab\">" + (esEn ? "Chargeable wt" : "Peso facturable") + "</span>" +
+            "<span class=\"log-cubica-num\">" + logEsc_(factTxt) + "</span>" +
+            "<span class=\"log-cub-fact-nota\">" + logEsc_(factNota) + "</span></div>";
+    }
     if (esFcl) {
         h += "<label>20'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c20\" data-cont=\"1\" value=\"" + (st.contenedores.c20 || "") + "\"></label>" +
             "<label>40'<input class=\"form-control form-control-sm text-end\" type=\"number\" min=\"0\" step=\"1\" data-op=\"" + op + "\" data-campo=\"c40\" data-cont=\"1\" value=\"" + (st.contenedores.c40 || "") + "\"></label>" +
@@ -9842,7 +10062,12 @@ function logisticaPintarEnv_(forzar) {
         return;
     }
     if (box) {
-        const lineasUi = (e.lineas && e.lineas.length) ? e.lineas : logEnvLineasDeEsc_(escUi || "", esEn);
+        const tiposActivosUi = logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior);
+        let lineasUi = (e.lineas && e.lineas.length) ? e.lineas : logEnvLineasDeEsc_(escUi || "", esEn);
+        /* Con opciones de distinta modalidad, e.lineas es la unión: en UI solo la modalidad activa. */
+        lineasUi = lineasUi.filter(function (ln) {
+            return ln.tipo === "libre" || tiposActivosUi.indexOf(ln.tipo) >= 0;
+        });
         if ((!e.lineas || !e.lineas.length) && lineasUi.length) e.lineas = lineasUi;
         const escSuma = escUi || (logEscList_().length ? logOpcionUiAsegurar_() : "");
         const baseLogUi = logEsCotizacionExterior_() ? logBaseLogistica_(idioma, escSuma) : null;
@@ -10036,16 +10261,51 @@ function logisticaOnEnvUi_(ev) {
         }
     }
     if (t && (t.id === "logC20" || t.id === "logC40" || t.id === "logC40hc")) logQuote.env.contenedoresManual = true;
-    if (logQuote.env.modalidad !== modAntes || logQuote.env.incoterm !== incAntes || (t && t.id === "logMercado")) {
+    /* Solo si el usuario cambia Modalidad/Incoterm/Mercado a mano (no al saltar de opción). */
+    if (t && (t.id === "logModalidad" || t.id === "logIncoterm" || t.id === "logMercado")
+        && (logQuote.env.modalidad !== modAntes || logQuote.env.incoterm !== incAntes || t.id === "logMercado")) {
+        const escClr = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
+        const stClr = escClr && logQuote.env.porEsc ? logQuote.env.porEsc[escClr] : null;
+        const exteriorClr = logEsCotizacionExterior_();
+        const incClr = logQuote.env.incoterm;
+        /* Solo tipos de la modalidad anterior/nueva de ESTA opción — no los de Courier/Aéreo de otras. */
+        const tiposClr = {};
+        logEnvTiposActivos_(modAntes, incAntes, exteriorClr).forEach(function (tp) { tiposClr[tp] = 1; });
+        logEnvTiposActivos_(logQuote.env.modalidad, incClr, exteriorClr).forEach(function (tp) { tiposClr[tp] = 1; });
         logQuote.env.lineas.forEach(function (ln) {
-            if (!ln.fuente) return;
-            ln.valor = null;
-            ln.pct = null;
-            ln.fuente = "";
-            ln.base = "";
-            ln.arancelManual = false;
-            ln.arancelFirma = "";
+            if (!ln || !tiposClr[ln.tipo]) return;
+            if (!ln.fuente && !(stClr && stClr.fuentes && (stClr.fuentes[ln.id] || stClr.fuentes[logEscKeyTipo_(ln.tipo)]))) return;
+            /* Limpiar catálogo/IA de la opción activa; no tocar valores manuales de otras opciones. */
+            if (stClr) {
+                delete stClr.valores[ln.id];
+                delete stClr.fuentes[ln.id];
+                delete stClr.pcts[ln.id];
+                const kt = logEscKeyTipo_(ln.tipo);
+                if (kt) {
+                    delete stClr.valores[kt];
+                    delete stClr.fuentes[kt];
+                    delete stClr.pcts[kt];
+                }
+            }
+            if (!escClr || escClr === (logEscList_()[0] || {}).id) {
+                ln.valor = null;
+                ln.pct = null;
+                ln.fuente = "";
+                ln.base = "";
+                ln.arancelManual = false;
+                ln.arancelFirma = "";
+            }
         });
+    }
+    /* Al cambiar aéreo ↔ courier el kg vol usa otro divisor (6000 vs 5000): soltar override de ESA opción. */
+    if (t && t.id === "logModalidad" && logQuote.env.modalidad !== modAntes) {
+        const airAntes = modAntes === "aerea" || modAntes === "courier";
+        const airAhora = logQuote.env.modalidad === "aerea" || logQuote.env.modalidad === "courier";
+        if (airAntes || airAhora) {
+            const escM = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
+            if (escM && logQuote.env.porEsc && logQuote.env.porEsc[escM]) logQuote.env.porEsc[escM].cubKgVol = null;
+            else if (!escM) logQuote.env.cubKgVol = null;
+        }
     }
     if (t && (t.id === "logIncoterm" || t.id === "logMercado" || t.id === "logDestTitulo")
         && (logQuote.env.incoterm !== incAntes || t.id === "logMercado" || t.id === "logDestTitulo")) {
