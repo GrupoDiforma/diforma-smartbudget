@@ -345,6 +345,7 @@
               <div class="log-top-file">
               <button type="button" id="btnLogHistorial" class="btn btn-sm btn-outline-primary" title="Cotizaciones guardadas: abrir y editar"><i class="bi bi-clock-history me-1"></i>Guardadas</button>
               <button type="button" id="btnLogGuardar" class="btn btn-sm btn-primary" title="Guardar esta cotización en el historial"><i class="bi bi-save me-1"></i>Guardar</button>
+              <button type="button" id="btnLogExcel" class="btn btn-sm btn-outline-secondary bg-white" title="Exporta presupuesto + cotización en la plantilla Excel (COT/QUOT). Requiere presupuesto abierto en Costos." onclick="exportarLogisticaExcel()"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
               <button type="button" id="btnLogPDF" class="btn btn-sm btn-diforma-blue"><i class="bi bi-download me-1"></i>PDF</button>
               </div>
               </div>
@@ -1907,7 +1908,7 @@
                 <header class="admin-card-head">
                   <div>
                     <h3 class="admin-card-title">Plantilla Excel</h3>
-                    <p class="admin-card-desc">Publica el .xlsx oficial. La app rellena EXP o NAL según el mercado. ADMIN, cotizaciones y pestañas extra se conservan. Al cargar, se analiza el formato (filas, celdas y hojas) para ajustar el relleno.</p>
+                    <p class="admin-card-desc">Publica el .xlsx oficial. La app rellena EXP o NAL según el mercado. También valida COT01/QUOT01 (comisión I2, ítems, logística y mejor costo) antes de publicar. ADMIN y pestañas extra se conservan.</p>
                   </div>
                 </header>
                 <div class="admin-card-body">
@@ -1977,8 +1978,8 @@
   <script src="engine.js?v=1.0.41"></script>
   <script src="connectors.js?v=1.0.50"></script>
   <script src="ia-core.js?v=1.0.50"></script>
-  <script src="export-excel.js?v=1.0.33"></script>
-  <script src="logistica.js?v=1.0.239"></script>
+  <script src="export-excel.js?v=1.0.52"></script>
+  <script src="logistica.js?v=1.0.240"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
