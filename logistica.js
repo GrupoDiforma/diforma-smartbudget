@@ -1325,9 +1325,15 @@ function logEnvEscNorm_(src, base) {
         /* Aérea/terrestre no admiten FAS/FOB/…: preferir CIP (común) antes que EXW vacío de filas. */
         incoterm = avail.indexOf("CIP") >= 0 ? "CIP" : (avail[0] || "EXW");
     }
+    const modoRaw = s.modoCosto != null ? s.modoCosto : b.modoCosto;
+    const pctRaw = s.resumenPct != null ? s.resumenPct : b.resumenPct;
+    const pctN = Number(pctRaw);
     const out = {
         /* Incluir logística en esta opción (independiente del switch global). Defecto: sí. */
         activo: s.activo === false ? false : true,
+        /* Detalle vs Una línea (y % visible) por opción. */
+        modoCosto: modoRaw === "resumen" ? "resumen" : "detalle",
+        resumenPct: isFinite(pctN) ? Math.min(100, Math.max(0, pctN)) : 100,
         /* Cada opción puede tener su modalidad / Incoterm / destino. */
         modalidad: modalidad,
         incoterm: incoterm,
@@ -2884,6 +2890,25 @@ function logEnvActivo_(escId) {
     return !(st && st.activo === false);
 }
 
+/** Detalle | Una línea: por opción si hay porEsc; si no, el global. */
+function logEnvModoCosto_(escId) {
+    const e = logEnv_();
+    if (escId && e.porEsc && e.porEsc[escId] && e.porEsc[escId].modoCosto != null) {
+        return e.porEsc[escId].modoCosto === "resumen" ? "resumen" : "detalle";
+    }
+    return e.modoCosto === "resumen" ? "resumen" : "detalle";
+}
+
+function logEnvResumenPct_(escId) {
+    const e = logEnv_();
+    let n = null;
+    if (escId && e.porEsc && e.porEsc[escId] && e.porEsc[escId].resumenPct != null) {
+        n = Number(e.porEsc[escId].resumenPct);
+    }
+    if (n == null || !isFinite(n)) n = Number(e.resumenPct);
+    return isFinite(n) ? Math.min(100, Math.max(0, n)) : 100;
+}
+
 function logEnvSuma_(baseProd, escId) {
     if (!logEnvActivo_(escId)) return 0;
     let s = 0;
@@ -4435,11 +4460,11 @@ function logTotalesPartes_(idioma) {
 /** Cómo se imprime: el % oculto entra a los productos; el visible queda en logística. El gran total no cambia. */
 function logEnvPresentacion_(idioma) {
     const partes = logTotalesPartes_(idioma);
-    const e = logEnv_();
-    const pct = e.modoCosto === "resumen" ? e.resumenPct / 100 : 1;
     const claves = Object.keys(partes.prod);
     const pres = { prod: {}, env: {}, gran: {}, desc: partes.desc || {}, shares: {} };
     claves.forEach(function (k) {
+        const escK = k && String(k).indexOf("r:") === 0 ? "" : k;
+        const pct = logEnvModoCosto_(escK) === "resumen" ? logEnvResumenPct_(escK) / 100 : 1;
         const base = partes.prod[k] || 0;
         const L = partes.env[k] || 0;
         const oculto = L * (1 - pct);
@@ -4797,7 +4822,7 @@ function logisticaTablaHTML_(idioma) {
             partesB.desc[k] = desc;
             partesB.gran[k] = sub + partesB.env[k] + desc;
         });
-        const pctVis = logEnv_().modoCosto === "resumen" ? (logEnv_().resumenPct / 100) : 1;
+        const pctVis = logEnvModoCosto_("") === "resumen" ? (logEnvResumenPct_("") / 100) : 1;
         presBaseRangos = { prod: {}, env: {}, gran: {}, desc: partesB.desc, shares: {} };
         tClavesBase.forEach(function (k) {
             const base = partesB.prod[k] || 0;
@@ -4906,7 +4931,7 @@ function logisticaTablaHTML_(idioma) {
             }
             h += "<tr class=\"sec-gap\"><td colspan=\"" + n + "\"></td></tr>";
             h += "<tr class=\"sec\"><td colspan=\"" + n + "\">" + logEsc_(titLog) + "</td></tr>";
-            if (logEnv_().modoCosto === "resumen") {
+            if (logEnvModoCosto_(k) === "resumen") {
                 h += filaMonto1_("it it-env", "env", edTit("titSubLog", logEnvTituloResumen_(T, mon, esEn, k)), pres.env[k], k);
             } else {
                 enviosK.forEach(function (fila) {
@@ -4972,7 +4997,7 @@ function logisticaTablaHTML_(idioma) {
     if (hayLog) {
         bloqueLog += "<tr class=\"sec-gap\"><td colspan=\"" + n + "\"></td></tr>";
         bloqueLog += "<tr class=\"sec\"><td colspan=\"" + n + "\">" + logEsc_(T.secEnvios) + "</td></tr>";
-        if (logEnv_().modoCosto === "resumen") {
+        if (logEnvModoCosto_("") === "resumen") {
             bloqueLog += filaMontos_("it it-env", "env", edTit("titSubLog", logEnvTituloResumen_(T, mon, esEn)), pres.env);
         } else {
             envios.forEach(function (fila) {
@@ -7839,6 +7864,8 @@ function logisticaSincronizarTituloPdf_(doc) {
 
 /** Arma lo que se guarda: textos, filas, diseño y valores congelados. Las imágenes van aparte (a Drive). */
 function logisticaSerializar_(idioma) {
+    /* Volcar UI → env antes de congelar (Una línea, margen, destino, costos por opción…). */
+    try { logisticaLeerEnvUi_(); } catch (eUi) { /* ok */ }
     const D = logisticaDatosDoc_(idioma);
     const cab = {};
     LOG_CAMPOS_CAB.forEach(function (k) { cab[k] = D[k]; });
@@ -8582,6 +8609,23 @@ async function logisticaAbrirGuardada_(id, rev) {
     logDestinoPaisTocado_ = !!(logQuote.env && String(logQuote.env.destinoPais || "").trim());
     logDestinoCiudadTocado_ = !!(logQuote.env && String(logQuote.env.destinoCiudad || "").trim());
     if (!logDestinoPaisTocado_) logAplicarPaisCliente_();
+    /* Radios Detalle/Una línea: el HTML trae Detalle marcado; alinear YA con el env cargado
+       para que un leerEnvUi previo al primer paint no pise «Una línea». */
+    (function syncModoCostoRadios_() {
+        const e0 = logQuote.env || {};
+        let modo = e0.modoCosto === "resumen" ? "resumen" : "detalle";
+        const esc0 = logEscList_().length ? (logOpcionUiSel_ || (logEscList_()[0] && logEscList_()[0].id) || "") : "";
+        if (esc0 && e0.porEsc && e0.porEsc[esc0] && e0.porEsc[esc0].modoCosto != null) {
+            modo = e0.porEsc[esc0].modoCosto === "resumen" ? "resumen" : "detalle";
+        }
+        document.querySelectorAll("input[name=\"logModoCosto\"]").forEach(function (r) { r.checked = r.value === modo; });
+        const pctEl = document.getElementById("logResumenPct");
+        if (pctEl) {
+            const pct = esc0 && e0.porEsc && e0.porEsc[esc0] && e0.porEsc[esc0].resumenPct != null
+                ? e0.porEsc[esc0].resumenPct : e0.resumenPct;
+            if (pct != null && isFinite(Number(pct))) pctEl.value = String(pct);
+        }
+    })();
     logQuote.escenarios.forEach(function (e) { logQuote.escUid = Math.max(logQuote.escUid, parseInt(String(e.id).replace(/\D/g, ""), 10) || 0); });
     logSincronizarModoDesdeEscenarios_();
     if ((logQuote.escenarios || []).length) logMigrarFilasAContenedores_();
@@ -9149,7 +9193,10 @@ function logisticaLeerEnvUi_() {
         prev.embarques = isFinite(n) && n > 0 ? n : 1;
     }
     const modo = document.querySelector("input[name=\"logModoCosto\"]:checked");
-    prev.modoCosto = modo && modo.value === "resumen" ? "resumen" : "detalle";
+    /* Si ningún radio está marcado (p. ej. HTML aún no pintado tras abrir), no pisar el valor cargado. */
+    if (modo && (modo.value === "resumen" || modo.value === "detalle")) {
+        prev.modoCosto = modo.value === "resumen" ? "resumen" : "detalle";
+    }
     const sw = document.getElementById("logCostosOn");
     if (sw) {
         const escSw = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_()) : "";
@@ -9167,6 +9214,11 @@ function logisticaLeerEnvUi_() {
     if (mer && (mer.value === "EXPORTACION" || mer.value === "NACIONAL")) prev.mercado = mer.value;
     const pct = Number((document.getElementById("logResumenPct") || {}).value);
     if (isFinite(pct)) prev.resumenPct = Math.min(100, Math.max(0, pct));
+    /* Una línea / % visible también por opción (como Incluir). */
+    if (escAct && prev.porEsc && prev.porEsc[escAct]) {
+        prev.porEsc[escAct].modoCosto = prev.modoCosto === "resumen" ? "resumen" : "detalle";
+        prev.porEsc[escAct].resumenPct = prev.resumenPct;
+    }
     const mg = document.getElementById("logMargenLog");
     if (mg) prev.margenPct = String(mg.value || "").trim() === "" ? 0 : logMargenClamp_(mg.value);
     const cubDe_ = function (id) {
@@ -10003,7 +10055,11 @@ function logisticaPintarEnv_(forzar) {
     const elTit = document.getElementById("logDestTitulo");
     if (elTit) elTit.placeholder = phTit;
     logSetSiNoFoco_("logDestTitulo", vista.destinoTitulo || "");
-    logSetSiNoFoco_("logResumenPct", e.resumenPct);
+    const modoUi = escUi ? logEnvModoCosto_(escUi) : (e.modoCosto === "resumen" ? "resumen" : "detalle");
+    const pctUi = escUi ? logEnvResumenPct_(escUi) : e.resumenPct;
+    e.modoCosto = modoUi;
+    e.resumenPct = pctUi;
+    logSetSiNoFoco_("logResumenPct", pctUi);
     const costosOn = escUi ? logEnvActivo_(escUi) : (e.activo !== false);
     const swOn = document.getElementById("logCostosOn");
     if (swOn && document.activeElement !== swOn) swOn.checked = costosOn;
@@ -10017,7 +10073,7 @@ function logisticaPintarEnv_(forzar) {
     if (btnLibre) btnLibre.classList.toggle("d-none", esExwUi);
     if (btnReset) btnReset.classList.toggle("d-none", esExwUi);
     /* Con costos apagados se ocultan Detalle/margen/filas; las pestañas de opción siguen visibles arriba. */
-    document.querySelectorAll("input[name=\"logModoCosto\"]").forEach(function (r) { r.checked = r.value === e.modoCosto; });
+    document.querySelectorAll("input[name=\"logModoCosto\"]").forEach(function (r) { r.checked = r.value === modoUi; });
     const selMer = document.getElementById("logMercado");
     if (selMer && document.activeElement !== selMer) selMer.value = exterior ? "EXPORTACION" : "NACIONAL";
     ["logModalidadWrap", "logIncotermWrap", "logDestPaisWrap", "logDestCodigoWrap", "logDestTituloWrap"].forEach(function (id) {
@@ -10025,7 +10081,7 @@ function logisticaPintarEnv_(forzar) {
         if (el) el.classList.toggle("d-none", !exterior);
     });
     const pctWrap = document.getElementById("logResumenPctWrap");
-    if (pctWrap) pctWrap.classList.toggle("d-none", e.modoCosto !== "resumen");
+    if (pctWrap) pctWrap.classList.toggle("d-none", modoUi !== "resumen");
     const margenWrap = document.getElementById("logMargenWrap");
     if (margenWrap) margenWrap.classList.toggle("d-none", !exterior);
     logSetSiNoFoco_("logMargenLog", e.margenPct);
