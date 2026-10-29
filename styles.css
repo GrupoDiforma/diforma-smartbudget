@@ -228,7 +228,7 @@ body {
     display: grid;
     grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.75fr) 28px;
     gap: 6px;
-    align-items: center;
+    align-items: start;
     min-width: 0;
 }
 .ficha-emp-head span {
@@ -238,6 +238,21 @@ body {
     text-transform: uppercase;
     color: #9ca3af;
     line-height: 1.1;
+}
+.ficha-emp-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.ficha-emp-cell .ficha-alt {
+    font-size: 0.62rem;
+    font-weight: 500;
+    color: #737373;
+    line-height: 1.2;
+    min-height: 0.9rem;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .ficha-emp-caja .form-control {
     border-radius: var(--ficha-r) !important;

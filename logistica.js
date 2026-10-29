@@ -2289,20 +2289,51 @@ function logEnv_() {
     return e;
 }
 
+/**
+ * Modalidad + cifra clave para PDF / «Una línea»:
+ * FCL → contenedores; LCL → m³; Aéreo/Courier → kg cobrados (máx. real/vol).
+ */
 function logEnvDetalleFlete_(esEn, escId) {
     const e = logEnv_();
     const mod = logEnvModalidad_(escId);
+    const cub = typeof logCubicajeTotal_ === "function"
+        ? logCubicajeTotal_(esEn ? "en" : "es", escId)
+        : { m3: 0, pesoKg: 0, kgVol: 0 };
     if (mod === "fcl") {
         const st = escId ? logEnvEscDe_(e, escId) : null;
         const txt = logContenedoresTexto_(logContenedoresNorm_(st ? st.contenedores : e.contenedores));
-        return txt ? ("FCL " + txt) : "";
+        return txt ? ("FCL " + txt) : "FCL";
     }
     if (mod === "lcl") {
-        const m3 = Number(logCubicajeTotal_(esEn ? "en" : "es", escId).m3) || 0;
-        if (!(m3 > 0)) return "";
+        const m3 = Number(cub.m3) || 0;
+        if (!(m3 > 0)) return "LCL";
         return "LCL " + logFmtM3_(m3, esEn ? "en" : "es");
     }
+    if (mod === "aerea" || mod === "courier") {
+        const nom = mod === "courier" ? "Courier" : (esEn ? "Air" : "Aéreo");
+        const kg = Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0);
+        if (!(kg > 0)) return nom;
+        const um = typeof logPesoUmDoc_ === "function" ? logPesoUmDoc_() : "kg";
+        const val = typeof logKgADoc_ === "function" ? logKgADoc_(kg) : kg;
+        const n = Math.round(Number(val) * 100) / 100;
+        return nom + " " + logFmtNum_(n, esEn ? "en" : "es", n % 1 ? 2 : 0) + " " + um;
+    }
+    if (mod === "terrestre") return esEn ? "Land freight" : "Terrestre";
     return "";
+}
+
+/** Título del monto logístico en modo «Una línea»: título base + modalidad/detalle. */
+function logEnvTituloResumen_(T, mon, esEn, escId) {
+    const base = logEnvTitulo_("log", T, mon, esEn, escId);
+    const det = logEnvDetalleFlete_(esEn, escId);
+    if (!det) return base;
+    const marca = mon ? (" · " + mon) : "";
+    if (marca && base.length >= marca.length
+        && base.slice(-marca.length).toUpperCase() === marca.toUpperCase()) {
+        return (base.slice(0, -marca.length) + " · " + det + marca).trim();
+    }
+    if (base.toUpperCase().indexOf(det.toUpperCase()) >= 0) return base;
+    return (base + " · " + det).trim();
 }
 
 function logEnvFilasImpresas_(lineas, esEn, escId) {
@@ -4799,12 +4830,16 @@ function logisticaTablaHTML_(idioma) {
         if (hayLogK) {
             let titLog = (T.secEnvios || "Logística") + " — " + nombreOp;
             if (detFlete) titLog += " · " + detFlete;
-            if (Number(cubK.m3) > 0) titLog += " · " + logFmtM3_(cubK.m3, idioma);
-            if (pesoK > 0) titLog += " · " + logFmtNum_(Math.round(pesoK * 100) / 100, idioma, 2) + " kg";
+            /* Si el detalle ya trae m³ (LCL) o kg (aéreo), no repetir. En FCL sí suman volumen/peso. */
+            const modK = logEnvModalidad_(k);
+            if (modK === "fcl" || !detFlete) {
+                if (Number(cubK.m3) > 0) titLog += " · " + logFmtM3_(cubK.m3, idioma);
+                if (pesoK > 0) titLog += " · " + logFmtNum_(Math.round(pesoK * 100) / 100, idioma, 2) + " kg";
+            }
             h += "<tr class=\"sec-gap\"><td colspan=\"" + n + "\"></td></tr>";
             h += "<tr class=\"sec\"><td colspan=\"" + n + "\">" + logEsc_(titLog) + "</td></tr>";
             if (logEnv_().modoCosto === "resumen") {
-                h += filaMonto1_("it it-env", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn, k)), pres.env[k], k);
+                h += filaMonto1_("it it-env", "env", edTit("titSubLog", logEnvTituloResumen_(T, mon, esEn, k)), pres.env[k], k);
             } else {
                 enviosK.forEach(function (fila) {
                     const v0 = logFilaValores_(fila, idioma, k);
@@ -4870,7 +4905,7 @@ function logisticaTablaHTML_(idioma) {
         bloqueLog += "<tr class=\"sec-gap\"><td colspan=\"" + n + "\"></td></tr>";
         bloqueLog += "<tr class=\"sec\"><td colspan=\"" + n + "\">" + logEsc_(T.secEnvios) + "</td></tr>";
         if (logEnv_().modoCosto === "resumen") {
-            bloqueLog += filaMontos_("it it-env", "env", edTit("titSubLog", logEnvTitulo_("log", T, mon, esEn)), pres.env);
+            bloqueLog += filaMontos_("it it-env", "env", edTit("titSubLog", logEnvTituloResumen_(T, mon, esEn)), pres.env);
         } else {
             envios.forEach(function (fila) {
                 const v0 = logFilaValores_(fila, idioma, "");

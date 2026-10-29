@@ -1021,18 +1021,24 @@ function pintarEmpCajasUI_(cajas) {
         "<div class=\"ficha-emp-head\" aria-hidden=\"true\">" +
         "<span>Nombre</span><span>Ancho</span><span>Fondo</span><span>Alto</span>" +
         "<span>Und/caja</span><span>Cajas/pza</span><span>Peso " + umPeso + "</span><span></span></div>";
+    const celdaMed_ = function (campo, val, step, titulo) {
+        return "<div class=\"ficha-emp-cell\">" +
+            "<input type=\"number\" step=\"" + step + "\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"" + campo + "\" value=\"" + esc(val) + "\" title=\"" + titulo + "\">" +
+            "<span class=\"ficha-alt\" data-emp-alt=\"" + campo + "\"></span>" +
+            "</div>";
+    };
     box.innerHTML = head + lista.map(function (c, i) {
         const quitar = lista.length > 1
             ? "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-emp-del title=\"Quitar esta caja\"><i class=\"bi bi-trash\"></i></button>"
             : "<span></span>";
         return "<div class=\"ficha-emp-caja\" data-emp-i=\"" + i + "\">" +
             "<input type=\"text\" class=\"form-control form-control-sm\" data-emp=\"nombre\" maxlength=\"40\" placeholder=\"Base, anaquel…\" value=\"" + esc(c.nombre) + "\" title=\"Nombre del tipo de caja\">" +
-            "<input type=\"number\" step=\"0.1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"ancho\" value=\"" + esc(c.ancho) + "\" title=\"Ancho\">" +
-            "<input type=\"number\" step=\"0.1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"fondo\" value=\"" + esc(c.fondo) + "\" title=\"Fondo\">" +
-            "<input type=\"number\" step=\"0.1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"alto\" value=\"" + esc(c.alto) + "\" title=\"Alto\">" +
+            celdaMed_("ancho", c.ancho, "0.1", "Ancho") +
+            celdaMed_("fondo", c.fondo, "0.1", "Fondo") +
+            celdaMed_("alto", c.alto, "0.1", "Alto") +
             "<input type=\"number\" step=\"1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"und\" value=\"" + esc(c.und) + "\" title=\"Productos por caja de este tipo\">" +
             "<input type=\"number\" step=\"1\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"porPieza\" value=\"" + esc(c.porPieza) + "\" title=\"Cajas de este tipo por cada producto\">" +
-            "<input type=\"number\" step=\"0.01\" min=\"0\" class=\"form-control form-control-sm\" data-emp=\"peso\" value=\"" + esc(c.peso) + "\" title=\"Peso de una caja\">" +
+            celdaMed_("peso", c.peso, "0.01", "Peso de una caja") +
             quitar +
             "</div>";
     }).join("");
@@ -1061,6 +1067,7 @@ function pintarEmpCajasUI_(cajas) {
     });
     fichaSincronizarLegacyEmp_();
     fichaEmpActualizarResumen_();
+    if (typeof pintarFichaEquivalencia === "function") pintarFichaEquivalencia();
     /* Abrir solo si hay varias cajas o el panel ya estaba abierto. */
     if (lista.length > 1) fichaEmpSetAbierto_(true);
     else if (!fichaEmpEstaAbierto_()) fichaEmpSetAbierto_(false);
@@ -1160,6 +1167,19 @@ function pintarFichaEquivalencia() {
         if (!spec) { el.textContent = ""; return; }
         const n = fichaNumAlt_(spec[0]);
         el.textContent = n == null ? "" : (fichaFmtAlt_(n * spec[1]) + " " + spec[2]);
+    });
+    /* Detalle de empaque (multi-caja): misma equivalencia chica debajo de Ancho/Fondo/Alto/Peso. */
+    const empAlt = { ancho: [kDim, umAlt], fondo: [kDim, umAlt], alto: [kDim, umAlt], peso: [kPeso, pesoAlt] };
+    document.querySelectorAll(".ficha-emp-caja").forEach(function (row) {
+        Object.keys(empAlt).forEach(function (campo) {
+            const alt = row.querySelector(".ficha-alt[data-emp-alt=\"" + campo + "\"]");
+            if (!alt) return;
+            const inp = row.querySelector("[data-emp=\"" + campo + "\"]");
+            if (!inp || inp.value === "" || inp.value == null) { alt.textContent = ""; return; }
+            const n = Number(inp.value);
+            if (!isFinite(n)) { alt.textContent = ""; return; }
+            alt.textContent = fichaFmtAlt_(n * empAlt[campo][0]) + " " + empAlt[campo][1];
+        });
     });
 }
 
