@@ -1155,10 +1155,23 @@ async function refrescarEstadoAranceles() {
     }
 }
 
-function selBaseArancel_(val) {
+function arancelBaseUi_(raw, pct) {
+    if (typeof logArancelBaseODefecto_ === "function") return logArancelBaseODefecto_(raw, pct);
+    if (typeof logArancelNormBase_ === "function") {
+        const b = logArancelNormBase_(raw);
+        if (b) return b;
+    }
+    const t = String(raw || "").toUpperCase();
+    if (t === "EXW" || t === "CIF" || t === "CIF+DUTY") return t;
+    if (pct != null && String(pct).trim() !== "" && isFinite(Number(pct))) return "EXW";
+    return "";
+}
+
+function selBaseArancel_(val, pct) {
+    const actual = arancelBaseUi_(val, pct);
     const opts = [["", "—"], ["EXW", "EXW"], ["CIF", "CIF"], ["CIF+DUTY", "CIF + gravamen"]];
     return opts.map(function (o) {
-        return "<option value=\"" + o[0] + "\"" + (val === o[0] ? " selected" : "") + ">" + o[1] + "</option>";
+        return "<option value=\"" + o[0] + "\"" + (actual === o[0] ? " selected" : "") + ">" + o[1] + "</option>";
     }).join("");
 }
 
@@ -1189,13 +1202,15 @@ function selPartidaArancel_(val) {
 function htmlFilaArancel_(f) {
     const pct = function (n) { return n == null || n === "" ? "" : n; };
     const partida = arancelPartidaFmt_(f.partida || "");
+    const dPct = f.dutiesPct;
+    const tPct = f.taxesPct;
     return "<tr data-desc=\"" + escHtml(f.descripcion || "") + "\">" +
-        "<td><input data-k=\"pais\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.pais || "") + "\"></td>" +
+        "<td><input data-k=\"pais\" class=\"form-control form-control-sm\" value=\"" + escHtml(f.pais || "") + "\" title=\"Cualquier país: las bases Duties/Taxes de esta fila aplican a ese destino.\"></td>" +
         "<td><select data-k=\"partida\" class=\"form-select form-select-sm\">" + selPartidaArancel_(partida) + "</select></td>" +
-        "<td><input data-k=\"dutiesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(f.dutiesPct) + "\"></td>" +
-        "<td><select data-k=\"dutiesBase\" class=\"form-select form-select-sm\">" + selBaseArancel_(f.dutiesBase || "") + "</select></td>" +
-        "<td><input data-k=\"taxesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(f.taxesPct) + "\"></td>" +
-        "<td><select data-k=\"taxesBase\" class=\"form-select form-select-sm\">" + selBaseArancel_(f.taxesBase || "") + "</select></td>" +
+        "<td><input data-k=\"dutiesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(dPct) + "\"></td>" +
+        "<td><select data-k=\"dutiesBase\" class=\"form-select form-select-sm\" title=\"Base Duties: EXW = mercancía; CIF = EXW+origen+flete+seguro; CIF+gravamen = CIF+Duties.\">" + selBaseArancel_(f.dutiesBase, dPct) + "</select></td>" +
+        "<td><input data-k=\"taxesPct\" type=\"number\" step=\"0.001\" class=\"form-control form-control-sm\" value=\"" + pct(tPct) + "\"></td>" +
+        "<td><select data-k=\"taxesBase\" class=\"form-select form-select-sm\" title=\"Base Taxes (independiente de Duties). Misma lógica EXW / CIF / CIF+gravamen.\">" + selBaseArancel_(f.taxesBase, tPct) + "</select></td>" +
         "<td><input data-k=\"nota\" class=\"form-control form-control-sm arancel-nota-tip\" maxlength=\"400\" placeholder=\"Observación\" data-tip=\"" + escHtml(f.nota || "") + "\" value=\"" + escHtml(f.nota || "") + "\"></td>" +
         "<td class=\"text-nowrap\">" +
         "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary me-1\" data-ar=\"dup\" title=\"Duplicar\"><i class=\"bi bi-copy\"></i></button>" +
@@ -1316,11 +1331,17 @@ function leerFilaArancelUi_(tr) {
         const el = tr.querySelector("[data-k=\"" + k + "\"]");
         return el ? el.value : "";
     };
+    const dPctRaw = g("dutiesPct");
+    const tPctRaw = g("taxesPct");
+    const dPct = dPctRaw === "" ? null : Number(String(dPctRaw).replace(",", "."));
+    const tPct = tPctRaw === "" ? null : Number(String(tPctRaw).replace(",", "."));
     return {
         pais: g("pais"),
         partida: arancelPartidaFmt_(g("partida")),
-        dutiesPct: g("dutiesPct"), dutiesBase: g("dutiesBase"),
-        taxesPct: g("taxesPct"), taxesBase: g("taxesBase"),
+        dutiesPct: dPctRaw,
+        dutiesBase: arancelBaseUi_(g("dutiesBase"), isFinite(dPct) ? dPct : null),
+        taxesPct: tPctRaw,
+        taxesBase: arancelBaseUi_(g("taxesBase"), isFinite(tPct) ? tPct : null),
         nota: g("nota"),
         descripcion: tr.getAttribute("data-desc") || ""
     };
@@ -1343,7 +1364,18 @@ function arancelesMemoriaDesdeUi_() {
     const filas = leerArancelesUI();
     if (!filas || typeof logAranceles === "undefined") return;
     logAranceles.filas = filas.map(function (f) {
-        return Object.assign({}, f, { partida: arancelPartidaFmt_(f.partida) });
+        const dPct = f.dutiesPct === "" || f.dutiesPct == null ? null : Number(String(f.dutiesPct).replace(",", "."));
+        const tPct = f.taxesPct === "" || f.taxesPct == null ? null : Number(String(f.taxesPct).replace(",", "."));
+        return {
+            pais: f.pais,
+            partida: arancelPartidaFmt_(f.partida),
+            dutiesPct: dPct != null && isFinite(dPct) ? dPct : null,
+            dutiesBase: arancelBaseUi_(f.dutiesBase, dPct),
+            taxesPct: tPct != null && isFinite(tPct) ? tPct : null,
+            taxesBase: arancelBaseUi_(f.taxesBase, tPct),
+            nota: f.nota || "",
+            descripcion: f.descripcion || ""
+        };
     });
     logAranceles.pedido = true;
     /* Mantener el maestro de partidas alineado con las tasas por país. */
@@ -1422,10 +1454,20 @@ function pintarTablaAranceles() {
             arancelesLlenarFiltroPais_();
             arancelesAplicarVista_();
         });
-        body.addEventListener("change", function () {
+        body.addEventListener("change", function (ev) {
             arancelesMemoriaDesdeUi_();
             arancelesLlenarFiltroPais_();
             if (typeof logAraSimLlenar_ === "function") logAraSimLlenar_();
+            /* Al cambiar % o base, reaplicar en la cotización abierta (cualquier país). */
+            const k = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-k");
+            if (k === "dutiesBase" || k === "taxesBase" || k === "dutiesPct" || k === "taxesPct" || k === "partida" || k === "pais") {
+                try {
+                    if (typeof logAplicarAranceles_ === "function" && logAplicarAranceles_()) {
+                        if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
+                        if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+                    }
+                } catch (eA) { /* ok */ }
+            }
         });
     }
     return realizarPeticionBD({ action: "aranceles_consultar" }).then(function (data) {
@@ -1436,7 +1478,11 @@ function pintarTablaAranceles() {
             return;
         }
         const filas = (data.data.filas || []).map(function (f) {
-            return Object.assign({}, f, { partida: arancelPartidaFmt_(f.partida) });
+            return Object.assign({}, f, {
+                partida: arancelPartidaFmt_(f.partida),
+                dutiesBase: arancelBaseUi_(f.dutiesBase, f.dutiesPct),
+                taxesBase: arancelBaseUi_(f.taxesBase, f.taxesPct)
+            });
         });
         _arancelesHojaLista = true;
         _arancelesHojaFallo = false;
@@ -1484,7 +1530,11 @@ function agregarFilaArancelUI() {
     body.setAttribute("data-cargada", "1");
     const vacio = body.querySelector("td[colspan]");
     if (vacio) body.innerHTML = "";
-    const seed = { pais: _arancelesUiFiltro.pais || "" };
+    const seed = {
+        pais: _arancelesUiFiltro.pais || "",
+        dutiesBase: "EXW",
+        taxesBase: "EXW"
+    };
     body.insertAdjacentHTML("beforeend", htmlFilaArancel_(seed));
     arancelesMemoriaDesdeUi_();
     arancelesLlenarFiltroPais_();
@@ -1501,9 +1551,29 @@ async function guardarArancelesConAjustes_() {
     const data = await realizarPeticionBD({ action: "aranceles_reemplazar", email: email, filas: filas }, { timeoutMs: 60000 });
     if (!data || !data.exito) throw new Error((data && data.mensaje) || "No se guardaron los aranceles.");
     if (typeof logAranceles !== "undefined") {
-        logAranceles.filas = filas;
+        logAranceles.filas = filas.map(function (f) {
+            const dPct = f.dutiesPct === "" || f.dutiesPct == null ? null : Number(String(f.dutiesPct).replace(",", "."));
+            const tPct = f.taxesPct === "" || f.taxesPct == null ? null : Number(String(f.taxesPct).replace(",", "."));
+            return {
+                pais: f.pais,
+                partida: arancelPartidaFmt_(f.partida),
+                dutiesPct: dPct != null && isFinite(dPct) ? dPct : null,
+                dutiesBase: arancelBaseUi_(f.dutiesBase, dPct),
+                taxesPct: tPct != null && isFinite(tPct) ? tPct : null,
+                taxesBase: arancelBaseUi_(f.taxesBase, tPct),
+                nota: f.nota || "",
+                descripcion: f.descripcion || ""
+            };
+        });
         logAranceles.pedido = true;
     }
+    /* Reaplica Duties/Taxes en la cotización abierta (p. ej. al corregir base EXW en Ajustes). */
+    try {
+        if (typeof logAplicarAranceles_ === "function" && logAplicarAranceles_()) {
+            if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
+            if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+        }
+    } catch (eRe) { /* ok */ }
     return true;
 }
 
@@ -1737,7 +1807,7 @@ var LOG_TAR_DESC = {
     fcl: "Una fila por puerto y tipo de contenedor. Los otros cargos se suman cuando no van dentro del flete. Entra la preferida.",
     lcl: "Una fila por puerto. Se cobra el precio por el mayor entre toneladas y m³, y después el mínimo.",
     seguro: "Un porcentaje del valor de la mercancía, según la modalidad, con mínimo.",
-    destino: "Un cargo por país, ciudad y modalidad. Si Forma es Fijo, Precio es el valor del cargo. Si Forma es Variable y Sobre es Valor, Precio es el porcentaje de la mercancía (0,125 significa 0,125 %). Si Sobre es Otros cargos, Precio es el porcentaje de otros cargos de esta misma ruta: en el recuadro escribe sus conceptos tal como están en la columna Concepto, separados por coma. Ejemplo: Inland Fuel, Precio 42, y en el recuadro Container Drayage, Container Empty Return. Contenedor: déjalo en «Cualquiera» si el cargo no depende del tamaño; pon 20, 40, 40HC o 40/40HC cuando el precio cambia según el equipo (así no se cobra doble el DTHC u otro THC).",
+    destino: "Un cargo por país, ciudad y modalidad. Si Forma es Fijo, Precio es el monto (USD/COP a la derecha). Si Forma es Variable y Sobre es Valor, Precio es el % de la mercancía: escribe 0.125 (no 125) — verás el preview «sobre $X → $Y». Si Sobre es Otros cargos, Precio es el % de esos cargos (42 = 42 %). En el recuadro lista conceptos separados por coma. Contenedor: «Cualquiera» si no depende del tamaño; 20, 40, 40HC o 40/40HC cuando sí (evita cobrar doble DTHC/THC).",
 };
 
 var LOG_TAR_COLS = {
@@ -1755,6 +1825,195 @@ var LOG_TAR_SUG_DESTINO = ["Delivery", "Warehouse Transfer", "Fuel surcharge", "
 
 function escLogTar_(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/** Unidad visible del precio según Forma / Sobre / pestaña. */
+function logTarUnidadDeFila_(tab, f) {
+    const mon = String((f && f.moneda) || "USD");
+    if (tab === "seguro") {
+        return { kind: "pct", suffix: "%", ph: "0.4", label: "% del valor" };
+    }
+    if (f && f.forma === "variable") {
+        if (f.baseVar === "valor") return { kind: "pct", suffix: "%", ph: "0.125", label: "% del valor mercancía" };
+        if (f.baseVar === "cargos") return { kind: "pct", suffix: "%", ph: "42", label: "% sobre otros cargos" };
+        if (f.baseVar === "peso") return { kind: "rate", suffix: "/ kg", ph: "0.35", label: mon + " por kg" };
+        if (f.baseVar === "volumen") return { kind: "rate", suffix: "/ m³", ph: "21", label: mon + " por m³" };
+        if (f.baseVar === "wm") return { kind: "rate", suffix: "/ W&M", ph: "21", label: mon + " por ton o m³" };
+    }
+    if (tab === "interno" && f && f.cobro === "kg") return { kind: "rate", suffix: "/ kg", ph: "1", label: mon + " por kg" };
+    return { kind: "money", suffix: mon, ph: "100", label: "Monto " + mon };
+}
+
+/** Rangos típicos para % sobre valor (anti-error HMF/MPF/bond…). */
+function logTarPctEsperado_(concepto) {
+    const n = String(concepto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (!n) return null;
+    if (/harbor\s*maintenance|\bhmf\b/.test(n)) return { min: 0.05, max: 0.35, tip: 0.125, nom: "HMF" };
+    if (/merchandise\s*processing|\bmpf\b/.test(n)) return { min: 0.2, max: 0.5, tip: 0.3464, nom: "MPF" };
+    if (/single\s*(entry|transaction)\s*bond|\bbond\b/.test(n) && !/isf/.test(n)) return { min: 0.4, max: 1.5, tip: 0.7, nom: "Bond" };
+    if (/agenciamiento/.test(n)) return { min: 0.1, max: 2, tip: 0.35, nom: "Agenciamiento" };
+    return null;
+}
+
+function logTarEsPctFila_(tab, f) {
+    if (tab === "seguro") return true;
+    return !!(f && f.forma === "variable" && (f.baseVar === "valor" || f.baseVar === "cargos"));
+}
+
+function logTarBasePreviewUsd_() {
+    const el = document.getElementById("logTarSimValor");
+    const n = el ? Number(el.value) : NaN;
+    if (isFinite(n) && n > 0) return n;
+    try {
+        if (typeof logTarValorMercancia_ === "function") {
+            const v = Number(logTarValorMercancia_(""));
+            if (isFinite(v) && v > 0) return v;
+        }
+    } catch (e) { /* ok */ }
+    return 1000;
+}
+
+function logTarFmtMoneyHint_(n, mon) {
+    const v = Math.round(Number(n) * 100) / 100;
+    if (!isFinite(v)) return "—";
+    const s = v.toLocaleString("en-US", { minimumFractionDigits: v % 1 ? 2 : 0, maximumFractionDigits: 2 });
+    return (mon === "COP" ? "$ " : "USD ") + s;
+}
+
+/** ¿El % parece ×1000 o fuera de rango típico? */
+function logTarPctSospechoso_(tab, f) {
+    if (!logTarEsPctFila_(tab, f) || (f.baseVar === "cargos")) return null;
+    const p = Number(f.precio);
+    if (!isFinite(p) || p < 0) return null;
+    const esp = logTarPctEsperado_(f.concepto);
+    if (esp) {
+        if (p >= esp.min && p <= esp.max) return null;
+        const div = p / 1000;
+        if (div >= esp.min && div <= esp.max) {
+            return { tip: Math.round(div * 10000) / 10000, msg: "Parece ×1000. ¿Quisiste " + (Math.round(div * 10000) / 10000) + " %?" };
+        }
+        if (p > esp.max) {
+            return { tip: esp.tip, msg: (esp.nom || "Este %") + " suele ser ~" + esp.tip + " %. Ahora está en " + p + " %." };
+        }
+    }
+    if (f.baseVar === "valor" && p >= 10) {
+        return { tip: p / 1000, msg: p + " % del valor es extremo. Si era 0," + String(p).replace(/^0*/, "") + " escribe con punto: " + (p / 1000) + "." };
+    }
+    return null;
+}
+
+function logTarPrecioHtml_(tab, f) {
+    const u = logTarUnidadDeFila_(tab, f);
+    const sospe = logTarPctSospechoso_(tab, f);
+    let hint = "";
+    if (u.kind === "pct" && f.baseVar !== "cargos") {
+        const base = logTarBasePreviewUsd_();
+        const p = Number(f.precio);
+        if (isFinite(p)) {
+            const monto = base * p / 100;
+            hint = "<div class=\"lt-precio-hint\">" + escLogTar_(u.label) + " · sobre " +
+                escLogTar_(logTarFmtMoneyHint_(base, "USD")) + " → <b>" + escLogTar_(logTarFmtMoneyHint_(monto, f.moneda || "USD")) + "</b></div>";
+        } else {
+            hint = "<div class=\"lt-precio-hint\">" + escLogTar_(u.label) + " · ej. " + escLogTar_(u.ph) + "</div>";
+        }
+    } else if (u.kind === "pct") {
+        hint = "<div class=\"lt-precio-hint\">" + escLogTar_(u.label) + " (42 = 42 %)</div>";
+    } else {
+        hint = "<div class=\"lt-precio-hint\">" + escLogTar_(u.label) + "</div>";
+    }
+    let warn = "";
+    if (sospe) {
+        warn = "<div class=\"lt-precio-warn\">" + escLogTar_(sospe.msg) +
+            " <button type=\"button\" class=\"btn btn-sm btn-warning py-0 px-1\" data-lt=\"fix-pct\" data-v=\"" +
+            escLogTar_(sospe.tip) + "\">Usar " + escLogTar_(sospe.tip) + " %</button></div>";
+    }
+    return "<div class=\"lt-precio-wrap" + (sospe ? " is-warn" : "") + "\">" +
+        "<div class=\"sb-unit\">" +
+        "<input data-k=\"precio\" type=\"number\" step=\"any\" inputmode=\"decimal\" class=\"form-control form-control-sm text-end lt-num" +
+        (sospe ? " is-invalid" : "") + "\" placeholder=\"" + escLogTar_(u.ph) + "\" title=\"" + escLogTar_(u.label) +
+        "\" value=\"" + escLogTar_(f.precio == null ? "" : f.precio) + "\">" +
+        "<span class=\"sb-unit-suf\" title=\"" + escLogTar_(u.label) + "\">" + escLogTar_(u.suffix) + "</span>" +
+        "</div>" + hint + warn + "</div>";
+}
+
+/** Corrige HMF/MPF/etc. guardados ×1000 (125 → 0.125). */
+function logTarSanearPcts_() {
+    if (!window.logTarifas) return [];
+    const fixes = [];
+    ["origen", "destino", "seguro"].forEach(function (tab) {
+        (window.logTarifas[tab] || []).forEach(function (f) {
+            if (tab !== "seguro" && !(f.forma === "variable" && f.baseVar === "valor")) return;
+            const esp = logTarPctEsperado_(f.concepto);
+            if (!esp) return;
+            const p = Number(f.precio);
+            if (!isFinite(p) || p <= esp.max) return;
+            const div = Math.round((p / 1000) * 10000) / 10000;
+            if (div >= esp.min && div <= esp.max) {
+                fixes.push({ tab: tab, concepto: f.concepto, de: p, a: div });
+                f.precio = div;
+            } else if (Math.abs(p - esp.tip * 1000) < 0.01) {
+                fixes.push({ tab: tab, concepto: f.concepto, de: p, a: esp.tip });
+                f.precio = esp.tip;
+            }
+        });
+    });
+    return fixes;
+}
+
+function logTarListarPctSospechosos_() {
+    if (!window.logTarifas) return [];
+    const out = [];
+    ["origen", "destino", "seguro"].forEach(function (tab) {
+        (window.logTarifas[tab] || []).forEach(function (f) {
+            const s = logTarPctSospechoso_(tab === "seguro" ? "seguro" : tab, tab === "seguro" ? Object.assign({}, f, { forma: "variable", baseVar: "valor" }) : f);
+            if (!s) return;
+            out.push({ tab: tab, id: f.id, concepto: f.concepto || "(sin concepto)", precio: f.precio, tip: s.tip, msg: s.msg });
+        });
+    });
+    return out;
+}
+
+function logTarPintarAvisoPct_() {
+    let box = document.getElementById("logTarAvisoPct");
+    if (!box) {
+        const panel = document.getElementById("logTarPanel");
+        if (!panel) return;
+        box = document.createElement("div");
+        box.id = "logTarAvisoPct";
+        box.className = "log-tar-aviso-pct";
+        box.hidden = true;
+        const desc = document.getElementById("logTarDesc");
+        if (desc && desc.parentNode) desc.parentNode.insertBefore(box, desc.nextSibling);
+        else panel.insertBefore(box, panel.firstChild);
+    }
+    const lista = logTarListarPctSospechosos_();
+    if (!lista.length) {
+        box.hidden = true;
+        box.innerHTML = "";
+        return;
+    }
+    box.hidden = false;
+    box.innerHTML = "<strong>" + lista.length + " tarifa" + (lista.length === 1 ? "" : "s") +
+        " con % dudoso.</strong> Revisa Precio (unidad % a la derecha). " +
+        "Si ves 125 en HMF o 3464 en MPF, casi seguro era 0.125 / 0.3464. " +
+        "<button type=\"button\" class=\"btn btn-sm btn-outline-dark ms-1\" id=\"logTarSanearPctBtn\">Corregir automáticos ×1000</button>" +
+        "<ul class=\"mb-0 mt-1\">" + lista.slice(0, 8).map(function (x) {
+            return "<li><b>" + escLogTar_(x.concepto) + "</b> (" + escLogTar_(x.tab) + "): " +
+                escLogTar_(x.precio) + " % → sugerido " + escLogTar_(x.tip) + " %</li>";
+        }).join("") + (lista.length > 8 ? "<li>…y " + (lista.length - 8) + " más</li>" : "") + "</ul>";
+    const btn = document.getElementById("logTarSanearPctBtn");
+    if (btn && !btn.getAttribute("data-on")) {
+        btn.setAttribute("data-on", "1");
+        btn.addEventListener("click", function () {
+            const fixes = logTarSanearPcts_();
+            logTarPintar_();
+            if (typeof mostrarNotificacion === "function") {
+                mostrarNotificacion(fixes.length
+                    ? ("Corregí " + fixes.length + " % (×1000). Revisa y pulsa Guardar en Ajustes.")
+                    : "No había correcciones automáticas pendientes.", fixes.length ? "success" : "info");
+            }
+        });
+    }
 }
 
 function logTarHoy_() {
@@ -1843,6 +2102,10 @@ function logTarCargar_(raw) {
     if (!window.logTarPagina) window.logTarPagina = {};
     if (!window.logTarGrupo) window.logTarGrupo = { destino: "pais" };
     logTarReponerBorrador_();
+    const saneados = logTarSanearPcts_();
+    if (saneados.length && typeof mostrarNotificacion === "function") {
+        mostrarNotificacion("Ajusté " + saneados.length + " % en tarifas (valor ×1000 → decimal). Revisa Destino y pulsa Guardar.", "warning");
+    }
     logTarPintar_();
     if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
 }
@@ -2006,7 +2269,8 @@ function logTarCelda_(tab, f, col) {
         return "<input data-k=\"concepto\" class=\"form-control form-control-sm lt-concepto\" autocomplete=\"off\" value=\"" + escLogTar_(f.concepto || "") + "\">";
     }
     if (k === "fecha") return logTarInput_("fecha", f.fecha, "date", "lt-fecha");
-    if (k === "precio" || k === "minimo" || k === "r45" || k === "r100" || k === "r300" || k === "r500" || k === "fsKg") {
+    if (k === "precio") return logTarPrecioHtml_(tab, f);
+    if (k === "minimo" || k === "r45" || k === "r100" || k === "r300" || k === "r500" || k === "fsKg") {
         return logTarInput_(k, f[k], "number", "text-end lt-num");
     }
     if (k === "otros") return logTarOtrosHtml_(f);
@@ -2183,6 +2447,7 @@ function logTarPintar_() {
     }
     logTarAplicarOff_();
     logTarPintarPager_(ordenadas.length, pagOk, tam);
+    logTarPintarAvisoPct_();
     const tblTar = head.closest("table");
     if (tblTar && typeof adminFiltrosEnhance_ === "function") {
         adminFiltrosEnhance_(tblTar, {
@@ -2467,7 +2732,26 @@ function logTarInit_() {
         if (row.preferida === "S") logTarDejarUnaPreferida_(tab, row);
         const kPinta = ev.target.getAttribute("data-k");
         if (kPinta === "forma" || kPinta === "baseVar" || kPinta === "equipo") logTarPintar_();
-        else tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
+        else if (kPinta === "precio" || kPinta === "concepto" || kPinta === "moneda") {
+            const tdPrecio = tr.querySelector("[data-k=\"precio\"]");
+            const wrapParent = tdPrecio && tdPrecio.closest("td");
+            if (wrapParent) {
+                const keepFocus = document.activeElement === ev.target;
+                const selStart = keepFocus ? ev.target.selectionStart : null;
+                const selEnd = keepFocus ? ev.target.selectionEnd : null;
+                wrapParent.innerHTML = logTarPrecioHtml_(tab, row);
+                logTarAplicarOff_();
+                logTarPintarAvisoPct_();
+                if (keepFocus) {
+                    const inp = wrapParent.querySelector("[data-k=\"precio\"]");
+                    if (inp) {
+                        inp.focus();
+                        try { if (selStart != null) inp.setSelectionRange(selStart, selEnd); } catch (eSel) { /* ok */ }
+                    }
+                }
+            }
+            tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
+        } else tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
     });
     body.addEventListener("change", function (ev) {
         const kCampo = ev.target.getAttribute("data-k");
@@ -2503,6 +2787,14 @@ function logTarInit_() {
         const tab = window.logTarTab;
         const lista = window.logTarifas[tab] || [];
         logTarFlush_();
+        if (btn.getAttribute("data-lt") === "fix-pct") {
+            const row = tr && lista.find(function (r) { return r.id === tr.getAttribute("data-id"); });
+            if (!row) return;
+            const v = Number(btn.getAttribute("data-v"));
+            if (isFinite(v)) row.precio = v;
+            logTarPintar_();
+            return;
+        }
         if (btn.getAttribute("data-lt") === "otro") {
             const row = tr && lista.find(function (r) { return r.id === tr.getAttribute("data-id"); });
             if (!row) return;
@@ -3708,6 +4000,29 @@ async function guardarConfiguracion() {
     const email = localStorage.getItem('smartbudget_email');
     const token = localStorage.getItem('smartbudget_token');
     if (!email || !token) return alert("Sesión inválida.");
+
+    if (typeof logTarFlush_ === "function") logTarFlush_();
+    if (typeof logTarListarPctSospechosos_ === "function") {
+        const dudosos = logTarListarPctSospechosos_();
+        if (dudosos.length) {
+            const muestra = dudosos.slice(0, 5).map(function (x) {
+                return "• " + (x.concepto || "?") + " (" + x.tab + "): " + x.precio + " % → sugerido " + x.tip + " %";
+            }).join("\n");
+            const ok = confirm(
+                "Hay " + dudosos.length + " tarifa(s) con % dudoso (p. ej. HMF 125 en vez de 0.125).\n\n" +
+                muestra + (dudosos.length > 5 ? "\n…" : "") +
+                "\n\n¿Guardar de todos modos?\n(Cancela, corrige con el botón amarillo o «Corregir automáticos ×1000», y vuelve a Guardar.)"
+            );
+            if (!ok) {
+                if (typeof logAjustesVista === "function") logAjustesVista("destino");
+                if (typeof logTarPintarAvisoPct_ === "function") logTarPintarAvisoPct_();
+                if (typeof mostrarNotificacion === "function") {
+                    mostrarNotificacion("Guardado cancelado. Revisa los % marcados en Destino/Origen/Seguro.", "warning");
+                }
+                return;
+            }
+        }
+    }
 
     const getVal = id => { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; };
     const data = {

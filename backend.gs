@@ -3757,12 +3757,27 @@ function pctArancel_(raw) {
   return Math.round(n * 1000) / 1000;
 }
 
-function baseArancel_(raw) {
+/** Base canónica para Duties/Taxes: EXW | CIF | CIF+DUTY. Vale para cualquier país. */
+function normBaseArancel_(raw) {
   var s = txtArancel_(raw);
   if (!s) return "";
+  if (s.indexOf("cif") >= 0 && (s.indexOf("gravamen") >= 0 || s.indexOf("duty") >= 0 || s.indexOf("+") >= 0)) return "CIF+DUTY";
   if (s.indexOf("cif") >= 0) return "CIF";
   if (s.indexOf("exw") >= 0 || s.indexOf("ex work") >= 0) return "EXW";
+  if (raw === "EXW" || raw === "CIF" || raw === "CIF+DUTY") return raw;
   return "";
+}
+
+/** Si hay % y la base viene vacía/ilegible → EXW (defecto seguro para países nuevos). */
+function baseArancelODefecto_(raw, pct) {
+  var b = normBaseArancel_(raw);
+  if (b) return b;
+  if (pct != null && isFinite(Number(pct))) return "EXW";
+  return "";
+}
+
+function baseArancel_(raw) {
+  return normBaseArancel_(raw);
 }
 
 function filaCredencialArancel_(line) {
@@ -3838,10 +3853,7 @@ function tasaCeldaArancel_(raw) {
   var pct = 0;
   for (var i = 0; i < nums.length; i++) pct += parseFloat(String(nums[i]).replace(/\s/g, "").replace("%", "").replace(",", "."));
   if (!isFinite(pct)) return { pct: null, base: "", compuesto: false, texto: "" };
-  var base = "";
-  if (/cif/.test(t) && /gravamen|duty/.test(t)) base = "CIF+DUTY";
-  else if (/cif/.test(t)) base = "CIF";
-  else if (/exw|ex work/.test(t)) base = "EXW";
+  var base = normBaseArancel_(t) || normBaseArancel_(s);
   return { pct: Math.round(pct * 1000) / 1000, base: base, compuesto: nums.length > 1, texto: s.replace(/https?:\/\/\S+/gi, "").trim().slice(0, 80) };
 }
 
@@ -3852,12 +3864,7 @@ function notaLimpiaArancel_(s) {
 }
 
 function baseListaArancel_(raw) {
-  var t = txtArancel_(raw);
-  if (!t) return "";
-  if (t.indexOf("cif") >= 0 && (t.indexOf("gravamen") >= 0 || t.indexOf("duty") >= 0)) return "CIF+DUTY";
-  if (t.indexOf("cif") >= 0) return "CIF";
-  if (t.indexOf("exw") >= 0) return "EXW";
-  return "";
+  return normBaseArancel_(raw);
 }
 
 function filasListadoArancel_(grid) {
@@ -3883,10 +3890,13 @@ function filasListadoArancel_(grid) {
     if (!pais && !partida) continue;
     var du = cDu >= 0 ? pctArancel_(line[cDu]) : null;
     var tx = cTx >= 0 ? pctArancel_(line[cTx]) : null;
-    var db = baseListaArancel_(cBd >= 0 ? line[cBd] : "");
-    var tb = baseListaArancel_(cBt >= 0 ? line[cBt] : "");
+    var dbRaw = baseListaArancel_(cBd >= 0 ? line[cBd] : "");
+    var tbRaw = baseListaArancel_(cBt >= 0 ? line[cBt] : "");
+    var db = baseArancelODefecto_(dbRaw, du);
+    var tb = baseArancelODefecto_(tbRaw, tx);
     var revisar = /^s[ií]$/i.test(String(cRev >= 0 ? line[cRev] : "").trim()) ? "S" : "N";
-    if ((du > 0 && !db) || (tx > 0 && !tb)) revisar = "S";
+    /* Sin base explícita en el Excel: se asume EXW y se marca revisar. */
+    if ((du != null && du > 0 && !dbRaw) || (tx != null && tx > 0 && !tbRaw)) revisar = "S";
     out.push({
       pais: pais, codigo: codigoPaisArancel_(pais), partida: partida,
       descripcion: cDesc >= 0 ? String(line[cDesc] || "").trim().slice(0, 80) : "",
@@ -3939,15 +3949,15 @@ function filasArancelDeGrilla_(hoja) {
       var duty = cDu >= 0 ? tasaCeldaArancel_(line[cDu]) : { pct: null, base: "", compuesto: false, texto: "" };
       var tax = cTx >= 0 ? tasaCeldaArancel_(line[cTx]) : { pct: null, base: "", compuesto: false, texto: "" };
       if (duty.pct == null && tax.pct == null) continue;
-      var faltaBase = function (tasa) { return tasa.pct > 0 && !tasa.base; };
+      var faltaBase = function (tasa) { return tasa.pct != null && tasa.pct > 0 && !tasa.base; };
       var revisar = (faltaBase(duty) || faltaBase(tax) || duty.compuesto || tax.compuesto) ? "S" : "N";
       var extra = [];
       if (duty.compuesto && duty.texto) extra.push("Duty " + duty.texto);
       if (tax.compuesto && tax.texto) extra.push("Tax " + tax.texto);
       filasTabla.push({
         pais: pais, codigo: codigo, partida: partida,
-        dutiesPct: duty.pct, dutiesBase: duty.pct != null ? duty.base : "",
-        taxesPct: tax.pct, taxesBase: tax.pct != null ? tax.base : "",
+        dutiesPct: duty.pct, dutiesBase: duty.pct != null ? baseArancelODefecto_(duty.base, duty.pct) : "",
+        taxesPct: tax.pct, taxesBase: tax.pct != null ? baseArancelODefecto_(tax.base, tax.pct) : "",
         nota: extra.join(". ").slice(0, 180), revisar: revisar
       });
     }
@@ -4013,7 +4023,9 @@ function sincronizarAranceles(email, fromTrigger) {
   if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 11).clearContent();
   var ahora = ahoraBogota_();
   var chunk = uniq.map(function (r) {
-    return [r.pais, r.codigo, r.partida, r.dutiesPct == null ? "" : r.dutiesPct, r.dutiesBase, r.taxesPct == null ? "" : r.taxesPct, r.taxesBase, r.nota, r.revisar, ahora, r.descripcion || ""];
+    var db = baseArancelODefecto_(r.dutiesBase, r.dutiesPct);
+    var tb = baseArancelODefecto_(r.taxesBase, r.taxesPct);
+    return [r.pais, r.codigo, r.partida, r.dutiesPct == null ? "" : r.dutiesPct, db, r.taxesPct == null ? "" : r.taxesPct, tb, r.nota, r.revisar, ahora, r.descripcion || ""];
   });
   sheet.getRange(2, 1, chunk.length, 11).setValues(chunk);
   if (sheet.getLastRow() > chunk.length + 1) sheet.deleteRows(chunk.length + 2, sheet.getLastRow() - chunk.length - 1);
@@ -4032,15 +4044,19 @@ function leerFilasArancel_() {
   var filas = [];
   for (var i = 1; i < data.length; i++) {
     if (!data[i][0] && !data[i][2]) continue;
+    var dPct = data[i][3] === "" || data[i][3] == null ? null : Number(data[i][3]);
+    var tPct = data[i][5] === "" || data[i][5] == null ? null : Number(data[i][5]);
+    if (dPct != null && !isFinite(dPct)) dPct = null;
+    if (tPct != null && !isFinite(tPct)) tPct = null;
     filas.push({
       row: i + 1,
       pais: String(data[i][0] || ""),
       codigo: String(data[i][1] || "").toUpperCase(),
       partida: String(data[i][2] || ""),
-      dutiesPct: data[i][3] === "" || data[i][3] == null ? null : Number(data[i][3]),
-      dutiesBase: String(data[i][4] || ""),
-      taxesPct: data[i][5] === "" || data[i][5] == null ? null : Number(data[i][5]),
-      taxesBase: String(data[i][6] || ""),
+      dutiesPct: dPct,
+      dutiesBase: baseArancelODefecto_(data[i][4], dPct),
+      taxesPct: tPct,
+      taxesBase: baseArancelODefecto_(data[i][6], tPct),
       nota: String(data[i][7] || ""),
       descripcion: String(data[i][10] || "")
     });
@@ -4088,21 +4104,22 @@ function estadoAranceles() {
 
 function filaArancelDesdeUi_(f) {
   f = f || {};
-  var baseOk = function (b) { return b === "EXW" || b === "CIF" || b === "CIF+DUTY" ? b : ""; };
   var num = function (v) {
     if (v === "" || v == null) return "";
-    var n = Number(v);
+    var n = Number(String(v).replace(",", "."));
     return isFinite(n) ? n : "";
   };
   var pais = String(f.pais || "").trim().slice(0, 40);
+  var dPct = num(f.dutiesPct);
+  var tPct = num(f.taxesPct);
   return [
     pais,
     codigoPaisArancel_(pais) || String(f.codigo || "").trim().toUpperCase().slice(0, 2),
     String(f.partida || "").trim().slice(0, 24),
-    num(f.dutiesPct),
-    baseOk(f.dutiesBase),
-    num(f.taxesPct),
-    baseOk(f.taxesBase),
+    dPct,
+    baseArancelODefecto_(f.dutiesBase, dPct === "" ? null : dPct),
+    tPct,
+    baseArancelODefecto_(f.taxesBase, tPct === "" ? null : tPct),
     String(f.nota || "").trim().slice(0, 180),
     "N",
     ahoraBogota_()
@@ -4123,14 +4140,16 @@ function reemplazarAranceles(params, email) {
     if (!pais && !partida) continue;
     var dPct = f.dutiesPct === "" || f.dutiesPct == null ? null : Number(String(f.dutiesPct).replace(",", "."));
     var tPct = f.taxesPct === "" || f.taxesPct == null ? null : Number(String(f.taxesPct).replace(",", "."));
+    if (dPct != null && !isFinite(dPct)) dPct = null;
+    if (tPct != null && !isFinite(tPct)) tPct = null;
     filas.push({
       pais: pais,
       codigo: codigoPaisArancel_(pais) || String(f.codigo || "").trim().toUpperCase().slice(0, 2),
       partida: partida,
-      dutiesPct: dPct != null && isFinite(dPct) ? dPct : null,
-      dutiesBase: String(f.dutiesBase || ""),
-      taxesPct: tPct != null && isFinite(tPct) ? tPct : null,
-      taxesBase: String(f.taxesBase || ""),
+      dutiesPct: dPct,
+      dutiesBase: baseArancelODefecto_(f.dutiesBase, dPct),
+      taxesPct: tPct,
+      taxesBase: baseArancelODefecto_(f.taxesBase, tPct),
       nota: String(f.nota || "").slice(0, 400),
       descripcion: String(f.descripcion || ""),
       revisar: ""

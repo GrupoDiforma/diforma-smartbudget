@@ -1398,31 +1398,37 @@ function excelCotInsertarFilaModelo_(ws, atRow, styleFromRow) {
     }
 }
 
-/** Layout dinámico tras insertar filas de ítem arriba y en el resumen. */
-function excelCotLayout_(extraTop, extraSum) {
+/** Layout dinámico tras insertar filas de ítem arriba, servicios y resumen.
+ *  extraServ: filas de servicio insertadas entre TOTAL PRODUCTOS y el bloque de envío.
+ *  Si extraServ = 0, el layout coincide con la plantilla subida en Ajustes (sin hueco vacío). */
+function excelCotLayout_(extraTop, extraSum, extraServ) {
     const o = extraTop || 0;
     const s = extraSum || 0;
+    const sv = extraServ || 0;
     const log = {};
     Object.keys(XLSX_COT_LOG_ROWS_BASE_).forEach(function (k) {
-        log[k] = XLSX_COT_LOG_ROWS_BASE_[k] + o;
+        log[k] = XLSX_COT_LOG_ROWS_BASE_[k] + o + sv;
     });
     return {
         itemStart: XLSX_COT_ITEM_START_,
         itemSlots: XLSX_COT_ITEM_SLOTS_,
         itemEnd: XLSX_COT_ITEM_START_ + XLSX_COT_ITEM_SLOTS_ - 1 + o,
         totalProd: 6 + o,
+        servStart: sv ? 7 + o : 0,
+        servEnd: sv ? 6 + o + sv : 0,
+        servCount: sv,
         log: log,
-        logStart: 7 + o,
-        logEnd: 18 + o,
-        totalLog: 19 + o,
-        granTop: 20 + o,
-        pagoTop: [21 + o, 22 + o, 23 + o],
-        valid: 25 + o,
-        sumStart: 28 + o,
-        sumSlotsEnd: 30 + o,
-        best: 31 + o + s,
-        granBot: 32 + o + s,
-        pagoBot: [33 + o + s, 34 + o + s, 35 + o + s]
+        logStart: 7 + o + sv,
+        logEnd: 18 + o + sv,
+        totalLog: 19 + o + sv,
+        granTop: 20 + o + sv,
+        pagoTop: [21 + o + sv, 22 + o + sv, 23 + o + sv],
+        valid: 25 + o + sv,
+        sumStart: 28 + o + sv,
+        sumSlotsEnd: 30 + o + sv,
+        best: 31 + o + s + sv,
+        granBot: 32 + o + s + sv,
+        pagoBot: [33 + o + s + sv, 34 + o + s + sv, 35 + o + s + sv]
     };
 }
 
@@ -1791,10 +1797,23 @@ function excelCotMontosLogistica_(idioma, escId) {
         : 0;
     const vista = typeof logEnvVistaEsc_ === "function" ? logEnvVistaEsc_(escId || "") : {};
     const mod = String(vista.modalidad || "").toLowerCase();
+    const esServ = typeof logEsServicio_ === "function"
+        ? logEsServicio_
+        : function (ln) { return !!(ln && (ln.tipo === "servicio" || ln.tipo === "libre")); };
+    const esExtra = typeof logEsExtraEnvio_ === "function"
+        ? logEsExtraEnvio_
+        : function (ln) { return !!(ln && ln.tipo === "extra"); };
     lineas.forEach(function (ln) {
-        if (!ln || ln.tipo === "libre") return;
+        if (!ln || esServ(ln)) return; /* Servicios van en bloque aparte, no a origen/nal_otro */
         const val = typeof logEnvValorLinea_ === "function" ? logEnvValorLinea_(ln, baseProd, escId) : (Number(ln.valor) || 0);
         const v = Number(val) || 0;
+        if (esExtra(ln)) {
+            /* Conceptos libres de envío: van a «Otro» para no perder el monto en Excel. */
+            if (!(v > 0 || v < 0)) return;
+            map.nal_otro += v;
+            activo.nal_otro = true;
+            return;
+        }
         let key = ln.tipo;
         if (ln.tipo === "flete_principal") {
             key = mod === "aerea" ? "flete_aereo" : (mod === "terrestre" ? "flete_terrestre" : "flete_maritimo");
@@ -1812,21 +1831,21 @@ function excelCotMontosLogistica_(idioma, escId) {
         map[key] += v;
         activo[key] = true;
     });
-    /* Líneas libres: sumar a nal_otro o origen según mercado */
-    lineas.forEach(function (ln) {
-        if (!ln || ln.tipo !== "libre") return;
-        const val = typeof logEnvValorLinea_ === "function" ? logEnvValorLinea_(ln, baseProd, escId) : (Number(ln.valor) || 0);
-        const v = Number(val) || 0;
-        if (!(v > 0)) return;
-        if (typeof logEsCotizacionExterior_ === "function" && logEsCotizacionExterior_()) {
-            map.origen += v;
-            activo.origen = true;
-        } else {
-            map.nal_otro += v;
-            activo.nal_otro = true;
-        }
-    });
     return { map: map, activo: activo, mod: mod };
+}
+
+/** Servicios con monto (instalación, etc.) para insertar entre productos y envío. */
+function excelCotListarServicios_(idioma, escId) {
+    const esEn = idioma === "en";
+    if (typeof logEnvServiciosImpresos_ === "function") {
+        const lineas = (typeof logEnvLineasDeEsc_ === "function")
+            ? logEnvLineasDeEsc_(escId, esEn)
+            : ((typeof logEnv_ === "function" && logEnv_().lineas) || []);
+        return logEnvServiciosImpresos_(lineas, esEn, escId || "", idioma).map(function (x) {
+            return { label: x.label, monto: Math.round(Number(x.monto) * 100) / 100 };
+        });
+    }
+    return [];
 }
 
 function excelCotPctLogisticaVisible_(idioma, escId) {
@@ -1876,7 +1895,17 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
             excelCotInsertarFilaModelo_(ws, bestBase, sumStyleFrom);
         }
     }
-    const R = excelCotLayout_(extra, extra);
+    /* Servicios: filas entre TOTAL PRODUCTOS y el bloque de envío (solo si hay). */
+    const servicios = excelCotListarServicios_(idioma, escId);
+    const nServ = servicios.length;
+    if (nServ > 0) {
+        const insertAt = 7 + extra; /* primera fila de logística en plantilla + ítems extra */
+        for (let k = 0; k < nServ; k++) {
+            excelCotInsertarFilaModelo_(ws, insertAt, 5);
+        }
+        avisos.push("Se insertaron " + nServ + " fila(s) de servicio entre productos y logística.");
+    }
+    const R = excelCotLayout_(extra, extra, nServ);
     const granRef = "$F$" + R.granTop;
     const validRef = "$C$" + R.valid;
 
@@ -1996,12 +2025,23 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
         };
     }
 
-    const logM = excelCotMontosLogistica_(idioma, escId);
-    excelCotRomperBloqueDetalleLog_(ws, R.log.flete_aereo);
     const logLblOpts = {
         bold: false, size: 10, height: 15, align: "right",
         italic: false, fontName: "Arial", forceFont: true
     };
+    /* Bloque Servicios (antes del envío). Si nServ=0 no hay filas: no aparece en la hoja. */
+    if (R.servCount > 0 && R.servStart) {
+        for (let i = 0; i < servicios.length; i++) {
+            const row = R.servStart + i;
+            const lab = servicios[i].label || (esEn ? "Service" : "Servicio");
+            excelCotTituloFila_(ws, row, lab, 1, 5, logLblOpts);
+            ws.getCell(row, 6).value = Number(servicios[i].monto) || 0;
+            ws.getCell(row, 7).value = { formula: "IF(" + granRef + "=0,0,F" + row + "/" + granRef + ")" };
+        }
+    }
+
+    const logM = excelCotMontosLogistica_(idioma, escId);
+    excelCotRomperBloqueDetalleLog_(ws, R.log.flete_aereo);
     Object.keys(R.log).forEach(function (key) {
         const row = R.log[key];
         const val = Number(logM.map[key]) || 0;
@@ -2015,6 +2055,7 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
         bold: true, size: 10, height: 15, align: "right",
         italic: false, fontName: "Arial", forceFont: true
     });
+    /* TOTAL LOGÍSTICO = solo envío (sin servicios). */
     ws.getCell(R.totalLog, 6).value = { formula: "SUM(F" + R.logStart + ":F" + R.logEnd + ")" };
     ws.getCell(R.totalLog, 7).value = { formula: "IF(" + granRef + "=0,0,F" + R.totalLog + "/" + granRef + ")" };
     try {
@@ -2251,6 +2292,12 @@ async function rellenarHojaCotizacionExcel_(wb, avisos) {
 }
 
 window.exportarLogisticaExcel = function () {
+    if (typeof window.logisticaExportacionesBloqueadas_ === "function" && window.logisticaExportacionesBloqueadas_()) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Espera a que terminen de cargar Odoo y las fotos / Vista 3D.", "warning");
+        }
+        return;
+    }
     return window.exportarPresupuestoExcel({ incluirCotizacion: true, btnId: "btnLogExcel" });
 };
 
