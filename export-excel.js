@@ -1599,7 +1599,9 @@ function excelCotTituloMejor_(esEn, escId) {
     }
     const inc = String(vista.incoterm || "").toUpperCase();
     const ciudad = String(vista.destinoCiudad || "").trim();
-    const cod = String(vista.destinoCodigo || "").trim()
+    const cod = (typeof logEnvCodigoEfectivo_ === "function"
+        ? logEnvCodigoEfectivo_(vista)
+        : String(vista.destinoCodigo || "").trim())
         || (ciudad ? "" : String(vista.destinoPais || "").trim());
     const bits = [modo];
     if (det) bits.push(det);

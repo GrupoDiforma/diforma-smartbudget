@@ -2158,6 +2158,52 @@ html, body { overflow-x: hidden; }
 .lt-otro { display: flex; gap: 4px; margin-bottom: 4px; }
 .lt-otros { min-width: 220px; }
 .log-tar-sim { background: #fafafa; border: 1px solid var(--sb-line); border-radius: 8px; padding: 10px 12px; }
+.log-tar-dup {
+    background: #f7fafc;
+    border: 1px solid var(--sb-line);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.log-tar-dup-aviso {
+    /* Misma familia visual que .log-faltan (ciudad/puerto faltante en Logística). */
+    color: #7a1b14;
+    background: #fff1f0;
+    border: 1px solid #f0c2be;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+#logTarBody tr.lt-falta-precio {
+    background: #fff6f5 !important;
+}
+#logTarBody tr.lt-falta-precio [data-k="precio"].log-req,
+#logTarBody [data-k="precio"].log-req {
+    border-color: #b42318 !important;
+    background: #fff6f5 !important;
+    box-shadow: 0 0 0 1px #b42318;
+}
+/* Placeholder = precio del destino origen (solo guía visual). */
+#logTarBody .lt-precio-wrap.has-ref [data-k="precio"]::placeholder {
+    color: #c4a8a5;
+    opacity: 1;
+    font-style: italic;
+}
+.lt-falta-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #7a1b14;
+    background: #ffe8e6;
+    border: 1px solid #f0c2be;
+    border-radius: 3px;
+    padding: 0.05rem 0.35rem;
+    margin-right: 4px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
 .log-tar-carga { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--sb-line); }
 .log-tar-leyendo { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .log-tar-avance { height: 4px; max-width: 280px; margin-top: 6px; }

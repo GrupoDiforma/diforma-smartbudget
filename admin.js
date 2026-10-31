@@ -1807,7 +1807,7 @@ var LOG_TAR_DESC = {
     fcl: "Una fila por puerto y tipo de contenedor. Los otros cargos se suman cuando no van dentro del flete. Entra la preferida.",
     lcl: "Una fila por puerto. Se cobra el precio por el mayor entre toneladas y m³, y después el mínimo.",
     seguro: "Un porcentaje del valor de la mercancía, según la modalidad, con mínimo.",
-    destino: "Un cargo por país, ciudad y modalidad. Si Forma es Fijo, Precio es el monto (USD/COP a la derecha). Si Forma es Variable y Sobre es Valor, Precio es el % de la mercancía: escribe 0.125 (no 125) — verás el preview «sobre $X → $Y». Si Sobre es Otros cargos, Precio es el % de esos cargos (42 = 42 %). En el recuadro lista conceptos separados por coma. Contenedor: «Cualquiera» si no depende del tamaño; 20, 40, 40HC o 40/40HC cuando sí (evita cobrar doble DTHC/THC).",
+    destino: "Un cargo por país, ciudad y modalidad. Usa «Duplicar destino» para copiar todos los conceptos de una ciudad (p. ej. USA) a otra y luego ajustar Delivery. Si Forma es Fijo, Precio es el monto (USD/COP a la derecha). Si Forma es Variable y Sobre es Valor, Precio es el % de la mercancía: escribe 0.125 (no 125) — verás el preview «sobre $X → $Y». Si Sobre es Otros cargos, Precio es el % de esos cargos (42 = 42 %). En el recuadro lista conceptos separados por coma. Contenedor: «Cualquiera» si no depende del tamaño; 20, 40, 40HC o 40/40HC cuando sí (evita cobrar doble DTHC/THC).",
 };
 
 var LOG_TAR_COLS = {
@@ -1927,10 +1927,18 @@ function logTarPrecioHtml_(tab, f) {
             " <button type=\"button\" class=\"btn btn-sm btn-warning py-0 px-1\" data-lt=\"fix-pct\" data-v=\"" +
             escLogTar_(sospe.tip) + "\">Usar " + escLogTar_(sospe.tip) + " %</button></div>";
     }
-    return "<div class=\"lt-precio-wrap" + (sospe ? " is-warn" : "") + "\">" +
+    const vacio = f.precio == null || String(f.precio).trim() === "";
+    const ref = vacio && f.precioRef != null && String(f.precioRef).trim() !== ""
+        ? String(f.precioRef).trim()
+        : "";
+    const ph = ref || u.ph;
+    const tit = ref
+        ? (u.label + " · referencia del destino origen: " + ref)
+        : u.label;
+    return "<div class=\"lt-precio-wrap" + (sospe ? " is-warn" : "") + (ref ? " has-ref" : "") + "\">" +
         "<div class=\"sb-unit\">" +
         "<input data-k=\"precio\" type=\"number\" step=\"any\" inputmode=\"decimal\" class=\"form-control form-control-sm text-end lt-num" +
-        (sospe ? " is-invalid" : "") + "\" placeholder=\"" + escLogTar_(u.ph) + "\" title=\"" + escLogTar_(u.label) +
+        (sospe ? " is-invalid" : "") + "\" placeholder=\"" + escLogTar_(ph) + "\" title=\"" + escLogTar_(tit) +
         "\" value=\"" + escLogTar_(f.precio == null ? "" : f.precio) + "\">" +
         "<span class=\"sb-unit-suf\" title=\"" + escLogTar_(u.label) + "\">" + escLogTar_(u.suffix) + "</span>" +
         "</div>" + hint + warn + "</div>";
@@ -2134,7 +2142,7 @@ function logTarParaGuardar_() {
     if (typeof logTarAsegurar_ === "function") logTarAsegurar_();
     if (window.logTarifas) window.logTarifas.conceptos = window.logTarConceptos || window.logTarifas.conceptos || { origen: [], destino: [] };
     const src = window.logTarifas || {};
-    const claves = ["id", "preferida", "origen", "salida", "modalidad", "equipo", "precio", "moneda", "proveedor", "fecha", "cobro", "factor", "desde", "hasta", "minimo", "maximo", "pais", "ciudad", "puerto", "concepto", "forma", "baseVar", "baseCargos", "aplica", "r45", "r100", "r300", "r500", "fsIncluido", "fsKg", "aerolinea", "transito", "naviera", "otros"];
+    const claves = ["id", "preferida", "origen", "salida", "modalidad", "equipo", "precio", "precioRef", "moneda", "proveedor", "fecha", "cobro", "factor", "desde", "hasta", "minimo", "maximo", "pais", "ciudad", "puerto", "concepto", "forma", "baseVar", "baseCargos", "aplica", "r45", "r100", "r300", "r500", "fsIncluido", "fsKg", "aerolinea", "transito", "naviera", "otros"];
     const copiar = function (f) {
         const o = {};
         claves.forEach(function (k) {
@@ -2399,6 +2407,10 @@ function logTarPintar_() {
     if (filtro) filtro.hidden = !(tab === "origen" || tab === "interno" || tab === "destino" || tab === "seguro");
     const sim = document.getElementById("logTarSim");
     if (sim) sim.hidden = tab !== "destino";
+    const btnDupDest = document.getElementById("logTarDupDestino");
+    if (btnDupDest) btnDupDest.hidden = tab !== "destino";
+    const dupBox = document.getElementById("logTarDupBox");
+    if (dupBox && tab !== "destino") dupBox.hidden = true;
     const agr = document.getElementById("logTarAgrupar");
     if (agr) {
         const ops = tab === "destino" ? [["pais", "Agrupar por país"], ["ciudad", "Agrupar por ciudad"], ["", "Sin agrupar"]]
@@ -2435,8 +2447,27 @@ function logTarPintar_() {
             }
         }
         const vieja = typeof logTarVieja_ === "function" && logTarVieja_(f);
-        html.push("<tr data-id=\"" + escLogTar_(f.id) + "\" class=\"" + (f.preferida === "S" ? "lt-pref" : "") + (vieja ? " lt-vieja" : "") + "\">" +
-            cols.map(function (c) { return "<td>" + logTarCelda_(tab, f, c) + "</td>"; }).join("") +
+        const pend = tab === "destino" && logTarDupEsPendiente_(f);
+        html.push("<tr data-id=\"" + escLogTar_(f.id) + "\" class=\"" +
+            (f.preferida === "S" ? "lt-pref" : "") +
+            (vieja ? " lt-vieja" : "") +
+            (pend ? " lt-falta-precio" : "") + "\">" +
+            cols.map(function (c) {
+                let cell = logTarCelda_(tab, f, c);
+                if (pend && c[0] === "concepto") {
+                    cell = "<span class=\"lt-falta-badge\" title=\"Completa el precio\">Falta precio</span> " + cell;
+                }
+                if (pend && c[0] === "precio") {
+                    cell = String(cell || "").replace(
+                        /class=\"([^\"]*)\"/,
+                        "class=\"$1 log-req\""
+                    );
+                    if (cell.indexOf("log-req") < 0) {
+                        cell = String(cell || "").replace(/<(input|select)/i, "<$1 class=\"log-req\"");
+                    }
+                }
+                return "<td>" + cell + "</td>";
+            }).join("") +
             "<td class=\"text-nowrap\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-lt=\"dup\" title=\"Duplicar\">Duplicar</button> <button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-lt=\"del\" title=\"Quitar\">×</button></td></tr>");
     });
     const vacioTxt = (window.logTarifas[tab] || []).length ? "Ninguna tarifa coincide con la búsqueda." : "Todavía no hay tarifas. Agrega la primera.";
@@ -2448,6 +2479,7 @@ function logTarPintar_() {
     logTarAplicarOff_();
     logTarPintarPager_(ordenadas.length, pagOk, tam);
     logTarPintarAvisoPct_();
+    logTarDupResaltarPendientes_();
     const tblTar = head.closest("table");
     if (tblTar && typeof adminFiltrosEnhance_ === "function") {
         adminFiltrosEnhance_(tblTar, {
@@ -2689,6 +2721,348 @@ function logTarAgregar_() {
     logTarPintar_();
 }
 
+/** Destinos únicos (país + ciudad + modalidad) con conteo de conceptos. */
+function logTarDestinosUnicos_() {
+    const norm = typeof logTarNorm_ === "function" ? logTarNorm_ : function (s) { return String(s || "").trim().toLowerCase(); };
+    const map = {};
+    (window.logTarifas && window.logTarifas.destino || []).forEach(function (f) {
+        if (!f) return;
+        const pais = String(f.pais || "").trim();
+        const ciudad = String(f.ciudad || "").trim();
+        const mod = String(f.modalidad || "").trim() || "todas";
+        if (!pais || !ciudad) return;
+        const k = norm(pais) + "|" + norm(ciudad) + "|" + mod;
+        if (!map[k]) map[k] = { key: k, pais: pais, ciudad: ciudad, modalidad: mod, n: 0 };
+        map[k].n++;
+    });
+    return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) {
+        const pa = a.pais.localeCompare(b.pais, "es");
+        if (pa) return pa;
+        const ca = a.ciudad.localeCompare(b.ciudad, "es");
+        if (ca) return ca;
+        return String(a.modalidad).localeCompare(String(b.modalidad), "es");
+    });
+}
+
+function logTarModLabel_(mod) {
+    if (mod === "aerea") return "Aérea";
+    if (mod === "fcl") return "FCL";
+    if (mod === "lcl") return "LCL";
+    if (mod === "todas") return "Todas";
+    return mod || "";
+}
+
+function logTarEsDeliveryConcepto_(concepto) {
+    return /^\s*delivery\b/i.test(String(concepto || ""))
+        || /^\s*entrega\b/i.test(String(concepto || ""))
+        || /\bdelivery\b/i.test(String(concepto || ""));
+}
+
+function logTarDupLab_(d) {
+    if (!d) return "";
+    return d.pais + " · " + d.ciudad + " · " + logTarModLabel_(d.modalidad) + " (" + d.n + ")";
+}
+
+function logTarDupDestinoAbrir_() {
+    if ((window.logTarTab || "") !== "destino") {
+        if (typeof logAjustesVista === "function") logAjustesVista("destino");
+    }
+    const box = document.getElementById("logTarDupBox");
+    if (!box) return;
+    box.hidden = false;
+    try { logTarFlush_(); } catch (eF) { /* ok */ }
+    logTarDupDestinoLlenar_(true);
+    const out = document.getElementById("logTarDupOut");
+    if (out) out.textContent = "";
+    const ciudadNueva = document.getElementById("logTarDupCiudadNueva");
+    if (ciudadNueva) ciudadNueva.value = "";
+    const txt = document.getElementById("logTarDupOrigenTxt");
+    if (txt) setTimeout(function () { try { txt.focus(); logTarDupOrigenMenu_(true); } catch (e) { /* ok */ } }, 0);
+}
+
+function logTarDupDestinoCerrar_() {
+    const box = document.getElementById("logTarDupBox");
+    if (box) box.hidden = true;
+    const out = document.getElementById("logTarDupOut");
+    if (out) out.textContent = "";
+    logTarMenuCerrar_();
+}
+
+/** Elige plantilla por defecto: sim / filtro modalidad / primera USA / primera. */
+function logTarDupPreferKey_(lista) {
+    if (!lista || !lista.length) return "";
+    const norm = typeof logTarNorm_ === "function" ? logTarNorm_ : function (s) { return String(s || "").trim().toLowerCase(); };
+    const simPais = String((document.getElementById("logTarSimPais") || {}).value || "").trim();
+    const simCiu = String((document.getElementById("logTarSimCiudad") || {}).value || "").trim();
+    const simMod = String((document.getElementById("logTarSimMod") || {}).value || "").trim();
+    const filtroMod = String((document.getElementById("logTarFiltroMod") || {}).value || "").trim();
+    const modWant = filtroMod || simMod;
+    if (simPais && simCiu) {
+        const hit = lista.find(function (d) {
+            return norm(d.pais) === norm(simPais) && norm(d.ciudad) === norm(simCiu)
+                && (!modWant || d.modalidad === modWant || d.modalidad === "todas");
+        }) || lista.find(function (d) {
+            return norm(d.pais) === norm(simPais) && norm(d.ciudad) === norm(simCiu);
+        });
+        if (hit) return hit.key;
+    }
+    if (modWant) {
+        const porMod = lista.find(function (d) {
+            return d.modalidad === modWant && /estados\s*unidos|united\s*states|\busa\b/i.test(d.pais);
+        }) || lista.find(function (d) { return d.modalidad === modWant; });
+        if (porMod) return porMod.key;
+    }
+    const usa = lista.find(function (d) { return /estados\s*unidos|united\s*states|\busa\b/i.test(d.pais); });
+    return (usa || lista[0]).key;
+}
+
+function logTarDupDestinoLlenar_(forzarPrefer) {
+    try { logTarFlush_(); } catch (eF) { /* ok */ }
+    const hid = document.getElementById("logTarDupOrigen");
+    const txt = document.getElementById("logTarDupOrigenTxt");
+    if (!hid) return;
+    const lista = logTarDestinosUnicos_();
+    let key = String(hid.value || "");
+    if (forzarPrefer || !lista.some(function (d) { return d.key === key; })) {
+        key = logTarDupPreferKey_(lista);
+        hid.value = key;
+    }
+    const sel = lista.find(function (d) { return d.key === key; });
+    if (txt && document.activeElement !== txt) txt.value = sel ? logTarDupLab_(sel) : "";
+}
+
+function logTarDupOrigenMenu_(abrirSiempre) {
+    const txt = document.getElementById("logTarDupOrigenTxt");
+    const hid = document.getElementById("logTarDupOrigen");
+    if (!txt || !hid) return;
+    try { logTarFlush_(); } catch (eF) { /* ok */ }
+    const q = String(txt.value || "").trim().toLowerCase();
+    const lista = logTarDestinosUnicos_();
+    const filtradas = lista.filter(function (d) {
+        if (!q) return true;
+        const lab = logTarDupLab_(d).toLowerCase();
+        return lab.indexOf(q) >= 0
+            || String(d.ciudad || "").toLowerCase().indexOf(q) >= 0
+            || String(d.pais || "").toLowerCase().indexOf(q) >= 0
+            || logTarModLabel_(d.modalidad).toLowerCase().indexOf(q) >= 0
+            || String(d.modalidad || "").toLowerCase().indexOf(q) >= 0;
+    });
+    /* Si el texto coincide exactamente con una plantilla ya elegida y no piden abrir, no molestar. */
+    if (!abrirSiempre && filtradas.length === 1 && filtradas[0].key === hid.value
+        && String(txt.value || "") === logTarDupLab_(filtradas[0])) {
+        logTarMenuCerrar_();
+        return;
+    }
+    logTarMenuCerrar_();
+    const menu = document.createElement("div");
+    menu.id = "logTarMenu";
+    menu.className = "lt-menu";
+    const rect = txt.getBoundingClientRect();
+    const width = Math.max(rect.width, 280);
+    let left = rect.left;
+    if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+    menu.style.left = Math.max(8, left) + "px";
+    menu.style.top = (rect.bottom + 4) + "px";
+    menu.style.width = width + "px";
+    if (!filtradas.length) {
+        menu.innerHTML = "<div class=\"lt-menu-vacio\">Ningún destino coincide. Revisa que la ciudad tenga País y Modalidad (Aérea/FCL/LCL).</div>";
+    } else {
+        menu.innerHTML = filtradas.slice(0, 40).map(function (d) {
+            const on = d.key === hid.value ? " class=\"lt-menu-nuevo\"" : "";
+            return "<button type=\"button\" data-dup-key=\"" + escLogTar_(d.key) + "\"" + on + ">" + escLogTar_(logTarDupLab_(d)) + "</button>";
+        }).join("");
+    }
+    document.body.appendChild(menu);
+    menu.addEventListener("mousedown", function (ev) {
+        const b = ev.target.closest("button[data-dup-key]");
+        if (!b) return;
+        ev.preventDefault();
+        const key = b.getAttribute("data-dup-key") || "";
+        const hit = logTarDestinosUnicos_().find(function (d) { return d.key === key; });
+        hid.value = key;
+        txt.value = hit ? logTarDupLab_(hit) : "";
+        logTarMenuCerrar_();
+    });
+}
+
+function logTarDupDestinoEjecutar_() {
+    logTarFlush_();
+    const out = document.getElementById("logTarDupOut");
+    const msg = function (t, ok) {
+        if (out) {
+            out.textContent = t;
+            out.className = "small mt-2 " + (ok ? "text-success" : "text-danger");
+        }
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(t, ok ? "success" : "warning");
+    };
+    const sel = document.getElementById("logTarDupOrigen");
+    const key = sel ? String(sel.value || "") : "";
+    const ciudadNueva = String((document.getElementById("logTarDupCiudadNueva") || {}).value || "").trim();
+    const vaciarDel = !!((document.getElementById("logTarDupVaciarDelivery") || {}).checked);
+    if (!window.logTarifas || !Array.isArray(window.logTarifas.destino)) {
+        return msg("No hay tarifas de destino cargadas.");
+    }
+    const origen = logTarDestinosUnicos_().find(function (d) { return d.key === key; });
+    if (!origen) return msg("Elige un destino origen (plantilla).");
+    if (!ciudadNueva) return msg("Escribe la ciudad nueva.");
+    const norm = typeof logTarNorm_ === "function" ? logTarNorm_ : function (s) { return String(s || "").trim().toLowerCase(); };
+    if (norm(ciudadNueva) === norm(origen.ciudad)) {
+        return msg("La ciudad nueva debe ser distinta a «" + origen.ciudad + "».");
+    }
+    const fuentes = (window.logTarifas.destino || []).filter(function (f) {
+        return f && norm(f.pais) === norm(origen.pais)
+            && norm(f.ciudad) === norm(origen.ciudad)
+            && String(f.modalidad || "").trim() === origen.modalidad;
+    });
+    if (!fuentes.length) return msg("No hay conceptos en el destino origen.");
+
+    const ya = {};
+    (window.logTarifas.destino || []).forEach(function (f) {
+        if (!f || norm(f.pais) !== norm(origen.pais) || norm(f.ciudad) !== norm(ciudadNueva)) return;
+        if (String(f.modalidad || "").trim() !== origen.modalidad) return;
+        ya[norm(f.concepto)] = true;
+    });
+
+    let n = 0;
+    let omit = 0;
+    const vaciadosIds = [];
+    const vaciadosNoms = [];
+    fuentes.forEach(function (f) {
+        const ck = norm(f.concepto);
+        if (ck && ya[ck]) { omit++; return; }
+        const copia = JSON.parse(JSON.stringify(f));
+        copia.id = logTarId_();
+        copia.pais = origen.pais;
+        copia.ciudad = ciudadNueva;
+        copia.modalidad = origen.modalidad;
+        copia.fecha = logTarHoy_();
+        if (vaciarDel && logTarEsDeliveryConcepto_(copia.concepto)) {
+            /* Referencia estética del precio origen (placeholder); no entra al cálculo. */
+            if (copia.precio != null && String(copia.precio).trim() !== "") {
+                copia.precioRef = copia.precio;
+            }
+            copia.precio = "";
+            vaciadosIds.push(copia.id);
+            vaciadosNoms.push(String(copia.concepto || "Delivery").trim() || "Delivery");
+        }
+        window.logTarifas.destino.push(copia);
+        if (ck) ya[ck] = true;
+        n++;
+    });
+
+    if (!n && omit) {
+        return msg("«" + ciudadNueva + "» ya tiene esos " + omit + " concepto(s). Nada que copiar.");
+    }
+
+    window.logTarDupPendiente = {
+        ids: vaciadosIds.slice(),
+        conceptos: vaciadosNoms.slice(),
+        ciudad: ciudadNueva
+    };
+
+    const buscar = document.getElementById("logTarBuscar");
+    if (buscar) buscar.value = ciudadNueva;
+    window.logTarPagina.destino = 0;
+    const simPais = document.getElementById("logTarSimPais");
+    const simCiu = document.getElementById("logTarSimCiudad");
+    const simMod = document.getElementById("logTarSimMod");
+    if (simPais) {
+        logTarLlenarSelectPais_(simPais);
+        simPais.value = origen.pais;
+    }
+    if (simCiu) {
+        logTarLlenarSelectCiudad_(simCiu, origen.pais);
+        if (![].some.call(simCiu.options, function (o) { return o.value === ciudadNueva; })) {
+            const opt = document.createElement("option");
+            opt.value = ciudadNueva;
+            opt.textContent = ciudadNueva;
+            simCiu.appendChild(opt);
+        }
+        simCiu.value = ciudadNueva;
+    }
+    if (simMod && origen.modalidad && origen.modalidad !== "todas") simMod.value = origen.modalidad;
+
+    if (typeof logRefrescarCiudadesEnv_ === "function") logRefrescarCiudadesEnv_(false);
+    logTarPintar_();
+    logTarDupDestinoLlenar_();
+
+    let t = "Copié " + n + " concepto(s) de " + origen.ciudad + " → " + ciudadNueva + " (" + logTarModLabel_(origen.modalidad) + ").";
+    if (vaciadosNoms.length) {
+        t += " Completa el precio de: " + vaciadosNoms.join(", ") + " (campo resaltado).";
+    }
+    if (omit) t += " Omití " + omit + " que ya existían.";
+    t += " Luego pulsa Guardar.";
+    msg(t, true);
+}
+
+function logTarDupEsPendiente_(f) {
+    const pend = window.logTarDupPendiente;
+    if (!pend || !f || !f.id || !pend.ids || !pend.ids.length) return false;
+    if (pend.ids.indexOf(f.id) < 0) return false;
+    const p = f.precio;
+    return p == null || String(p).trim() === "";
+}
+
+function logTarDupLimpiarPendientesResueltos_() {
+    const pend = window.logTarDupPendiente;
+    if (!pend || !pend.ids || !pend.ids.length) return;
+    const lista = (window.logTarifas && window.logTarifas.destino) || [];
+    pend.ids = pend.ids.filter(function (id) {
+        const f = lista.find(function (r) { return r.id === id; });
+        if (!f) return false;
+        const p = f.precio;
+        return p == null || String(p).trim() === "";
+    });
+    if (!pend.ids.length) window.logTarDupPendiente = null;
+}
+
+/** Resalta filas sin precio tras duplicar y enfoca el primer Precio pendiente. */
+function logTarDupResaltarPendientes_() {
+    logTarDupLimpiarPendientesResueltos_();
+    const pend = window.logTarDupPendiente;
+    const aviso = document.getElementById("logTarDupPendienteAviso");
+    if (aviso) {
+        if (pend && pend.ids && pend.ids.length) {
+            aviso.hidden = false;
+            aviso.innerHTML = "<i class=\"bi bi-exclamation-circle me-1\"></i>" +
+                "Falta precio en <b>" + escLogTar_((pend.conceptos || []).join(", ") || "Delivery") +
+                "</b> · " + escLogTar_(pend.ciudad || "") +
+                ". Campo en rojo — completa Precio y guarda.";
+        } else {
+            aviso.hidden = true;
+            aviso.textContent = "";
+        }
+    }
+    if (!pend || !pend.ids || !pend.ids.length) return;
+    const body = document.getElementById("logTarBody");
+    if (!body) return;
+    const tr = body.querySelector("tr.lt-falta-precio[data-id=\"" + pend.ids[0] + "\"]")
+        || body.querySelector("tr.lt-falta-precio");
+    if (!tr) return;
+    const wrap = body.closest(".catalogo-tabla-wrap");
+    try {
+        tr.scrollIntoView({ block: "nearest", inline: "nearest" });
+        const precio = tr.querySelector("[data-k=\"precio\"]");
+        if (precio) {
+            if (wrap) {
+                const pr = precio.getBoundingClientRect();
+                const wr = wrap.getBoundingClientRect();
+                if (pr.right > wr.right || pr.left < wr.left) {
+                    wrap.scrollLeft += (pr.left - wr.left) - 24;
+                }
+            }
+            setTimeout(function () {
+                try {
+                    precio.focus();
+                    /* No select(): en type=number deja el caret mal y al escribir 800 sale 008. */
+                    const len = String(precio.value || "").length;
+                    if (precio.setSelectionRange) precio.setSelectionRange(len, len);
+                } catch (e) { /* ok */ }
+            }, 60);
+        }
+    } catch (eSc) { /* ok */ }
+}
+
 function logTarDejarUnaPreferida_(tab, row) {
     if (row.preferida !== "S" || typeof logTarGrupo_ !== "function") return false;
     const g = logTarGrupo_(tab, row);
@@ -2731,25 +3105,34 @@ function logTarInit_() {
         if (!row) return;
         if (row.preferida === "S") logTarDejarUnaPreferida_(tab, row);
         const kPinta = ev.target.getAttribute("data-k");
+        if (kPinta === "precio" && window.logTarDupPendiente) {
+            logTarDupLimpiarPendientesResueltos_();
+            if (!logTarDupEsPendiente_(row)) {
+                tr.classList.remove("lt-falta-precio");
+                const badge = tr.querySelector(".lt-falta-badge");
+                if (badge) badge.remove();
+                const precioEl = tr.querySelector("[data-k=\"precio\"]");
+                if (precioEl) precioEl.classList.remove("log-req");
+                if (row.precioRef != null && String(row.precio).trim() !== "") delete row.precioRef;
+                const aviso = document.getElementById("logTarDupPendienteAviso");
+                if (aviso && (!window.logTarDupPendiente || !window.logTarDupPendiente.ids.length)) {
+                    aviso.hidden = true;
+                    aviso.textContent = "";
+                }
+            }
+        }
         if (kPinta === "forma" || kPinta === "baseVar" || kPinta === "equipo") logTarPintar_();
-        else if (kPinta === "precio" || kPinta === "concepto" || kPinta === "moneda") {
+        else if (kPinta === "concepto" || kPinta === "moneda") {
+            /* Precio: no reconstruir en cada tecla (type=number + caret al inicio → 800 salía 008). */
             const tdPrecio = tr.querySelector("[data-k=\"precio\"]");
             const wrapParent = tdPrecio && tdPrecio.closest("td");
             if (wrapParent) {
-                const keepFocus = document.activeElement === ev.target;
-                const selStart = keepFocus ? ev.target.selectionStart : null;
-                const selEnd = keepFocus ? ev.target.selectionEnd : null;
                 wrapParent.innerHTML = logTarPrecioHtml_(tab, row);
                 logTarAplicarOff_();
                 logTarPintarAvisoPct_();
-                if (keepFocus) {
-                    const inp = wrapParent.querySelector("[data-k=\"precio\"]");
-                    if (inp) {
-                        inp.focus();
-                        try { if (selStart != null) inp.setSelectionRange(selStart, selEnd); } catch (eSel) { /* ok */ }
-                    }
-                }
             }
+            tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
+        } else if (kPinta === "precio") {
             tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
         } else tr.classList.toggle("lt-vieja", typeof logTarVieja_ === "function" && logTarVieja_(row));
     });
@@ -2770,6 +3153,25 @@ function logTarInit_() {
                 logRefrescarCiudadesEnv_(false);
             }
             if (kCampo === "pais" || kCampo === "forma" || kCampo === "baseVar" || kCampo === "equipo") logTarPintar_();
+            /* Al salir del precio, refresca hints/% sin romper lo escrito. */
+            if (kCampo === "precio") {
+                const trP = ev.target.closest("tr[data-id]");
+                const tabP = window.logTarTab;
+                const rowP = trP && (window.logTarifas[tabP] || []).find(function (r) { return r.id === trP.getAttribute("data-id"); });
+                if (rowP && String(rowP.precio).trim() !== "" && rowP.precioRef != null) delete rowP.precioRef;
+                if (trP && rowP) {
+                    const wrapParent = ev.target.closest("td");
+                    if (wrapParent) {
+                        wrapParent.innerHTML = logTarPrecioHtml_(tabP, rowP);
+                        if (logTarDupEsPendiente_(rowP)) {
+                            const inp = wrapParent.querySelector("[data-k=\"precio\"]");
+                            if (inp) inp.classList.add("log-req");
+                        }
+                        logTarAplicarOff_();
+                        logTarPintarAvisoPct_();
+                    }
+                }
+            }
             if (window.logTarTab === "interno" && (kCampo === "modalidad" || kCampo === "cobro")) {
                 if (kCampo === "cobro") {
                     const trCob = ev.target.closest("tr[data-id]");
@@ -2879,6 +3281,51 @@ function logTarInit_() {
     }
     const btn = document.getElementById("logTarAgregar");
     if (btn) btn.addEventListener("click", logTarAgregar_);
+    const btnDupDest = document.getElementById("logTarDupDestino");
+    if (btnDupDest) btnDupDest.addEventListener("click", function () {
+        const box = document.getElementById("logTarDupBox");
+        if (box && !box.hidden) logTarDupDestinoCerrar_();
+        else logTarDupDestinoAbrir_();
+    });
+    const dupEjec = document.getElementById("logTarDupEjecutar");
+    if (dupEjec) dupEjec.addEventListener("click", logTarDupDestinoEjecutar_);
+    const dupCancel = document.getElementById("logTarDupCancelar");
+    if (dupCancel) dupCancel.addEventListener("click", logTarDupDestinoCerrar_);
+    const dupOrigenTxt = document.getElementById("logTarDupOrigenTxt");
+    if (dupOrigenTxt && !dupOrigenTxt.getAttribute("data-menu-on")) {
+        dupOrigenTxt.setAttribute("data-menu-on", "1");
+        dupOrigenTxt.addEventListener("focus", function () { logTarDupOrigenMenu_(true); });
+        dupOrigenTxt.addEventListener("input", function () {
+            const hid = document.getElementById("logTarDupOrigen");
+            if (hid) hid.value = "";
+            logTarDupOrigenMenu_(true);
+        });
+        dupOrigenTxt.addEventListener("keydown", function (ev) {
+            if (ev.key === "Escape") logTarMenuCerrar_();
+        });
+        dupOrigenTxt.addEventListener("blur", function () {
+            setTimeout(function () {
+                logTarMenuCerrar_();
+                /* Si escribió texto sin elegir, reponer etiqueta de la clave vigente o limpiar. */
+                const hid = document.getElementById("logTarDupOrigen");
+                if (!hid || !hid.value) return;
+                const hit = logTarDestinosUnicos_().find(function (d) { return d.key === hid.value; });
+                if (hit) dupOrigenTxt.value = logTarDupLab_(hit);
+            }, 150);
+        });
+    }
+    const dupCiudad = document.getElementById("logTarDupCiudadNueva");
+    if (dupCiudad && !dupCiudad.getAttribute("data-menu-on")) {
+        dupCiudad.setAttribute("data-menu-on", "1");
+        dupCiudad.addEventListener("input", function () { logTarMenuCiudadDup_(dupCiudad); });
+        dupCiudad.addEventListener("focus", function () { logTarMenuCiudadDup_(dupCiudad); });
+        dupCiudad.addEventListener("keydown", function (ev) {
+            if (ev.key === "Escape") logTarMenuCerrar_();
+        });
+        dupCiudad.addEventListener("blur", function () {
+            setTimeout(logTarMenuCerrar_, 150);
+        });
+    }
     const sim = document.getElementById("logTarSimBtn");
     if (sim) sim.addEventListener("click", logTarSimularClick_);
     const cartaBtn = document.getElementById("logTarCartaBtn");
@@ -2989,19 +3436,33 @@ function logTarLlenarSelectCiudad_(sel, pais) {
     sel.value = ops.some(function (o) { return o[0] === v; }) ? v : "";
 }
 
-function logTarMenuCiudad_(input) {
+/** Menú de ciudades anclado al input (evita el datalist nativo, que en USA se va a la derecha). */
+function logTarMenuCiudadesAnclado_(input, pais, opts) {
+    opts = opts || {};
     logTarMenuCerrar_();
-    const paisEl = document.getElementById("logTarSimPais");
+    if (!input) return;
     const q = String(input.value || "").trim().toLowerCase();
-    const lista = (typeof logCiudadesParaPais_ === "function" ? logCiudadesParaPais_(paisEl ? paisEl.value : "") : []).filter(function (s) { return !q || s.toLowerCase().indexOf(q) >= 0; });
+    const minQ = opts.minQ != null ? opts.minQ : 1;
+    const maxN = opts.maxN != null ? opts.maxN : 25;
+    if (q.length < minQ) return;
+    const todas = typeof logCiudadesParaPais_ === "function" ? logCiudadesParaPais_(pais || "") : [];
+    const lista = [];
+    for (let i = 0; i < todas.length && lista.length < maxN; i++) {
+        const s = todas[i];
+        if (!s) continue;
+        if (String(s).toLowerCase().indexOf(q) >= 0) lista.push(s);
+    }
     if (!lista.length) return;
     const menu = document.createElement("div");
     menu.id = "logTarMenu";
     menu.className = "lt-menu";
     const rect = input.getBoundingClientRect();
-    menu.style.left = Math.max(8, rect.left) + "px";
+    const width = Math.max(rect.width, 180);
+    let left = rect.left;
+    if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+    menu.style.left = Math.max(8, left) + "px";
     menu.style.top = (rect.bottom + 4) + "px";
-    menu.style.width = Math.max(rect.width, 180) + "px";
+    menu.style.width = width + "px";
     menu.innerHTML = lista.map(function (s) {
         return "<button type=\"button\" data-c=\"" + escLogTar_(s) + "\">" + escLogTar_(s) + "</button>";
     }).join("");
@@ -3013,6 +3474,23 @@ function logTarMenuCiudad_(input) {
         input.value = b.getAttribute("data-c") || "";
         logTarMenuCerrar_();
     });
+}
+
+function logTarMenuCiudad_(input) {
+    const paisEl = document.getElementById("logTarSimPais");
+    logTarMenuCiudadesAnclado_(input, paisEl ? paisEl.value : "", { minQ: 0, maxN: 25 });
+}
+
+function logTarDupPaisOrigen_() {
+    const sel = document.getElementById("logTarDupOrigen");
+    const key = sel ? String(sel.value || "") : "";
+    const origen = logTarDestinosUnicos_().find(function (d) { return d.key === key; });
+    if (origen) return origen.pais;
+    return String((document.getElementById("logTarSimPais") || {}).value || "").trim();
+}
+
+function logTarMenuCiudadDup_(input) {
+    logTarMenuCiudadesAnclado_(input, logTarDupPaisOrigen_(), { minQ: 1, maxN: 25 });
 }
 
 function logTarRutaCarta_() {

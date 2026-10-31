@@ -1384,8 +1384,9 @@ function logEnvEscNorm_(src, base) {
 /** Vista efectiva de envío para una opción (o el global si no hay escId). */
 function logEnvVistaEsc_(escId) {
     const e = logEnv_();
+    let vista;
     if (!escId) {
-        return {
+        vista = {
             modalidad: e.modalidad,
             incoterm: e.incoterm,
             destinoCiudad: e.destinoCiudad,
@@ -1394,19 +1395,30 @@ function logEnvVistaEsc_(escId) {
             destinoPuerto: e.destinoPuerto,
             destinoTitulo: e.destinoTitulo || ""
         };
+    } else {
+        const st = logEnvEscDe_(e, escId) || logEnvEscSemilla_(e);
+        /* País de la opción (o global). No mezclar país de la opción con código
+           ISO del global: si la opción es Puerto Rico y el global quedó ES
+           (país del cliente), el fallback || pegaba ES en el GRAN TOTAL. */
+        const destinoPais = st.destinoPais || e.destinoPais;
+        const destinoCodigo = String(st.destinoCodigo || "").trim()
+            || logEnvCodigoDePais_(destinoPais)
+            || String(e.destinoCodigo || "").trim();
+        vista = {
+            modalidad: st.modalidad || e.modalidad,
+            incoterm: st.incoterm || e.incoterm,
+            destinoCiudad: st.destinoCiudad || e.destinoCiudad,
+            destinoPais: destinoPais,
+            destinoCodigo: destinoCodigo,
+            destinoPuerto: st.destinoPuerto || e.destinoPuerto,
+            destinoTitulo: st.destinoTitulo != null && String(st.destinoTitulo).trim()
+                ? String(st.destinoTitulo).trim()
+                : (e.destinoTitulo || "")
+        };
     }
-    const st = logEnvEscDe_(e, escId) || logEnvEscSemilla_(e);
-    return {
-        modalidad: st.modalidad || e.modalidad,
-        incoterm: st.incoterm || e.incoterm,
-        destinoCiudad: st.destinoCiudad || e.destinoCiudad,
-        destinoPais: st.destinoPais || e.destinoPais,
-        destinoCodigo: st.destinoCodigo || e.destinoCodigo,
-        destinoPuerto: st.destinoPuerto || e.destinoPuerto,
-        destinoTitulo: st.destinoTitulo != null && String(st.destinoTitulo).trim()
-            ? String(st.destinoTitulo).trim()
-            : (e.destinoTitulo || "")
-    };
+    const codOk = logEnvCodigoEfectivo_(vista);
+    if (codOk) vista.destinoCodigo = codOk;
+    return vista;
 }
 
 function logEnvModalidad_(escId) {
@@ -1598,6 +1610,34 @@ function logEnvCodigoDePais_(pais) {
     if (!p) return "";
     logPaisIndiceArmar_();
     return logPaisIndice_[p] || "";
+}
+
+/**
+ * ISO del destino de Envío. El país de destino manda; el código guardado solo
+ * rellena si el país no resuelve. Evita GRAN TOTAL «SAN JUAN ES» cuando el
+ * cliente es España pero la entrega es Puerto Rico (país Envío = Puerto Rico).
+ */
+function logEnvCodigoEfectivo_(vista) {
+    const v = vista || {};
+    const dePais = logEnvCodigoDePais_(v.destinoPais);
+    if (dePais) return dePais;
+    return String(v.destinoCodigo || "").trim().toUpperCase();
+}
+
+/** Alinea destinoCodigo con destinoPais (país Envío = fuente de verdad). */
+function logEnvSincronizarCodigoPais_(env) {
+    const e = env || (logQuote && logQuote.env);
+    if (!e) return;
+    const sync_ = function (obj) {
+        if (!obj) return;
+        const cod = logEnvCodigoDePais_(obj.destinoPais);
+        if (!cod) return;
+        if (String(obj.destinoCodigo || "").trim().toUpperCase() !== cod) obj.destinoCodigo = cod;
+    };
+    sync_(e);
+    if (e.porEsc && typeof e.porEsc === "object") {
+        Object.keys(e.porEsc).forEach(function (k) { sync_(e.porEsc[k]); });
+    }
 }
 
 /** Clave de país para diccionarios: el ISO si se resuelve (el idioma del
@@ -3222,9 +3262,15 @@ function logEnvTitulo_(cual, T, mon, esEn, escId) {
         return logSufijoMon_(esEn ? "EXW SUBTOTAL PRICE" : "PRECIO SUBTOTAL EXWORKS", mon);
     }
     if (cual === "log") return logSufijoMon_(esEn ? "TOTAL LOGISTICS PRICE" : "PRECIO TOTAL LOGÍSTICA", mon);
-    /* Título editado a mano en el PDF: se respeta tal cual (ya no se vuelve a pegar la ciudad de tarifas). */
+    /* Título editado a mano en el PDF: se respeta. Si parece el auto (GRAN TOTAL + … + ISO)
+       y el ISO no es el del país de Envío (p. ej. ES del cliente vs PR), se regenera. */
     if (cual === "gran" && String(custom || "").trim()) {
-        return conMoneda_(quitarMonedaFinal_(custom));
+        const tCustom = quitarMonedaFinal_(custom);
+        const codOk = logEnvCodigoEfectivo_(vista);
+        const mIso = String(tCustom).trim().match(/\b([A-Z]{2})\s*$/);
+        const autoViejo = codOk && mIso && mIso[1] !== codOk
+            && /^(GRAN\s*TOTAL|GRAND\s*TOTAL)\b/i.test(tCustom);
+        if (!autoViejo) return conMoneda_(tCustom);
     }
     if (cual === "gran" && typeof logPagoAsegurar_ === "function" && logPagoAsegurar_().iva) {
         return logSufijoMon_(esEn ? "TOTAL PRICE BEFORE VAT" : "PRECIO TOTAL ANTES DE IVA", mon);
@@ -3235,7 +3281,8 @@ function logEnvTitulo_(cual, T, mon, esEn, escId) {
     const cabeza = esEn ? "GRAND TOTAL" : "GRAN TOTAL";
     /* Ciudad del título: destinoTitulo (p. ej. Dover) o, si vacío, la de tarifas (Tampa). */
     const ciudad = String(vista.destinoTitulo || vista.destinoCiudad || "").trim().toUpperCase();
-    const cod = (vista.destinoCodigo || "").trim().toUpperCase();
+    /* ISO del país de Envío (no el del cliente de la ficha). */
+    const cod = logEnvCodigoEfectivo_(vista);
     const incNow = String(vista.incoterm || "EXW").toUpperCase();
     return conMoneda_(cabeza + " " + incNow + (ciudad ? " " + ciudad : "") + (cod ? " " + cod : ""));
 }
@@ -3243,7 +3290,8 @@ function logEnvTitulo_(cual, T, mon, esEn, escId) {
 function logEnvLineaPdf_(T, esEn, escId) {
     if (!logEsCotizacionExterior_()) return "";
     const vista = logEnvVistaEsc_(escId || "");
-    const dest = [vista.destinoCiudad, vista.destinoCodigo || vista.destinoPais].filter(Boolean).join(", ");
+    const cod = logEnvCodigoEfectivo_(vista);
+    const dest = [vista.destinoCiudad, cod || vista.destinoPais].filter(Boolean).join(", ");
     let s = (T.incoterm || "Incoterm") + ": " + vista.incoterm;
     if (dest) s += " · " + (T.destino || (esEn ? "Destination" : "Destino")) + ": " + dest;
     return s;
@@ -9584,8 +9632,11 @@ function logisticaLeerEnvUi_() {
         incoterm = avail.indexOf("CIP") >= 0 ? "CIP" : (avail[0] || "EXW");
     }
     const destinoCiudad = ((document.getElementById("logDestCiudad") || {}).value || "").trim();
-    const destinoPais = ((document.getElementById("logDestPais") || {}).value || "").trim();
-    const destinoCodigo = ((document.getElementById("logDestCodigo") || {}).value || "").trim().toUpperCase();
+    const destinoPais = logPaisEnEspanol_(((document.getElementById("logDestPais") || {}).value || "").trim());
+    let destinoCodigo = ((document.getElementById("logDestCodigo") || {}).value || "").trim().toUpperCase();
+    /* Si el país de Envío resuelve ISO, ese código gana (evita ES del cliente con PR). */
+    const codDePais = logEnvCodigoDePais_(destinoPais);
+    if (codDePais) destinoCodigo = codDePais;
     const destinoPuerto = ((document.getElementById("logDestPuerto") || {}).value || "").trim();
     const destinoTitulo = ((document.getElementById("logDestTitulo") || {}).value || "").trim();
     /* Con opciones: modalidad/Incoterm/destino van a la opción activa; el global refleja esa opción. */
@@ -10479,6 +10530,8 @@ function logisticaPintarEnv_(forzar) {
         e0.destinoPuerto = st.destinoPuerto != null ? st.destinoPuerto : e0.destinoPuerto;
         if (st.destinoTitulo != null) e0.destinoTitulo = st.destinoTitulo;
     }
+    /* País Envío manda sobre un ISO viejo (p. ej. ES del cliente con entrega en PR). */
+    logEnvSincronizarCodigoPais_();
     logEnvAsegurarLineas_(esEn, false, escUi);
     logAplicarAranceles_();
     const e = logEnv_();
@@ -10948,8 +11001,11 @@ function logisticaOnEnvUi_(ev) {
             else if (!escM) logQuote.env.cubKgVol = null;
         }
     }
-    if (t && (t.id === "logIncoterm" || t.id === "logMercado" || t.id === "logDestTitulo")
-        && (logQuote.env.incoterm !== incAntes || t.id === "logMercado" || t.id === "logDestTitulo")) {
+    if (t && (t.id === "logIncoterm" || t.id === "logMercado" || t.id === "logDestTitulo"
+            || t.id === "logDestPais" || t.id === "logDestCodigo" || t.id === "logDestCiudad")
+        && (logQuote.env.incoterm !== incAntes || t.id === "logMercado" || t.id === "logDestTitulo"
+            || t.id === "logDestPais" || t.id === "logDestCodigo" || t.id === "logDestCiudad")) {
+        /* Regenerar GRAN TOTAL con Incoterm + ciudad + ISO del país de Envío. */
         logQuote.env.titGran = "";
     }
     if (t && t.id === "logMercado") logQuote.env.plantilla = "";
