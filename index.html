@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=1.0.124">
+  <link rel="stylesheet" href="styles.css?v=1.0.125">
 </head>
 <body>
   <div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3 sb-toasts"></div>
@@ -600,6 +600,10 @@
                       <button type="button" id="btnLogEnvExtra" class="btn btn-sm btn-outline-secondary log-env-add" title="Agregar concepto libre al envío (entra al margen y a Una línea)">+</button>
                     </div>
                     <div id="logEnvLineas"></div>
+                    <div id="logEnvObsInternasWrap" class="log-env-obs-int">
+                      <label class="small mb-1" for="logEnvObsInternas" title="Notas internas de Duties y Taxes. No salen en el PDF; sí en el Excel al final.">Obs. internas</label>
+                      <textarea id="logEnvObsInternas" class="form-control form-control-sm" rows="2" maxlength="2000" placeholder="Notas internas Duties / Taxes (no salen en el PDF)…" title="Un solo campo para Duties y Taxes. No se imprime en el PDF. En Excel van después de las observaciones generales."></textarea>
+                    </div>
                     <div id="logEnvSuma" class="log-env-suma" hidden></div>
                   </div>
                 </section>
@@ -1501,9 +1505,12 @@
                 </header>
                 <div class="admin-card-body">
                   <div id="arancelesEstadoBox" class="admin-banner is-info mb-3">Aún no se ha sincronizado.</div>
-                  <div class="admin-actions mb-3">
+                  <div class="admin-actions mb-3 flex-wrap gap-2">
                     <button type="button" id="btnSyncAranceles" class="btn admin-btn" onclick="sincronizarArancelesUI()"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar Drive</button>
                     <button type="button" id="btnCronAranceles" class="btn admin-btn" onclick="activarCronArancelesUI()">Activar sync cada 7 días</button>
+                    <button type="button" id="btnDescargarArancelesExcel" class="btn admin-btn" onclick="descargarArancelesExcelUI()" title="Baja la tabla actual (o la plantilla) para revisarla en Excel"><i class="bi bi-download me-1"></i>Descargar Excel</button>
+                    <button type="button" id="btnCargarArancelesExcel" class="btn admin-btn" onclick="document.getElementById('inputArancelesExcel').click()" title="Carga un .xlsx editado a esta tabla. Luego pulsa Guardar en Ajustes."><i class="bi bi-upload me-1"></i>Cargar Excel</button>
+                    <input type="file" id="inputArancelesExcel" class="d-none" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="cargarArancelesExcelUI(event)">
                   </div>
                   <p class="small text-muted mb-2"><b>Base Duties</b> y <b>Base Taxes</b> son independientes y valen para cualquier país (existente o nuevo): <b>EXW</b> = valor mercancía (× % Base EXW de la cotización); <b>CIF</b> = EXW + origen + flete + seguro; <b>CIF + gravamen</b> = CIF + Duties. Si hay % y la base viene vacía, se asume EXW. En DDP/DAP/DPU, Taxes se cobran aunque la nota diga que lo paga el importador. En el PDF, Duties y Taxes salen sumados.</p>
                   <div id="logAraSim" class="log-tar-sim mb-3">
@@ -2002,14 +2009,14 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
-  <script src="admin.js?v=1.0.89"></script>
+  <script src="admin.js?v=1.0.91"></script>
     <script src="seguridad.js?v=1.0.26"></script>
     <script src="app.js?v=1.0.66"></script>
   <script src="engine.js?v=1.0.43"></script>
   <script src="connectors.js?v=1.0.53"></script>
   <script src="ia-core.js?v=1.0.51"></script>
-  <script src="export-excel.js?v=1.0.56"></script>
-  <script src="logistica.js?v=1.0.261"></script>
+  <script src="export-excel.js?v=1.0.58"></script>
+  <script src="logistica.js?v=1.0.263"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>

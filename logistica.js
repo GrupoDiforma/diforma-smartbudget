@@ -1366,7 +1366,9 @@ function logEnvEscNorm_(src, base) {
         cubM3: logCubNum_(s.cubM3 != null ? s.cubM3 : b.cubM3),
         cubPeso: logCubNum_(s.cubPeso != null ? s.cubPeso : b.cubPeso),
         cubKgVol: logCubNum_(s.cubKgVol != null ? s.cubKgVol : b.cubKgVol),
-        valores: {}, fuentes: {}, notas: {}, pcts: {}
+        valores: {}, fuentes: {}, notas: {}, pcts: {},
+        /* Obs. internas Duties/Taxes (no PDF). Por opción; vacío = hereda global. */
+        obsInternas: s.obsInternas != null ? String(s.obsInternas) : ""
     };
     if (!out.destinoCodigo && out.destinoPais) out.destinoCodigo = logEnvCodigoDePais_(out.destinoPais) || "";
     ["valores", "fuentes", "notas", "pcts"].forEach(function (k) {
@@ -2295,6 +2297,7 @@ function logEnvNormalizar_(src) {
     d.cubPeso = logCubNum_(e.cubPeso);
     d.cubKgVol = logCubNum_(e.cubKgVol);
     d.plantilla = String(e.plantilla || "");
+    d.obsInternas = String(e.obsInternas || "");
     d.lineas = Array.isArray(e.lineas) ? e.lineas.map(function (ln, i) {
         let tipoLn = String(ln.tipo || "servicio");
         if (tipoLn === "libre") tipoLn = "servicio"; /* legado: fila libre = servicio */
@@ -2341,12 +2344,69 @@ function logEnv_() {
     if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
     if (!e.contenedores || typeof e.contenedores !== "object") e.contenedores = { c20: 0, c40: 0, c40hc: 0 };
     if (!e.margenNal || typeof e.margenNal !== "object") e.margenNal = { envio: 0, montaje: 0, bodega: 0, otro: 0 };
+    if (e.obsInternas == null) e.obsInternas = "";
     return e;
+}
+
+/** Une notas legado de Duties/Taxes en un solo campo obsInternas (una sola vez). */
+function logEnvObsInternasMigrar_(e) {
+    e = e || logEnv_();
+    if (!e || String(e.obsInternas || "").trim()) return;
+    const parts = [];
+    (e.lineas || []).forEach(function (ln) {
+        if (!ln || (ln.tipo !== "duties" && ln.tipo !== "taxes")) return;
+        const t = String(ln.notas || "").trim();
+        if (t && parts.indexOf(t) < 0) parts.push(t);
+        ln.notas = "";
+    });
+    if (e.porEsc) {
+        Object.keys(e.porEsc).forEach(function (k) {
+            const st = e.porEsc[k];
+            if (!st || String(st.obsInternas || "").trim()) return;
+            const fromNotas = [];
+            if (st.notas && typeof st.notas === "object") {
+                (e.lineas || []).forEach(function (ln) {
+                    if (!ln || (ln.tipo !== "duties" && ln.tipo !== "taxes")) return;
+                    const t = String(st.notas[ln.id] || st.notas[logEscKeyTipo_(ln.tipo)] || "").trim();
+                    if (t && fromNotas.indexOf(t) < 0) fromNotas.push(t);
+                    try { delete st.notas[ln.id]; } catch (err) { /* noop */ }
+                });
+            }
+            if (fromNotas.length) st.obsInternas = fromNotas.join("\n");
+        });
+    }
+    if (parts.length) e.obsInternas = parts.join("\n");
+}
+
+/** Obs. internas Duties/Taxes (no PDF). Por opción o global. */
+function logEnvObsInternas_(escId) {
+    const e = logEnv_();
+    logEnvObsInternasMigrar_(e);
+    if (escId && e.porEsc && e.porEsc[escId]
+        && Object.prototype.hasOwnProperty.call(e.porEsc[escId], "obsInternas")) {
+        return String(e.porEsc[escId].obsInternas || "");
+    }
+    return String(e.obsInternas || "");
+}
+
+function logEnvObsInternasEscribir_(escId, txt) {
+    const e = logEnv_();
+    const val = String(txt || "");
+    if (escId) {
+        const st = logEnvEsc_(escId);
+        if (st) st.obsInternas = val;
+        /* Primera opción / sin más: espejo en global para cotizaciones sin porEsc. */
+        const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+        if (!escs.length || (escs[0] && escs[0].id === escId)) e.obsInternas = val;
+    } else {
+        e.obsInternas = val;
+    }
 }
 
 /**
  * Modalidad + cifra clave para PDF / «Una línea»:
- * FCL → contenedores; LCL → m³; Aéreo/Courier → kg cobrados (máx. real/vol).
+ * FCL → contenedores; LCL → m³; Aéreo/Courier → peso cobrado (máx. real/vol)
+ * con unidad clara: Kg|Lb si gana el real, Kg Vol|Lb Vol si gana el volumétrico.
  */
 function logEnvDetalleFlete_(esEn, escId) {
     const e = logEnv_();
@@ -2366,9 +2426,16 @@ function logEnvDetalleFlete_(esEn, escId) {
     }
     if (mod === "aerea" || mod === "courier") {
         const nom = mod === "courier" ? "Courier" : (esEn ? "Air" : "Aéreo");
-        const kg = Math.max(Number(cub.pesoKg) || 0, Number(cub.kgVol) || 0);
+        const realKg = Number(cub.pesoKg) || 0;
+        const volKg = Number(cub.kgVol) || 0;
+        const kg = Math.max(realKg, volKg);
         if (!(kg > 0)) return nom;
-        const um = typeof logPesoUmDoc_ === "function" ? logPesoUmDoc_() : "kg";
+        const imperial = (typeof logPesoUmDoc_ === "function" ? logPesoUmDoc_() : "kg") === "lb";
+        const esVol = volKg > realKg + 0.0001;
+        /* Real: Kg / Lb. Volumétrico: Kg Vol / Lb Vol. */
+        const um = imperial
+            ? (esVol ? "Lb Vol" : "Lb")
+            : (esVol ? "Kg Vol" : "Kg");
         const val = typeof logKgADoc_ === "function" ? logKgADoc_(kg) : kg;
         const n = Math.round(Number(val) * 100) / 100;
         return nom + " " + logFmtNum_(n, esEn ? "en" : "es", n % 1 ? 2 : 0) + " " + um;
@@ -9726,7 +9793,9 @@ function logisticaLeerEnvUi_() {
                 if (val) ln.valor = valorNuevo;
                 if (pctEl) ln.pct = pctNuevo;
             }
-            if (nota) ln.notas = nota.value || "";
+            /* data-ln por fila Duties/Taxes eliminado: Obs. internas unificadas abajo. */
+            if (arancel) ln.notas = "";
+            else if (nota) ln.notas = nota.value || "";
             const mgN = row.querySelector("[data-lmg]");
             if (mgN) {
                 const k = mgN.getAttribute("data-lmg");
@@ -9739,6 +9808,20 @@ function logisticaLeerEnvUi_() {
                 ln.conceptoManual = (logEsServicio_(ln) || logEsExtraEnvio_(ln)) ? true : nuevo.trim() !== base;
             }
         });
+    }
+    const taObsInt = document.getElementById("logEnvObsInternas");
+    if (taObsInt) {
+        const valObs = String(taObsInt.value || "");
+        const escObs = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_() || "") : "";
+        if (escObs) {
+            if (!prev.porEsc || typeof prev.porEsc !== "object") prev.porEsc = {};
+            if (!prev.porEsc[escObs]) prev.porEsc[escObs] = logEnvEscSemilla_(prev);
+            prev.porEsc[escObs].obsInternas = valObs;
+            const escs0 = logEscList_();
+            if (!escs0.length || (escs0[0] && escs0[0].id === escObs)) prev.obsInternas = valObs;
+        } else {
+            prev.obsInternas = valObs;
+        }
     }
     logQuote.env = logEnvNormalizar_(prev);
 }
@@ -10558,13 +10641,13 @@ function logisticaPintarEnv_(forzar) {
             const margen = (!arancel && claveNal && !exterior)
                 ? "<span class=\"sb-unit log-env-mg-unit\"><input class=\"form-control form-control-sm text-end\" data-lmg=\"" + claveNal + "\" type=\"number\" min=\"0\" max=\"200\" step=\"1\" placeholder=\"30\" title=\"Margen de esta fila. Se suma al costo en la cotización y no se imprime.\" value=\"" + e.margenNal[claveNal] + "\"><span class=\"sb-unit-suf\">%</span></span>"
                 : "";
-            const nota = arancel
-                ? "<input class=\"form-control form-control-sm log-env-nota\" data-ln type=\"text\" maxlength=\"400\" placeholder=\"Observación\" data-tip=\"" + logEsc_(notasSel) + "\" title=\"Se guarda con la cotización. No sale en el PDF. En la hoja, Duties y Taxes se imprimen sumados en una sola fila.\" value=\"" + logEsc_(notasSel) + "\">"
-                : "";
+            const tipConcepto = arancel
+                ? "Duties y Taxes se imprimen sumados en el PDF. Las notas internas van en «Obs. internas» abajo."
+                : (notasSel || ln.notas || "");
             const phConcepto = esServ
                 ? (esEn ? "Installation / service" : "Instalación / servicio")
                 : (logEsExtraEnvio_(ln) ? (esEn ? "Extra logistics concept" : "Concepto adicional") : "");
-            const conceptoInp = "<input class=\"form-control form-control-sm log-concepto-tip\" data-lc type=\"text\" maxlength=\"80\" placeholder=\"" + logEsc_(phConcepto) + "\" data-tip=\"" + logEsc_(notasSel || ln.notas || "") + "\" value=\"" + logEsc_(ln.concepto) + "\">";
+            const conceptoInp = "<input class=\"form-control form-control-sm log-concepto-tip\" data-lc type=\"text\" maxlength=\"80\" placeholder=\"" + logEsc_(phConcepto) + "\" data-tip=\"" + logEsc_(tipConcepto) + "\" value=\"" + logEsc_(ln.concepto) + "\">";
             const conc = arancel
                 ? ("<span class=\"log-env-conc\">" + conceptoInp + pctInline + "</span>")
                 : conceptoInp;
@@ -10572,7 +10655,7 @@ function logisticaPintarEnv_(forzar) {
                 "<span class=\"log-env-grip\" title=\"Arrastrar\"><i class=\"bi bi-grip-vertical\"></i></span>" +
                 conc +
                 "<input class=\"form-control form-control-sm text-end" + (fuenteSel === "[Estimado IA]" ? " log-ia-est" : "") + (fuenteSel === "[Catálogo]" ? " log-cat" : "") + (autoVal ? " log-env-auto" : "") + "\" data-lv type=\"number\" step=\"0.01\" placeholder=\"" + (exterior ? "Costo" : "Costo COP") + "\" title=\"" + logEsc_(logMargenTituloCosto_(ln)) + "\"" + (autoVal ? " data-auto-val=\"" + logEsc_(autoVal) + "\"" : "") + " value=\"" + (valorMostrar == null ? "" : valorMostrar) + "\">" +
-                margen + nota +
+                margen +
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-ldup title=\"Duplicar\"><i class=\"bi bi-copy\"></i></button>" +
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-ldel title=\"Quitar\"><i class=\"bi bi-trash\"></i></button>" +
                 "</div>";
@@ -10607,6 +10690,17 @@ function logisticaPintarEnv_(forzar) {
                     "</div>");
             }
         }
+        /* Obs. internas unificadas (Duties/Taxes). Visible si hay aranceles o ya hay texto. */
+        const wrapObsInt = document.getElementById("logEnvObsInternasWrap");
+        const taObsInt = document.getElementById("logEnvObsInternas");
+        const hayAraUi = envioUi.some(function (ln) { return ln && (ln.tipo === "duties" || ln.tipo === "taxes"); });
+        logEnvObsInternasMigrar_(e);
+        const txtObsInt = logEnvObsInternas_(escUi || "");
+        if (wrapObsInt) {
+            wrapObsInt.hidden = !hayAraUi && !String(txtObsInt || "").trim();
+            wrapObsInt.classList.toggle("d-none", wrapObsInt.hidden);
+        }
+        if (taObsInt && document.activeElement !== taObsInt) taObsInt.value = txtObsInt || "";
         logActivarTipConcepto_();
         logisticaOrdenEnv_();
     }
@@ -13152,11 +13246,11 @@ function logisticaInit() {
     logCargarAranceles_();
     if (document.getElementById("fichaPartida")) logPintarSelectPartida_("");
     logisticaInitIa_();
-    ["logMercado", "logModalidad", "logIncoterm", "logDestCiudad", "logDestPais", "logDestCodigo", "logDestPuerto", "logDestTitulo", "logResumenPct", "logMargenLog", "logExwPct", "logCostosOn", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc", "logEmbarques"].forEach(function (id) {
+    ["logMercado", "logModalidad", "logIncoterm", "logDestCiudad", "logDestPais", "logDestCodigo", "logDestPuerto", "logDestTitulo", "logResumenPct", "logMargenLog", "logExwPct", "logCostosOn", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc", "logEmbarques", "logEnvObsInternas"].forEach(function (id) {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener("change", logisticaOnEnvUi_);
-        if (el.tagName === "INPUT") el.addEventListener("input", logisticaOnEnvUi_);
+        if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") el.addEventListener("input", logisticaOnEnvUi_);
     });
     document.querySelectorAll("input[name=\"logModoCosto\"]").forEach(function (r) {
         r.addEventListener("change", logisticaOnEnvUi_);

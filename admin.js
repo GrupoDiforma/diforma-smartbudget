@@ -3343,6 +3343,253 @@ async function sincronizarArancelesUI() {
     }
 }
 
+/** Encabezados del listado (compatibles con sync Drive y con Cargar Excel). */
+var ARANCEL_XLSX_HEADERS_ = ["pais", "partida", "descripcion", "duties", "base duty", "taxes", "base tax", "nota", "revisar"];
+
+function arancelFilasParaExcel_() {
+    const ui = typeof leerArancelesUI === "function" ? leerArancelesUI() : null;
+    if (ui && ui.length) {
+        return ui.map(function (f) {
+            const dPct = f.dutiesPct === "" || f.dutiesPct == null ? null : Number(String(f.dutiesPct).replace(",", "."));
+            const tPct = f.taxesPct === "" || f.taxesPct == null ? null : Number(String(f.taxesPct).replace(",", "."));
+            return {
+                pais: String(f.pais || "").trim(),
+                partida: arancelPartidaFmt_(f.partida),
+                descripcion: String(f.descripcion || "").trim(),
+                dutiesPct: dPct != null && isFinite(dPct) ? dPct : null,
+                dutiesBase: arancelBaseUi_(f.dutiesBase, dPct) || "EXW",
+                taxesPct: tPct != null && isFinite(tPct) ? tPct : null,
+                taxesBase: arancelBaseUi_(f.taxesBase, tPct) || "EXW",
+                nota: String(f.nota || "").trim(),
+                revisar: "N"
+            };
+        });
+    }
+    if (typeof logAranceles !== "undefined" && Array.isArray(logAranceles.filas) && logAranceles.filas.length) {
+        return logAranceles.filas.map(function (f) {
+            return {
+                pais: String(f.pais || "").trim(),
+                partida: arancelPartidaFmt_(f.partida),
+                descripcion: String(f.descripcion || "").trim(),
+                dutiesPct: f.dutiesPct == null || f.dutiesPct === "" ? null : Number(f.dutiesPct),
+                dutiesBase: arancelBaseUi_(f.dutiesBase, f.dutiesPct) || "EXW",
+                taxesPct: f.taxesPct == null || f.taxesPct === "" ? null : Number(f.taxesPct),
+                taxesBase: arancelBaseUi_(f.taxesBase, f.taxesPct) || "EXW",
+                nota: String(f.nota || "").trim(),
+                revisar: String(f.revisar || "N")
+            };
+        });
+    }
+    return [];
+}
+
+function arancelBaseExcelLabel_(b) {
+    if (b === "CIF+DUTY") return "CIF+DUTY";
+    if (b === "CIF") return "CIF";
+    return "EXW";
+}
+
+async function descargarArancelesExcelUI() {
+    if (typeof ExcelJS === "undefined") {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No cargó ExcelJS. Recarga la página.", "danger");
+        return;
+    }
+    const btn = document.getElementById("btnDescargarArancelesExcel");
+    const original = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Excel…'; }
+    try {
+        const filas = arancelFilasParaExcel_();
+        const wb = new ExcelJS.Workbook();
+        wb.creator = "SmartBudget";
+        const ws = wb.addWorksheet("Aranceles", { views: [{ state: "frozen", ySplit: 1 }] });
+        ws.addRow(ARANCEL_XLSX_HEADERS_);
+        ws.getRow(1).font = { bold: true };
+        if (!filas.length) {
+            /* Plantilla mínima si aún no hay tabla cargada. */
+            ws.addRow(["Puerto Rico", "9403.20.00.00", "Exhibidores metálicos", 25, "EXW", 11.5, "EXW", "IVU lo paga el importador.", "N"]);
+            ws.addRow(["Estados Unidos", "9403.20.00.00", "Exhibidores metálicos", 0, "EXW", 0, "EXW", "Completar % según HTS.", "S"]);
+            ws.addRow(["México", "9403.20.00.00", "Exhibidores metálicos", 15, "CIF", 16, "CIF+DUTY", "Ejemplo: Taxes sobre CIF+Duties.", "N"]);
+        } else {
+            filas.forEach(function (f) {
+                ws.addRow([
+                    f.pais,
+                    f.partida,
+                    f.descripcion,
+                    f.dutiesPct,
+                    arancelBaseExcelLabel_(f.dutiesBase),
+                    f.taxesPct,
+                    arancelBaseExcelLabel_(f.taxesBase),
+                    f.nota,
+                    f.revisar || "N"
+                ]);
+            });
+        }
+        [16, 14, 28, 10, 12, 10, 12, 50, 10].forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
+        const buf = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "Impuestos-y-aranceles-listado.xlsx";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion(filas.length
+                ? ("Excel listo: " + filas.length + " filas. Revísalo, ajústalo y usa Cargar Excel.")
+                : "Plantilla descargada (aún no había filas en Ajustes).", "success");
+        }
+    } catch (e) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo generar el Excel: " + ((e && e.message) || e), "danger");
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+}
+
+function arancelColIdx_(headers, re) {
+    for (let i = 0; i < headers.length; i++) {
+        const t = String(headers[i] || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        if (re.test(t)) return i;
+    }
+    return -1;
+}
+
+function arancelCeldaTxt_(cell) {
+    if (cell == null) return "";
+    if (typeof cell === "object" && cell.text != null) return String(cell.text);
+    if (typeof cell === "object" && cell.result != null) return String(cell.result);
+    if (typeof cell === "object" && cell.richText) {
+        return cell.richText.map(function (p) { return p.text; }).join("");
+    }
+    return String(cell);
+}
+
+function arancelPctDe_(raw) {
+    const s = String(raw == null ? "" : raw).trim().replace("%", "").replace(",", ".");
+    if (!s) return null;
+    const n = Number(s);
+    return isFinite(n) ? n : null;
+}
+
+function aplicarFilasArancelesUI_(filas) {
+    const body = document.getElementById("arancelesBody");
+    if (!body) return;
+    _arancelesHojaLista = true;
+    _arancelesHojaFallo = false;
+    body.setAttribute("data-cargada", "1");
+    body.innerHTML = filas.length
+        ? filas.map(htmlFilaArancel_).join("")
+        : "<tr><td colspan=\"8\">Sin filas en el Excel.</td></tr>";
+    if (typeof logAranceles !== "undefined") {
+        logAranceles.filas = filas.map(function (f) {
+            return {
+                pais: f.pais,
+                partida: arancelPartidaFmt_(f.partida),
+                descripcion: f.descripcion || "",
+                dutiesPct: f.dutiesPct,
+                dutiesBase: arancelBaseUi_(f.dutiesBase, f.dutiesPct),
+                taxesPct: f.taxesPct,
+                taxesBase: arancelBaseUi_(f.taxesBase, f.taxesPct),
+                nota: f.nota || ""
+            };
+        });
+        logAranceles.pedido = true;
+    }
+    if (typeof fusionarPartidasDesdeArancel_ === "function") fusionarPartidasDesdeArancel_();
+    if (typeof pintarTablaPartidas === "function") pintarTablaPartidas();
+    arancelesLlenarFiltroPais_();
+    arancelesAplicarVista_();
+    if (typeof logAraSimLlenar_ === "function") logAraSimLlenar_();
+    try {
+        if (typeof logAplicarAranceles_ === "function" && logAplicarAranceles_()) {
+            if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
+            if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+        }
+    } catch (eA) { /* ok */ }
+}
+
+async function cargarArancelesExcelUI(ev) {
+    const input = ev && ev.target;
+    const file = input && input.files && input.files[0];
+    if (input) input.value = "";
+    if (!file) return;
+    if (typeof ExcelJS === "undefined") {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No cargó ExcelJS. Recarga la página.", "danger");
+        return;
+    }
+    const btn = document.getElementById("btnCargarArancelesExcel");
+    const original = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Leyendo…'; }
+    try {
+        const buf = await file.arrayBuffer();
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(buf);
+        const ws = wb.getWorksheet("Aranceles") || wb.worksheets[0];
+        if (!ws) throw new Error("El archivo no tiene hojas.");
+        const grid = [];
+        ws.eachRow({ includeEmpty: false }, function (row) {
+            const vals = [];
+            row.eachCell({ includeEmpty: true }, function (cell, col) {
+                vals[col - 1] = cell.value;
+            });
+            grid.push(vals);
+        });
+        if (grid.length < 2) throw new Error("El Excel no trae filas de datos.");
+        const headers = (grid[0] || []).map(arancelCeldaTxt_);
+        const blob = headers.join(" ").toLowerCase();
+        if (blob.indexOf("pais") < 0 || blob.indexOf("partida") < 0) {
+            throw new Error("Faltan columnas pais y partida en la primera fila.");
+        }
+        const cPais = arancelColIdx_(headers, /^pais\b/);
+        const cPar = arancelColIdx_(headers, /partida/);
+        const cDesc = arancelColIdx_(headers, /descripcion/);
+        const cBd = arancelColIdx_(headers, /base\s*duty|duties_?base|base\s*duties/);
+        const cBt = arancelColIdx_(headers, /base\s*tax|taxes_?base/);
+        const cDu = arancelColIdx_(headers, /^(duties|duties_?pct|duty|gravamen)$/);
+        const cTx = arancelColIdx_(headers, /^(taxes|taxes_?pct|tax|ivu|iva)$/);
+        const cNota = arancelColIdx_(headers, /^nota$|observacion/);
+        const cRev = arancelColIdx_(headers, /revisar/);
+        /* Fallback si el encabezado trae texto extra (p. ej. "Duties %"). */
+        const cDu2 = cDu < 0 ? arancelColIdx_(headers, /\bduties\b|\bduty\b|\bgravamen\b/) : cDu;
+        const cTx2 = cTx < 0 ? arancelColIdx_(headers, /\btaxes\b|\btax\b|\bivu\b|\biva\b/) : cTx;
+        const cDuF = cDu >= 0 ? cDu : (cDu2 !== cBd ? cDu2 : -1);
+        const cTxF = cTx >= 0 ? cTx : (cTx2 !== cBt ? cTx2 : -1);
+        const filas = [];
+        for (let r = 1; r < grid.length; r++) {
+            const line = grid[r] || [];
+            const pais = cPais >= 0 ? arancelCeldaTxt_(line[cPais]).trim() : "";
+            const partida = cPar >= 0 ? arancelCeldaTxt_(line[cPar]).trim() : "";
+            if (!pais && !partida) continue;
+            const du = cDuF >= 0 ? arancelPctDe_(arancelCeldaTxt_(line[cDuF])) : null;
+            const tx = cTxF >= 0 ? arancelPctDe_(arancelCeldaTxt_(line[cTxF])) : null;
+            const db = arancelBaseUi_(cBd >= 0 ? arancelCeldaTxt_(line[cBd]) : "", du);
+            const tb = arancelBaseUi_(cBt >= 0 ? arancelCeldaTxt_(line[cBt]) : "", tx);
+            filas.push({
+                pais: pais,
+                partida: arancelPartidaFmt_(partida),
+                descripcion: cDesc >= 0 ? arancelCeldaTxt_(line[cDesc]).trim().slice(0, 80) : "",
+                dutiesPct: du,
+                dutiesBase: du != null ? (db || "EXW") : "",
+                taxesPct: tx,
+                taxesBase: tx != null ? (tb || "EXW") : "",
+                nota: cNota >= 0 ? arancelCeldaTxt_(line[cNota]).trim().slice(0, 400) : "",
+                revisar: cRev >= 0 ? arancelCeldaTxt_(line[cRev]).trim() : ""
+            });
+        }
+        if (!filas.length) throw new Error("No se leyeron filas válidas (país + partida).");
+        aplicarFilasArancelesUI_(filas);
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Cargadas " + filas.length + " filas. Revisa la tabla y pulsa Guardar en Ajustes para publicarlas.", "success");
+        }
+    } catch (e) {
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion("No se pudo cargar el Excel: " + ((e && e.message) || e), "danger");
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+}
+
+window.descargarArancelesExcelUI = descargarArancelesExcelUI;
+window.cargarArancelesExcelUI = cargarArancelesExcelUI;
+
 async function sincronizarCatalogoOdooUI() {
     const email = localStorage.getItem("smartbudget_email");
     const btn = document.getElementById("btnSyncOdooCatalogo");

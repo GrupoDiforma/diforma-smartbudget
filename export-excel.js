@@ -264,7 +264,7 @@ async function cargarPlantillaExcel() {
         const local = JSON.parse(localStorage.getItem("smartbudget_plantilla_mapa") || "null");
         if (local) aplicarMapaXlsx(local);
     } catch (e2) {}
-    const res = await fetch(PLANTILLA_PRESUPUESTO_XLSX + "?v=1.0.16");
+    const res = await fetch(PLANTILLA_PRESUPUESTO_XLSX + "?v=1.0.17");
     if (!res.ok) throw new Error("No se encontró la plantilla Excel.");
     const buf = await res.arrayBuffer();
     return workbookDesdeBuffer(buf);
@@ -1398,38 +1398,130 @@ function excelCotInsertarFilaModelo_(ws, atRow, styleFromRow) {
     }
 }
 
-/** Layout dinámico tras insertar filas de ítem arriba, servicios y resumen.
- *  extraServ: filas de servicio insertadas entre TOTAL PRODUCTOS y el bloque de envío.
- *  Si extraServ = 0, el layout coincide con la plantilla subida en Ajustes (sin hueco vacío). */
-function excelCotLayout_(extraTop, extraSum, extraServ) {
+/** Layout dinámico tras insertar filas de ítem, obs de proyecto, servicios y resumen.
+ *  extraObsMid: observaciones del proyecto (tipo obs) entre ítems y TOTAL PRODUCTOS / EXWORKS.
+ *  extraServ: servicios entre TOTAL PRODUCTOS y el bloque de envío.
+ *  Si extras = 0, el layout coincide con la plantilla de Ajustes (sin huecos vacíos). */
+function excelCotLayout_(extraTop, extraSum, extraServ, extraObsMid) {
     const o = extraTop || 0;
     const s = extraSum || 0;
     const sv = extraServ || 0;
+    const om = extraObsMid || 0;
+    const shift = o + om + sv;
     const log = {};
     Object.keys(XLSX_COT_LOG_ROWS_BASE_).forEach(function (k) {
-        log[k] = XLSX_COT_LOG_ROWS_BASE_[k] + o + sv;
+        log[k] = XLSX_COT_LOG_ROWS_BASE_[k] + o + om + sv;
     });
     return {
         itemStart: XLSX_COT_ITEM_START_,
         itemSlots: XLSX_COT_ITEM_SLOTS_,
         itemEnd: XLSX_COT_ITEM_START_ + XLSX_COT_ITEM_SLOTS_ - 1 + o,
-        totalProd: 6 + o,
-        servStart: sv ? 7 + o : 0,
-        servEnd: sv ? 6 + o + sv : 0,
+        obsMidStart: om ? 6 + o : 0,
+        obsMidEnd: om ? 5 + o + om : 0,
+        obsMidCount: om,
+        totalProd: 6 + o + om,
+        servStart: sv ? 7 + o + om : 0,
+        servEnd: sv ? 6 + o + om + sv : 0,
         servCount: sv,
         log: log,
-        logStart: 7 + o + sv,
-        logEnd: 18 + o + sv,
-        totalLog: 19 + o + sv,
-        granTop: 20 + o + sv,
-        pagoTop: [21 + o + sv, 22 + o + sv, 23 + o + sv],
-        valid: 25 + o + sv,
-        sumStart: 28 + o + sv,
-        sumSlotsEnd: 30 + o + sv,
-        best: 31 + o + s + sv,
-        granBot: 32 + o + s + sv,
-        pagoBot: [33 + o + s + sv, 34 + o + s + sv, 35 + o + s + sv]
+        logStart: 7 + o + om + sv,
+        logEnd: 18 + o + om + sv,
+        totalLog: 19 + o + om + sv,
+        granTop: 20 + o + om + sv,
+        pagoTop: [21 + shift, 22 + shift, 23 + shift],
+        valid: 25 + shift,
+        sumStart: 28 + shift,
+        sumSlotsEnd: 30 + shift,
+        best: 31 + o + s + om + sv,
+        granBot: 32 + o + s + om + sv,
+        pagoBot: [33 + o + s + om + sv, 34 + o + s + om + sv, 35 + o + s + om + sv]
     };
+}
+
+/** Texto de una fila obs / obsFinal (modelo + textarea del panel si aún no guardó). */
+function excelCotTextoObsFila_(f, idioma, escId) {
+    if (!f) return "";
+    const key = String(escId || f.escId || "");
+    const v = typeof logFilaValores_ === "function" ? logFilaValores_(f, idioma, key) : null;
+    let txt = String((v && v.titulo) || "").trim();
+    if (!txt && f.over) {
+        txt = String(f.over.titulo || f.over.texto || f.over.obs || "").trim();
+    }
+    try {
+        const ta = document.querySelector("#logFilasLista .log-fila[data-r=\"" + f.uid + "\"] textarea[data-acc=\"titulo\"]");
+        if (ta && String(ta.value || "").trim()) txt = String(ta.value).trim();
+    } catch (eDom) { /* noop */ }
+    return txt;
+}
+
+/** Textos de observaciones (proyecto u obsFinal) para una opción. */
+function excelCotListarObs_(idioma, escId, soloFinal) {
+    if (typeof logQuote === "undefined" || !logQuote || !logQuote.filas) return [];
+    const key = String(escId || "");
+    const out = [];
+    (logQuote.filas || []).forEach(function (f) {
+        if (!f) return;
+        const esFinal = typeof logEsObsFinalFila_ === "function" ? logEsObsFinalFila_(f) : (f.tipo === "obsFinal");
+        const esObs = f.tipo === "obs";
+        if (soloFinal) {
+            if (!esFinal) return;
+            const k = typeof logObsFinalEscKey_ === "function" ? logObsFinalEscKey_(f) : String(f.escId || (f.over && f.over.obsEsc) || "");
+            if (key) {
+                /* Opción: las de esa opción + las generales (sin esc / base). */
+                if (k && k !== key && k !== "base") return;
+            } else if (k && k !== "base") return;
+        } else {
+            if (!esObs) return;
+            /* Con opción: las de esa opción + obs de zona libre (sin escId). */
+            if (key) {
+                if (f.escId && String(f.escId) !== key) return;
+            } else if (f.escId) return;
+        }
+        const txt = excelCotTextoObsFila_(f, idioma, key);
+        if (!txt) return;
+        out.push({ texto: txt, final: !!esFinal });
+    });
+    return out;
+}
+
+/** Obs. internas Duties/Taxes (no PDF) → Excel tras obs generales. */
+function excelCotObsInternas_(escId) {
+    if (typeof logEnvObsInternas_ === "function") {
+        return String(logEnvObsInternas_(escId || "") || "").trim();
+    }
+    try {
+        const ta = document.getElementById("logEnvObsInternas");
+        if (ta && String(ta.value || "").trim()) return String(ta.value).trim();
+    } catch (e) { /* noop */ }
+    const e = typeof logEnv_ === "function" ? logEnv_() : (logQuote && logQuote.env);
+    return String((e && e.obsInternas) || "").trim();
+}
+
+/** Escribe un bloque de texto a lo ancho (obs / obs internas) en la fila. */
+function excelCotEscribirBloqueObs_(ws, row, etiqueta, cuerpo, fillArgb) {
+    const texto = String(cuerpo || "").trim();
+    if (!texto) return;
+    const lab = String(etiqueta || "");
+    excelCotTituloFila_(ws, row, lab ? (lab + "\n" + texto) : texto, 1, 6, {
+        bold: false, size: 9, align: "left", italic: false, fontName: "Calibri",
+        height: Math.min(90, 18 + Math.ceil(texto.length / 70) * 12)
+    });
+    try {
+        const cell = ws.getCell(row, 1);
+        cell.alignment = Object.assign({}, cell.alignment || {}, { wrapText: true, vertical: "top" });
+        if (fillArgb) {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
+        }
+        cell.value = {
+            richText: [
+                { text: lab ? (lab + "\n") : "", font: { bold: true, size: 9, name: "Calibri", color: { argb: "FF1A5276" } } },
+                { text: texto, font: { bold: false, size: 9, name: "Calibri" } }
+            ]
+        };
+    } catch (eB) {}
+    for (let c = 7; c <= 9; c++) {
+        try { ws.getCell(row, c).value = null; } catch (eC) {}
+    }
 }
 
 function excelCotMasterQuote_(wb, esEn) {
@@ -1895,17 +1987,27 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
             excelCotInsertarFilaModelo_(ws, bestBase, sumStyleFrom);
         }
     }
+    /* Observaciones del proyecto: entre ítems y TOTAL PRODUCTOS / EXWORKS (solo si hay texto). */
+    const obsMid = excelCotListarObs_(idioma, escId, false);
+    const nObsMid = obsMid.length;
+    if (nObsMid > 0) {
+        const insertObs = 6 + extra; /* fila del TOTAL PRODUCTOS en plantilla + ítems extra */
+        for (let k = 0; k < nObsMid; k++) {
+            excelCotInsertarFilaModelo_(ws, insertObs, 5);
+        }
+        avisos.push("Se insertaron " + nObsMid + " fila(s) de observaciones del proyecto.");
+    }
     /* Servicios: filas entre TOTAL PRODUCTOS y el bloque de envío (solo si hay). */
     const servicios = excelCotListarServicios_(idioma, escId);
     const nServ = servicios.length;
     if (nServ > 0) {
-        const insertAt = 7 + extra; /* primera fila de logística en plantilla + ítems extra */
+        const insertAt = 7 + extra + nObsMid; /* primera fila de logística + ítems + obs */
         for (let k = 0; k < nServ; k++) {
             excelCotInsertarFilaModelo_(ws, insertAt, 5);
         }
         avisos.push("Se insertaron " + nServ + " fila(s) de servicio entre productos y logística.");
     }
-    const R = excelCotLayout_(extra, extra, nServ);
+    const R = excelCotLayout_(extra, extra, nServ, nObsMid);
     const granRef = "$F$" + R.granTop;
     const validRef = "$C$" + R.valid;
 
@@ -2013,6 +2115,14 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
         : (esEn ? "TOTAL PRODUCTS / EXWORKS" : "TOTAL PRODUCTOS / EXWORKS");
     const titLog = typeof logEnvTitulo_ === "function" ? logEnvTitulo_("log", null, mon, esEn, escId) : (esEn ? "TOTAL LOGISTICS COST" : "TOTAL COSTO LOGÍSTICO");
     const titGran = typeof logEnvTitulo_ === "function" ? logEnvTitulo_("gran", null, mon, esEn, escId) : (esEn ? "GRAND TOTAL" : "GRAN TOTAL");
+
+    /* Observaciones del proyecto (texto a lo ancho, sin monto). */
+    if (R.obsMidCount > 0 && R.obsMidStart) {
+        const labObs = esEn ? "Project notes" : "Observaciones del proyecto";
+        for (let i = 0; i < obsMid.length; i++) {
+            excelCotEscribirBloqueObs_(ws, R.obsMidStart + i, labObs, obsMid[i].texto, "FFF5F5F5");
+        }
+    }
 
     excelCotTituloFila_(ws, R.totalProd, titProd);
     ws.getCell(R.totalProd, 6).value = { formula: "SUM(F" + R.itemStart + ":F" + R.itemEnd + ")" };
@@ -2139,6 +2249,28 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
     excelCotOcultarFila_(ws, antB, !antOn);
     excelCotOcultarFila_(ws, salB, !antOn);
 
+    /* Observaciones generales (final) + Obs. internas Duties/Taxes, tras GRAN TOTAL / pago. */
+    const obsFinal = excelCotListarObs_(idioma, escId, true);
+    const obsInt = excelCotObsInternas_(escId);
+    const nPie = obsFinal.length + (obsInt ? 1 : 0);
+    if (nPie > 0) {
+        let rowObs = R.pagoBot[2] + 1;
+        for (let k = 0; k < nPie; k++) {
+            excelCotInsertarFilaModelo_(ws, rowObs, R.granBot);
+        }
+        let rPie = rowObs;
+        const labFin = esEn ? "General notes" : "Observaciones generales";
+        for (let i = 0; i < obsFinal.length; i++) {
+            excelCotEscribirBloqueObs_(ws, rPie++, labFin, obsFinal[i].texto, "FFE8F4FC");
+        }
+        if (obsInt) {
+            const labInt = esEn ? "Internal notes (Duties / Taxes)" : "Obs. internas (Duties / Taxes)";
+            excelCotEscribirBloqueObs_(ws, rPie++, labInt, obsInt, "FFFFF4E5");
+        }
+        if (obsFinal.length) avisos.push("Se escribieron " + obsFinal.length + " observación(es) generales tras el gran total.");
+        if (obsInt) avisos.push("Se escribió Obs. internas (Duties/Taxes) tras las observaciones generales.");
+    }
+
     const mergesSum = [];
     for (let i = 0; i < nFill; i++) {
         const r = R.sumStart + i;
@@ -2223,6 +2355,20 @@ async function rellenarHojaCotizacionExcel_(wb, avisos) {
     if (typeof logisticaLeerOpciones_ !== "function" || typeof logQuote === "undefined") {
         throw new Error("Logística no está lista.");
     }
+    /* Sincroniza panel (obs / Obs. internas) antes de leer el modelo. */
+    try { if (typeof logisticaLeerEnvUi_ === "function") logisticaLeerEnvUi_(); } catch (eSync) { /* noop */ }
+    try {
+        const lista = document.getElementById("logFilasLista");
+        if (lista) {
+            lista.querySelectorAll(".log-fila textarea[data-acc=\"titulo\"]").forEach(function (ta) {
+                const row = ta.closest(".log-fila");
+                const fila = row && typeof logFilaPorUid_ === "function" ? logFilaPorUid_(row.getAttribute("data-r")) : null;
+                if (!fila || (fila.tipo !== "obs" && fila.tipo !== "obsFinal")) return;
+                if (!fila.over) fila.over = {};
+                fila.over.titulo = String(ta.value || "");
+            });
+        }
+    } catch (eObsSync) { /* noop */ }
     const opts = logisticaLeerOpciones_();
     const idioma = opts.idioma === "en" ? "en" : "es";
     const esEn = idioma === "en";

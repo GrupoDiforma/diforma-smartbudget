@@ -704,12 +704,21 @@ body.logistica-activa {
 .log-env-row.is-arancel [data-lv] { grid-column: 3; grid-row: 1; }
 .log-env-row.is-arancel [data-ldup] { grid-column: 4; grid-row: 1; }
 .log-env-row.is-arancel [data-ldel] { grid-column: 5; grid-row: 1; }
-.log-env-row.is-arancel [data-ln] {
-    grid-column: 2 / 4;
-    grid-row: 2;
-    width: 100%;
-    min-width: 0;
-    text-overflow: ellipsis;
+.log-env-obs-int {
+    margin: 4px 0 10px;
+    padding: 8px 10px;
+    border: 1px dashed #d1d5db;
+    border-radius: 6px;
+    background: #fffdf8;
+}
+.log-env-obs-int label {
+    display: block;
+    font-weight: 600;
+    color: #6b7280;
+}
+.log-env-obs-int textarea {
+    resize: vertical;
+    min-height: 2.4rem;
 }
 .log-env-row [data-lv].log-env-auto { color: #374151; }
 .log-env-suma {
