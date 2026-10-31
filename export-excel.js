@@ -153,6 +153,303 @@ function escribirFilaItem(ws, row, item, lots, escalas) {
     });
 }
 
+/** ExcelJS no corre referencias al insertar filas: desplaza filas ≥ startRow en la fórmula. */
+function excelPresuShiftFormulaRows_(formula, startRow, nInsert) {
+    if (!nInsert || !formula) return formula;
+    return String(formula).replace(/(\$?)([A-Z]{1,3})(\$?)(\d+)/gi, function (m, absC, col, absR, rowStr) {
+        const row = parseInt(rowStr, 10);
+        if (!isFinite(row) || row < startRow) return m;
+        return absC + col + absR + (row + nInsert);
+    });
+}
+
+/**
+ * Convierte sharedFormula → fórmula normal.
+ * Insertar filas en medio de un rango compartido genera XML inválido y Excel pide reparar.
+ */
+function excelPresuMaterializarSharedFormulas_(ws) {
+    if (!ws) return;
+    const maxR = Math.min(Number(ws.rowCount) || 120, 200);
+    const maxC = 20;
+    for (let r = 1; r <= maxR; r++) {
+        for (let c = 1; c <= maxC; c++) {
+            let cell;
+            try { cell = ws.getCell(r, c); } catch (eC) { continue; }
+            const v = cell.value;
+            if (!v || typeof v !== "object" || v.sharedFormula == null) continue;
+            const masterRef = String(v.sharedFormula || "");
+            let masterFormula = null;
+            let masterRow = null;
+            try {
+                if (/^[A-Z]{1,3}\d{1,4}$/i.test(masterRef)) {
+                    const master = ws.getCell(masterRef);
+                    masterRow = master.row;
+                    const mv = master.value;
+                    if (mv && typeof mv === "object" && mv.formula) masterFormula = String(mv.formula);
+                }
+            } catch (eM) { /* noop */ }
+            if (!masterFormula || !masterRow) {
+                cell.value = v.result != null ? v.result : null;
+                continue;
+            }
+            const delta = r - masterRow;
+            const explicit = masterFormula.replace(/(\$?)([A-Z]{1,3})(\$?)(\d+)/gi, function (m, absC, col, absR, rowStr) {
+                const row = parseInt(rowStr, 10);
+                if (!isFinite(row) || absR === "$") return m;
+                return absC + col + absR + (row + delta);
+            });
+            const nv = { formula: explicit };
+            if (v.result !== undefined) nv.result = v.result;
+            cell.value = nv;
+        }
+    }
+}
+
+function excelPresuRepararFormulasTrasInsert_(ws, startRow, nInsert) {
+    if (!ws || !nInsert) return;
+    const maxR = Math.min(Number(ws.rowCount) || 120, 200);
+    const maxC = 20;
+    for (let r = 1; r <= maxR; r++) {
+        for (let c = 1; c <= maxC; c++) {
+            let cell;
+            try { cell = ws.getCell(r, c); } catch (eC) { continue; }
+            const v = cell.value;
+            if (!v || typeof v !== "object" || !v.formula) continue;
+            const next = excelPresuShiftFormulaRows_(v.formula, startRow, nInsert);
+            if (next !== v.formula) {
+                const nv = { formula: next };
+                if (v.result !== undefined) nv.result = v.result;
+                cell.value = nv;
+            }
+        }
+    }
+}
+
+/** Fab fin real en la hoja (antes de «Armado general»), por si ya se insertaron filas. */
+function excelPresuDetectarBloque_(ws) {
+    const fabIni = XLSX_FILAS_FAB.inicio;
+    let fabFin = XLSX_FILAS_FAB.fin;
+    let comIni = XLSX_FILAS_COM.inicio;
+    let comFin = XLSX_FILAS_COM.fin;
+    let fleteFila = XLSX_FILA_FLETE;
+    try {
+        const armado = buscarTextoHoja(ws, /Armado\s+general/i, 120, 4);
+        if (armado) fabFin = Math.max(fabIni, armado.r - 1);
+        const prod = buscarTextoHoja(ws, /Productos de comercializaci/i, 140, 6);
+        const obs = buscarTextoHoja(ws, /^OBSERVACIONES$/i, 140, 6);
+        if (prod) {
+            fleteFila = prod.r - 1;
+            comIni = prod.r + 1;
+        }
+        if (obs) comFin = Math.max(comIni, obs.r - 1);
+    } catch (eDet) { /* noop */ }
+    return { fabIni: fabIni, fabFin: fabFin, comIni: comIni, comFin: comFin, fleteFila: fleteFila };
+}
+
+function excelPresuColNum_(letters) {
+    const s = String(letters || "").toUpperCase();
+    let n = 0;
+    for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+    return n;
+}
+
+function excelPresuParseMerge_(ref) {
+    const m = String(ref || "").match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/i);
+    if (!m) return null;
+    return {
+        ref: String(ref),
+        c1: excelPresuColNum_(m[1]),
+        r1: parseInt(m[2], 10),
+        c2: excelPresuColNum_(m[3]),
+        r2: parseInt(m[4], 10)
+    };
+}
+
+/** Merges que se mueven o estiran al insertar en fromRow (con valor maestro). */
+function excelPresuSnapshotMergesFrom_(ws, fromRow) {
+    const merges = (ws.model && ws.model.merges) ? ws.model.merges.slice() : [];
+    const out = [];
+    merges.forEach(function (ref) {
+        const p = excelPresuParseMerge_(ref);
+        if (!p || p.r2 < fromRow) return;
+        let val = null;
+        try {
+            val = ws.getCell(p.r1, p.c1).value;
+            if (val && typeof val === "object") val = JSON.parse(JSON.stringify(val));
+        } catch (eV) { val = null; }
+        p.value = val;
+        out.push(p);
+    });
+    return out;
+}
+
+/** ExcelJS no actualiza model.merges al insertar: hay que descombinar antes del splice. */
+function excelPresuUnmergeDesde_(ws, fromRow, snapshot) {
+    (snapshot || []).forEach(function (p) {
+        try { ws.unMergeCells(p.r1, p.c1, p.r2, p.c2); } catch (e1) { /* noop */ }
+        if (p.ref) {
+            try { ws.unMergeCells(p.ref); } catch (e2) { /* noop */ }
+        }
+    });
+    const left = (ws.model && ws.model.merges) ? ws.model.merges.slice() : [];
+    left.forEach(function (ref) {
+        const p = excelPresuParseMerge_(ref);
+        if (!p || p.r2 < fromRow) return;
+        try { ws.unMergeCells(ref); } catch (e3) { /* noop */ }
+    });
+}
+
+/**
+ * Reaplica merges ya desplazados; valor solo en la maestra (evita el “eco” en esclavos).
+ */
+function excelPresuRestaurarMergesTrasInsert_(ws, fromRow, nInsert, snapshot) {
+    if (!ws || !nInsert || !snapshot || !snapshot.length) return;
+    snapshot.forEach(function (p) {
+        let nr1 = p.r1;
+        let nr2 = p.r2;
+        if (p.r1 >= fromRow) {
+            nr1 = p.r1 + nInsert;
+            nr2 = p.r2 + nInsert;
+        } else {
+            nr2 = p.r2 + nInsert;
+        }
+        try { ws.unMergeCells(nr1, p.c1, nr2, p.c2); } catch (eU) { /* noop */ }
+        for (let r = nr1; r <= nr2; r++) {
+            for (let c = p.c1; c <= p.c2; c++) {
+                try { ws.getCell(r, c).value = null; } catch (e4) { /* noop */ }
+            }
+        }
+        try {
+            ws.mergeCells(nr1, p.c1, nr2, p.c2);
+        } catch (e5) {
+            /* Reintento: quitar merges que solapen el rectángulo. */
+            const left = (ws.model && ws.model.merges) ? ws.model.merges.slice() : [];
+            left.forEach(function (ref) {
+                const q = excelPresuParseMerge_(ref);
+                if (!q) return;
+                if (q.r2 < nr1 || q.r1 > nr2 || q.c2 < p.c1 || q.c1 > p.c2) return;
+                try { ws.unMergeCells(ref); } catch (e6) { /* noop */ }
+            });
+            try { ws.mergeCells(nr1, p.c1, nr2, p.c2); } catch (e7) { /* noop */ }
+        }
+        if (p.value != null) {
+            try { ws.getCell(nr1, p.c1).value = p.value; } catch (e8) { /* noop */ }
+        }
+    });
+}
+
+/** Por si quedan merges con valor repetido en esclavos. */
+function excelPresuDeduparMerges_(ws) {
+    if (!ws || !ws.model || !ws.model.merges) return;
+    ws.model.merges.slice().forEach(function (ref) {
+        const p = excelPresuParseMerge_(ref);
+        if (!p) return;
+        let masterVal = null;
+        try { masterVal = ws.getCell(p.r1, p.c1).value; } catch (e) { return; }
+        for (let r = p.r1; r <= p.r2; r++) {
+            for (let c = p.c1; c <= p.c2; c++) {
+                if (r === p.r1 && c === p.c1) continue;
+                try { ws.getCell(r, c).value = null; } catch (e2) { /* noop */ }
+            }
+        }
+        try { ws.getCell(p.r1, p.c1).value = masterVal; } catch (e3) { /* noop */ }
+    });
+}
+
+/** Prepara una fila de ítem (merges + K/L/M = unitario×cant) clonando estilo del modelo. */
+function excelPresuPrepararFilaItem_(ws, row, styleFromRow) {
+    const src = ws.getRow(styleFromRow);
+    const dest = ws.getRow(row);
+    try {
+        if (src.height) dest.height = src.height;
+        dest.hidden = false;
+    } catch (eH) { /* noop */ }
+    for (let c = 1; c <= 13; c++) {
+        try {
+            const sc = src.getCell(c);
+            const dc = dest.getCell(c);
+            if (sc.style && typeof sc.style === "object") {
+                dc.style = JSON.parse(JSON.stringify(sc.style));
+            }
+            if (sc.numFmt) dc.numFmt = sc.numFmt;
+        } catch (eSt) { /* noop */ }
+    }
+    [["A", "C"], ["E", "F"], ["G", "H"], ["I", "J"]].forEach(function (pair) {
+        try { ws.unMergeCells(pair[0] + row + ":" + pair[1] + row); } catch (eU) { /* noop */ }
+        try { ws.mergeCells(pair[0] + row + ":" + pair[1] + row); } catch (eM) { /* noop */ }
+    });
+    try { ws.getCell(row, 11).value = { formula: "E" + row + "*D" + row }; } catch (eK) { /* noop */ }
+    try { ws.getCell(row, 12).value = { formula: "G" + row + "*D" + row }; } catch (eL) { /* noop */ }
+    try { ws.getCell(row, 13).value = { formula: "I" + row + "*D" + row }; } catch (eM2) { /* noop */ }
+}
+
+/**
+ * Subtotal de comercialización: reescribe SUM en K/L/M para cubrir comIni…comFin.
+ * (Al insertar debajo del bloque, el shift de fórmulas no alarga el final del SUM.)
+ */
+function excelPresuForzarSumComercializacion_(ws, comIni, comFin) {
+    if (!ws || !(comIni > 0) || comFin < comIni) return;
+    const cols = ["K", "L", "M"];
+    const hit = buscarTextoHoja(ws, /SUBTOTAL\s+COSTOS\s+DE\s+COMERCIALIZACI/i, 180, 12);
+    const rows = [];
+    if (hit) rows.push(hit.r);
+    /* Respaldo: cualquier SUM que empiece en comIni y termine corto. */
+    const maxR = Math.min(Number(ws.rowCount) || 120, 200);
+    for (let r = 1; r <= maxR; r++) {
+        for (let c = 11; c <= 13; c++) {
+            let cell;
+            try { cell = ws.getCell(r, c); } catch (eC) { continue; }
+            const v = cell.value;
+            const f = v && typeof v === "object" ? String(v.formula || "") : "";
+            const m = f.match(/^(?:SUMA|SUM)\(\$?([A-Z]+)\$?(\d+):\$?\1\$?(\d+)\)$/i);
+            if (!m) continue;
+            const start = parseInt(m[2], 10);
+            const end = parseInt(m[3], 10);
+            if (start === comIni && end < comFin && rows.indexOf(r) < 0) rows.push(r);
+        }
+    }
+    rows.forEach(function (r) {
+        cols.forEach(function (col, i) {
+            try {
+                ws.getCell(r, 11 + i).value = {
+                    formula: "SUM(" + col + comIni + ":" + col + comFin + ")"
+                };
+            } catch (eW) { /* noop */ }
+        });
+    });
+}
+
+/**
+ * Inserta `extra` filas de ítem justo después de `afterRow` (antes de Armado / bloque siguiente).
+ * Mismo flujo para fabricación y comercialización (shared formulas + merges).
+ * Devuelve el nuevo fin de bloque (= afterRow + extra).
+ */
+function excelPresuExpandirFilasItem_(ws, afterRow, extra, avisos, etiqueta) {
+    extra = Math.max(0, Number(extra) || 0);
+    if (!ws || extra <= 0) return afterRow;
+    const at = afterRow + 1;
+    const blanks = [];
+    for (let i = 0; i < extra; i++) blanks.push([]);
+    try {
+        /* Shared formulas + merges rotos al insertar → Excel repara o texto “eco”. */
+        excelPresuMaterializarSharedFormulas_(ws);
+        const snapMerges = excelPresuSnapshotMergesFrom_(ws, at);
+        excelPresuUnmergeDesde_(ws, at, snapMerges);
+        ws.spliceRows.apply(ws, [at, 0].concat(blanks));
+        excelPresuRepararFormulasTrasInsert_(ws, at, extra);
+        excelPresuRestaurarMergesTrasInsert_(ws, at, extra, snapMerges);
+        for (let r = at; r < at + extra; r++) {
+            excelPresuPrepararFilaItem_(ws, r, afterRow);
+        }
+        excelPresuDeduparMerges_(ws);
+    } catch (eSp) {
+        if (avisos) avisos.push("No se pudieron insertar filas de " + (etiqueta || "ítem") + " en Excel.");
+        return afterRow;
+    }
+    if (avisos) avisos.push("Se insertaron " + extra + " fila(s) de " + (etiqueta || "ítem") + " en el presupuesto.");
+    return afterRow + extra;
+}
+
 function aplicarMapaXlsx(mapa) {
     XLSX_MAPA = sanitizarMapaXlsx(mapa);
     XLSX_FILAS_FAB = { inicio: XLSX_MAPA.fabInicio, fin: XLSX_MAPA.fabFin };
@@ -290,7 +587,8 @@ function celdaTrmEscribible_(ws, addr) {
 function detectarCeldaTrm_(ws) {
     const mapped = (XLSX_MAPA && XLSX_MAPA.trm) || MAPA_XLSX_DEFAULT.trm;
     if (!ws) return mapped;
-    for (let r = 48; r <= 58; r++) {
+    /* Tras insertar filas de matriz el TRM baja; buscar en un rango amplio. */
+    for (let r = 48; r <= 90; r++) {
         for (let c = 11; c <= 13; c++) {
             const v = ws.getCell(r, c).value;
             const f = v && typeof v === "object" ? String(v.formula || "") : "";
@@ -566,7 +864,11 @@ function rellenarHojaVersion(ws, ver, codigo, avisos, opts) {
     const incluirCandado = !!opts.incluirCandado;
     const items = ver.matrizItems || [];
     const escalas = ver.escalas || [{ id: "l1", q: 1 }];
-    const { lots } = tresLotesExportacion(escalas, { sinPad: !!opts.esAux });
+    const lotPack = tresLotesExportacion(escalas, { sinPad: !!opts.esAux });
+    const lots = lotPack.lots;
+    (lotPack.avisos || []).forEach(function (a) {
+        if (avisos) avisos.push((ver.id || "V") + ": " + a);
+    });
     const fab = [];
     const com = [];
     const fletes = [];
@@ -576,10 +878,33 @@ function rellenarHojaVersion(ws, ver, codigo, avisos, opts) {
         else if (it.categoria === "Comercialización") com.push(it);
         else fab.push(it);
     });
-    const maxFab = XLSX_FILAS_FAB.fin - XLSX_FILAS_FAB.inicio + 1;
-    const maxCom = XLSX_FILAS_COM.fin - XLSX_FILAS_COM.inicio + 1;
-    if (fab.length > maxFab) avisos.push(ver.id + ": se recortó fabricación a " + maxFab + " filas.");
-    if (com.length > maxCom) avisos.push(ver.id + ": se recortó comercialización a " + maxCom + " filas.");
+
+    /* Rangos reales en la hoja (tras clones / expansiones previas). */
+    const bloque = excelPresuDetectarBloque_(ws);
+    let fabIni = bloque.fabIni;
+    let fabFin = bloque.fabFin;
+    let comIni = bloque.comIni;
+    let comFin = bloque.comFin;
+    let fleteFila = bloque.fleteFila;
+    const maxFab0 = fabFin - fabIni + 1;
+    const maxCom0 = Math.max(0, comFin - comIni + 1);
+    const extraFab = Math.max(0, fab.length - maxFab0);
+    const extraCom = Math.max(0, com.length - maxCom0);
+
+    /* Ampliar plantilla si la matriz supera las filas modelo (ya no se recorta). */
+    if (extraFab > 0) {
+        const prevFin = fabFin;
+        fabFin = excelPresuExpandirFilasItem_(ws, fabFin, extraFab, avisos, "fabricación");
+        const grew = fabFin - prevFin;
+        if (grew > 0) {
+            if (fleteFila > prevFin) fleteFila += grew;
+            if (comIni > prevFin) comIni += grew;
+            if (comFin > prevFin) comFin += grew;
+        }
+    }
+    if (extraCom > 0) {
+        comFin = excelPresuExpandirFilasItem_(ws, comFin, extraCom, avisos, "comercialización");
+    }
 
     aplicarEncabezadoExcel(ws, {
         codigo: codigo,
@@ -589,16 +914,21 @@ function rellenarHojaVersion(ws, ver, codigo, avisos, opts) {
     });
     aplicarRangosExcel(ws, lots);
 
-    let r = XLSX_FILAS_FAB.inicio;
-    for (; r <= XLSX_FILAS_FAB.fin; r++) limpiarFilaItem(ws, r);
-    fab.slice(0, maxFab).forEach(function (it, i) {
-        escribirFilaItem(ws, XLSX_FILAS_FAB.inicio + i, it, lots, escalas);
+    let r = fabIni;
+    for (; r <= fabFin; r++) limpiarFilaItem(ws, r);
+    fab.forEach(function (it, i) {
+        escribirFilaItem(ws, fabIni + i, it, lots, escalas);
     });
-    for (r = XLSX_FILAS_COM.inicio; r <= XLSX_FILAS_COM.fin; r++) limpiarFilaItem(ws, r);
-    com.slice(0, maxCom).forEach(function (it, i) {
-        escribirFilaItem(ws, XLSX_FILAS_COM.inicio + i, it, lots, escalas);
+    for (r = comIni; r <= comFin; r++) limpiarFilaItem(ws, r);
+    com.forEach(function (it, i) {
+        escribirFilaItem(ws, comIni + i, it, lots, escalas);
     });
-    limpiarFilaItem(ws, XLSX_FILA_FLETE);
+    /* Forzar SUM del subtotal de comercialización al rango real de filas escritas. */
+    if (com.length) {
+        const comFinReal = comIni + com.length - 1;
+        excelPresuForzarSumComercializacion_(ws, comIni, comFinReal);
+    }
+    limpiarFilaItem(ws, fleteFila);
     if (fletes.length) {
         const acc = [0, 0, 0];
         fletes.forEach(function (it) {
@@ -608,15 +938,16 @@ function rellenarHojaVersion(ws, ver, codigo, avisos, opts) {
         });
         const m = XLSX_MAPA;
         const u = m.colU || ["E", "G", "I"];
-        escribirCelda(ws, (m.colDesc || "A") + XLSX_FILA_FLETE, fletes[0].nombre || "Transporte local");
-        escribirCelda(ws, (m.colCant || "D") + XLSX_FILA_FLETE, 1);
-        escribirCelda(ws, u[0] + XLSX_FILA_FLETE, acc[0]);
-        escribirCelda(ws, u[1] + XLSX_FILA_FLETE, acc[1]);
-        escribirCelda(ws, u[2] + XLSX_FILA_FLETE, acc[2]);
+        escribirCelda(ws, (m.colDesc || "A") + fleteFila, fletes[0].nombre || "Transporte local");
+        escribirCelda(ws, (m.colCant || "D") + fleteFila, 1);
+        escribirCelda(ws, u[0] + fleteFila, acc[0]);
+        escribirCelda(ws, u[1] + fleteFila, acc[1]);
+        escribirCelda(ws, u[2] + fleteFila, acc[2]);
     }
     escribirObservacionVersion(ws, ver);
     if (opts.esAux) escribirNotaAuxExcel(ws, ver, codigo);
     else escribirNotaCandadosExcel(ws, ver, codigo);
+    excelPresuDeduparMerges_(ws);
 }
 
 function escribirNotaAuxExcel(ws, ver, codigo) {
@@ -2585,6 +2916,9 @@ window.exportarPresupuestoExcel = async function (opts) {
             const key = exp ? "EXP" : "NAL";
             const master = key === "EXP" ? masterExp : masterNal;
             if (!master) throw new Error("La plantilla no tiene pestaña " + key + ".");
+            /* Copia limpia de plantilla: si clonamos la 1ª pieza ya expandida, la 2ª hereda filas/fórmulas rotas. */
+            const plantillaPieza = clonarHojaExcel(wb, master, "__tpl_" + key);
+            try { plantillaPieza.state = "veryHidden"; } catch (eTpl) { /* noop */ }
             const vistos = {};
             const hojasPieza = [];
             const hojasAux = [];
@@ -2598,7 +2932,7 @@ window.exportarPresupuestoExcel = async function (opts) {
                     master.name = nombre;
                     ws = master;
                 } else {
-                    ws = clonarHojaExcel(wb, master, nombre);
+                    ws = clonarHojaExcel(wb, plantillaPieza, nombre);
                 }
                 const verPieza = Object.assign({}, ver, {
                     matrizItems: el.matrizItems,
@@ -2619,16 +2953,22 @@ window.exportarPresupuestoExcel = async function (opts) {
                 }
             });
             ordenarBloqueHojas_(wb, hojasPieza.concat(hojasAux));
+            try { wb.removeWorksheet(plantillaPieza.id); } catch (eRmTpl) { /* noop */ }
             downloadName = "presupuesto No." + codigo + "-" + vid + ".xlsx";
         } else {
             const usados = { EXP: 0, NAL: 0 };
             const ultimoOrden = { EXP: masterExp ? masterExp.orderNo : 0, NAL: masterNal ? masterNal.orderNo : 0 };
+            const plantillasVer = {};
             const asignadas = [];
             lista.forEach(function (ver) {
                 const exp = versionEsExportacion(ver);
                 const key = exp ? "EXP" : "NAL";
                 const master = key === "EXP" ? masterExp : masterNal;
                 if (!master) throw new Error("La plantilla no tiene pestaña " + key + " para " + ver.id + ".");
+                if (!plantillasVer[key]) {
+                    plantillasVer[key] = clonarHojaExcel(wb, master, "__tplv_" + key);
+                    try { plantillasVer[key].state = "veryHidden"; } catch (eTplV) { /* noop */ }
+                }
                 usados[key]++;
                 const nombre = nombrePestanaVersion(key, codigo, ver.id);
                 let ws;
@@ -2637,7 +2977,7 @@ window.exportarPresupuestoExcel = async function (opts) {
                     ws = master;
                     ultimoOrden[key] = ws.orderNo;
                 } else {
-                    ws = clonarHojaExcel(wb, master, nombre);
+                    ws = clonarHojaExcel(wb, plantillasVer[key], nombre);
                     ws.orderNo = ultimoOrden[key] + 0.5;
                     ultimoOrden[key] = ws.orderNo;
                 }
@@ -2656,6 +2996,9 @@ window.exportarPresupuestoExcel = async function (opts) {
                     rellenarHojaVersion(aux, a.ver, codigo, avisos, { incluirCandado: true, esAux: true });
                     avisos.push(a.ver.id + ": pestaña " + aux.name + " (formato NAL/EXP, con " + nCand + " candada(s)).");
                 }
+            });
+            Object.keys(plantillasVer).forEach(function (k) {
+                try { wb.removeWorksheet(plantillasVer[k].id); } catch (eRm) { /* noop */ }
             });
         }
         aplicarTrmHojasLogistica(wb);

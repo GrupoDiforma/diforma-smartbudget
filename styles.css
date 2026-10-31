@@ -516,6 +516,7 @@ body.logistica-activa {
         flex: 0 0 auto;
     }
     .log-stage,
+    .log-stage-scroll,
     .log-side {
         position: static;
         height: auto;
@@ -1176,15 +1177,16 @@ body.logistica-activa {
     display: none;
 }
 .log-zoom {
-    position: static;
+    position: relative;
+    z-index: 2;
     flex: 0 0 auto;
     display: flex;
     justify-content: flex-end;
     align-items: center;
     gap: 4px;
-    margin: 0 0 8px;
-    padding: 0 0 6px;
-    background: transparent;
+    margin: 0;
+    padding: 2px 2px 8px;
+    background: #e6e8ee;
 }
 .log-stage {
     position: relative;
@@ -1192,18 +1194,25 @@ body.logistica-activa {
     flex-direction: column;
     background: #e6e8ee;
     border-radius: 10px;
-    padding: 8px 8px 12px;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    touch-action: pan-y;
-    -webkit-overflow-scrolling: touch;
+    padding: 8px 8px 8px;
+    /* Zoom fijo arriba; el scroll X/Y va solo en .log-stage-scroll. */
+    overflow: hidden;
     isolation: isolate;
     height: 100%;
     max-height: 100%;
     max-width: 100%;
     min-width: 0;
     min-height: 0;
+}
+.log-stage-scroll {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    background: #e6e8ee;
 }
 .log-frame {
     width: 100%;
@@ -1213,7 +1222,7 @@ body.logistica-activa {
     background: transparent;
     box-shadow: none;
     display: block;
-    /* El scroll de la hoja es solo .log-stage; el iframe no debe mostrar barra propia. */
+    /* El scroll de la hoja es .log-stage-scroll; el iframe no debe mostrar barra propia. */
     overflow: hidden;
 }
 .btn-diforma-blue {

@@ -11135,14 +11135,29 @@ function logisticaAjustarAltoFrame_() {
     const pages = doc.querySelector(".pages");
     if (!pages) {
         f.style.height = Math.max(1056, doc.documentElement.scrollHeight) + "px";
+        f.style.width = "100%";
+        f.style.maxWidth = "";
         return;
     }
     const z = parseFloat(pages.style.zoom) || 1;
     const previo = pages.style.zoom;
     pages.style.zoom = "1";
     const alto = pages.offsetHeight || pages.scrollHeight || 1056;
+    const page = pages.querySelector(".page");
+    const pw = (page && page.offsetWidth) || 816;
     pages.style.zoom = previo;
     f.style.height = Math.ceil(alto * z) + 12 + "px";
+    /* Si el zoom ensancha la hoja, el iframe crece y .log-stage-scroll hace scroll X. */
+    const scrollBox = document.querySelector(".log-stage-scroll") || document.querySelector(".log-stage");
+    const roomW = scrollBox ? Math.max(200, scrollBox.clientWidth - 8) : 200;
+    const needW = Math.ceil(pw * z) + 8;
+    if (needW > roomW + 2) {
+        f.style.width = needW + "px";
+        f.style.maxWidth = "none";
+    } else {
+        f.style.width = "100%";
+        f.style.maxWidth = "";
+    }
 }
 
 let logZoom = "fit";
@@ -11152,10 +11167,10 @@ function logisticaAplicarZoom_() {
     const f = document.getElementById("logFrame");
     const doc = f && f.contentDocument;
     const stage = document.querySelector(".log-stage");
+    const scrollBox = document.querySelector(".log-stage-scroll") || stage;
     const pages = doc && doc.querySelector(".pages");
     if (!pages || !stage || !f) return;
     const page = pages.querySelector(".page");
-    const bar = stage.querySelector(".log-zoom");
     /* No forzar height en línea: pelea con el grid y crea una 2ª scrollbar. */
     stage.style.height = "";
     stage.style.maxHeight = "";
@@ -11164,9 +11179,8 @@ function logisticaAplicarZoom_() {
     const pw = (page && page.offsetWidth) || 816;
     const ph = (page && page.offsetHeight) || 1056;
     pages.style.zoom = previo || "1";
-    const barH = (bar ? bar.offsetHeight : 32) + 8;
-    const roomW = Math.max(200, f.clientWidth || (stage.clientWidth - 20));
-    const roomH = Math.max(240, (stage.clientHeight || 480) - barH);
+    const roomW = Math.max(200, (scrollBox && scrollBox.clientWidth) || f.clientWidth || (stage.clientWidth - 20));
+    const roomH = Math.max(240, (scrollBox && scrollBox.clientHeight) || 480);
     let z = typeof logZoom === "number" ? logZoom : 1;
     if (logZoom === "fit") {
         z = Math.min(roomW / pw, roomH / ph);
