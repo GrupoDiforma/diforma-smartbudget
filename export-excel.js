@@ -420,7 +420,9 @@ function elementosDeVersionExcel_(ver) {
                 matrizItems: el.matrizItems || [],
                 escalas: el.escalas && el.escalas.length ? el.escalas : (ver.escalas || [{ id: "l1", q: 1 }]),
                 fichaComercial: el.fichaComercial || ver.fichaComercial || {},
-                comentario: ver.comentario || ""
+                comentario: ver.comentario || "",
+                /* Obs. Costos por pieza → bloque OBSERVACIONES de su pestaña. */
+                obsCostos: String(el.obsCostos != null ? el.obsCostos : "")
             };
         });
     }
@@ -429,7 +431,8 @@ function elementosDeVersionExcel_(ver) {
         matrizItems: (ver && ver.matrizItems) || [],
         escalas: (ver && ver.escalas) || [{ id: "l1", q: 1 }],
         fichaComercial: (ver && ver.fichaComercial) || {},
-        comentario: (ver && ver.comentario) || ""
+        comentario: (ver && ver.comentario) || "",
+        obsCostos: String((ver && ver.obsCostos) || "")
     }];
 }
 
@@ -523,22 +526,33 @@ function versionEsExportacion(ver) {
 
 function escribirObservacionVersion(ws, ver) {
     const comentario = String(ver && ver.comentario || "").trim();
-    if (!comentario) return;
-    const nota = String(ver.id || "V") + " — " + comentario;
+    const obsCost = String(ver && ver.obsCostos || "").trim();
+    if (!comentario && !obsCost) return;
     const hit = buscarTextoHoja(ws, /OBSERVACIONES/i, 90, 6);
     if (!hit) return;
     const below = ws.getCell(hit.r + 1, hit.c);
     const master = below.master || below;
     const prev = valorCeldaPlano(master);
-    if (prev.indexOf(nota) >= 0) return;
-    const font0 = Object.assign({ name: "Calibri", size: 9, bold: true }, master.font || {});
-    const fontNota = { name: "Calibri", size: 9, italic: true, bold: false, color: { argb: "FF1565C8" } };
-    master.value = {
-        richText: [
-            { font: font0, text: prev ? prev.replace(/\s+$/, "") + "\n\n" : "" },
-            { font: fontNota, text: nota }
-        ]
-    };
+    /* Texto de plantilla solamente: al clonar piezas no arrastrar "V1 — …" ni Obs. Costos ajenas. */
+    const basePlantilla = String(prev || "")
+        .split(/\n(?=\s*V\d+\s*[—\-])/)[0]
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    const notaVer = comentario ? (String(ver.id || "V") + " — " + comentario) : "";
+    const font0 = Object.assign({ name: "Arial", size: 9, bold: true }, master.font || {}, { name: "Arial" });
+    const fontCom = { name: "Arial", size: 9, italic: true, bold: false, color: { argb: "FF1565C8" } };
+    const fontObs = { name: "Arial", size: 9, italic: false, bold: false, color: { argb: "FF000000" } };
+    const rich = [];
+    function pushBloque(font, text) {
+        if (!text) return;
+        if (rich.length) rich.push({ font: font0, text: "\n\n" });
+        rich.push({ font: font, text: text });
+    }
+    pushBloque(font0, basePlantilla);
+    pushBloque(fontCom, notaVer);
+    pushBloque(fontObs, obsCost);
+    if (!rich.length) return;
+    master.value = { richText: rich };
     master.alignment = Object.assign({}, master.alignment || {}, { wrapText: true, vertical: "top" });
 }
 
@@ -1484,7 +1498,7 @@ function excelCotListarObs_(idioma, escId, soloFinal) {
     return out;
 }
 
-/** Obs. internas Duties/Taxes (no PDF) → Excel tras obs generales. */
+/** Obs. internas de logística (cualquier Incoterm; no PDF) → Excel tras obs generales. */
 function excelCotObsInternas_(escId) {
     if (typeof logEnvObsInternas_ === "function") {
         return String(logEnvObsInternas_(escId || "") || "").trim();
@@ -1497,29 +1511,76 @@ function excelCotObsInternas_(escId) {
     return String((e && e.obsInternas) || "").trim();
 }
 
-/** Escribe un bloque de texto a lo ancho (obs / obs internas) en la fila. */
-function excelCotEscribirBloqueObs_(ws, row, etiqueta, cuerpo, fillArgb) {
+/**
+ * Escribe un bloque de texto a lo ancho A:F (obs / obs finales / obs internas).
+ * opts: { fillArgb, preserveStyle } — preserveStyle = tipografía de plantilla, sin relleno.
+ * Sin preserveStyle: Arial; fillArgb opcional (Obs. internas).
+ * Las filas se insertan con estilo del GRAN TOTAL (gris): siempre se limpia el fondo
+ * salvo fillArgb explícito.
+ */
+function excelCotEscribirBloqueObs_(ws, row, etiqueta, cuerpo, opts) {
+    if (typeof opts === "string") opts = { fillArgb: opts };
+    opts = opts || {};
     const texto = String(cuerpo || "").trim();
     if (!texto) return;
     const lab = String(etiqueta || "");
-    excelCotTituloFila_(ws, row, lab ? (lab + "\n" + texto) : texto, 1, 6, {
-        bold: false, size: 9, align: "left", italic: false, fontName: "Calibri",
-        height: Math.min(90, 18 + Math.ceil(texto.length / 70) * 12)
-    });
+    const full = lab ? (lab + "\n" + texto) : texto;
+    const fromCol = 1;
+    const toCol = 6;
     try {
-        const cell = ws.getCell(row, 1);
-        cell.alignment = Object.assign({}, cell.alignment || {}, { wrapText: true, vertical: "top" });
-        if (fillArgb) {
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
+        try { ws.unMergeCells(row, fromCol, row, toCol); } catch (eU) { /* noop */ }
+        for (let c = fromCol; c <= toCol; c++) {
+            try {
+                const dc = ws.getCell(row, c);
+                dc.value = null;
+                dc.fill = { type: "pattern", pattern: "none" };
+            } catch (eClr) { /* noop */ }
         }
-        cell.value = {
-            richText: [
-                { text: lab ? (lab + "\n") : "", font: { bold: true, size: 9, name: "Calibri", color: { argb: "FF1A5276" } } },
-                { text: texto, font: { bold: false, size: 9, name: "Calibri" } }
-            ]
-        };
+        const cell = ws.getCell(row, fromCol);
+        cell.alignment = { wrapText: true, vertical: "top", horizontal: "left" };
+        try {
+            const h = Math.min(90, 18 + Math.ceil(texto.length / 55) * 12);
+            ws.getRow(row).height = h;
+        } catch (eH) { /* noop */ }
+        if (opts.preserveStyle) {
+            /* Obs. generales/finales: sin negrita (el modelo GRAN TOTAL la trae) ni fondo gris. */
+            const fontPlain = Object.assign({}, cell.font || {}, {
+                bold: false,
+                italic: false,
+                color: { argb: "FF000000" }
+            });
+            cell.value = { richText: [{ text: full, font: fontPlain }] };
+            cell.font = fontPlain;
+            cell.fill = { type: "pattern", pattern: "none" };
+        } else {
+            const fontName = "Arial";
+            cell.value = {
+                richText: [
+                    { text: lab ? (lab + "\n") : "", font: { bold: true, size: 9, name: fontName, color: { argb: "FF1A5276" } } },
+                    { text: texto, font: { bold: false, size: 9, name: fontName } }
+                ]
+            };
+            cell.fill = opts.fillArgb
+                ? { type: "pattern", pattern: "solid", fgColor: { argb: opts.fillArgb } }
+                : { type: "pattern", pattern: "none" };
+        }
+        try { ws.mergeCells(row, fromCol, row, toCol); } catch (eM) { /* noop */ }
+        const master = cell.master || cell;
+        if (opts.preserveStyle || !opts.fillArgb) {
+            master.fill = { type: "pattern", pattern: "none" };
+        } else {
+            master.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fillArgb } };
+        }
+        if (opts.preserveStyle) {
+            master.font = Object.assign({}, master.font || {}, {
+                bold: false,
+                italic: false,
+                color: { argb: "FF000000" }
+            });
+        }
+        master.alignment = { wrapText: true, vertical: "top", horizontal: "left" };
     } catch (eB) {}
-    for (let c = 7; c <= 9; c++) {
+    for (let c = 7; c <= 12; c++) {
         try { ws.getCell(row, c).value = null; } catch (eC) {}
     }
 }
@@ -2118,11 +2179,11 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
     const titLog = typeof logEnvTitulo_ === "function" ? logEnvTitulo_("log", null, mon, esEn, escId) : (esEn ? "TOTAL LOGISTICS COST" : "TOTAL COSTO LOGÍSTICO");
     const titGran = typeof logEnvTitulo_ === "function" ? logEnvTitulo_("gran", null, mon, esEn, escId) : (esEn ? "GRAND TOTAL" : "GRAN TOTAL");
 
-    /* Observaciones del proyecto (texto a lo ancho, sin monto). */
+    /* Observaciones del proyecto: al final de los ítems (sin cambiar fuente ni fondo). */
     if (R.obsMidCount > 0 && R.obsMidStart) {
         const labObs = esEn ? "Project notes" : "Observaciones del proyecto";
         for (let i = 0; i < obsMid.length; i++) {
-            excelCotEscribirBloqueObs_(ws, R.obsMidStart + i, labObs, obsMid[i].texto, "FFF5F5F5");
+            excelCotEscribirBloqueObs_(ws, R.obsMidStart + i, labObs, obsMid[i].texto, { preserveStyle: true });
         }
     }
 
@@ -2251,7 +2312,8 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
     excelCotOcultarFila_(ws, antB, !antOn);
     excelCotOcultarFila_(ws, salB, !antOn);
 
-    /* Observaciones generales (final) + Obs. internas Duties/Taxes, tras GRAN TOTAL / pago. */
+    /* Obs. finales tras GRAN TOTAL (sin fuente/fondo); Obs. internas de últimas (Arial + fondo).
+       Observaciones (Costos) → pestaña presupuesto, no aquí. */
     const obsFinal = excelCotListarObs_(idioma, escId, true);
     const obsInt = excelCotObsInternas_(escId);
     const nPie = obsFinal.length + (obsInt ? 1 : 0);
@@ -2263,14 +2325,14 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
         let rPie = rowObs;
         const labFin = esEn ? "General notes" : "Observaciones generales";
         for (let i = 0; i < obsFinal.length; i++) {
-            excelCotEscribirBloqueObs_(ws, rPie++, labFin, obsFinal[i].texto, "FFE8F4FC");
+            excelCotEscribirBloqueObs_(ws, rPie++, labFin, obsFinal[i].texto, { preserveStyle: true });
         }
         if (obsInt) {
-            const labInt = esEn ? "Internal notes (Duties / Taxes)" : "Obs. internas (Duties / Taxes)";
-            excelCotEscribirBloqueObs_(ws, rPie++, labInt, obsInt, "FFFFF4E5");
+            const labInt = esEn ? "Internal logistics notes" : "Obs. internas (Logística)";
+            excelCotEscribirBloqueObs_(ws, rPie++, labInt, obsInt, { fillArgb: "FFFFF4E5" });
         }
-        if (obsFinal.length) avisos.push("Se escribieron " + obsFinal.length + " observación(es) generales tras el gran total.");
-        if (obsInt) avisos.push("Se escribió Obs. internas (Duties/Taxes) tras las observaciones generales.");
+        if (obsFinal.length) avisos.push("Se escribieron " + obsFinal.length + " observación(es) finales tras el gran total.");
+        if (obsInt) avisos.push("Se escribió Obs. internas (Logística) al final.");
     }
 
     const mergesSum = [];
@@ -2316,41 +2378,62 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
     return true;
 }
 
-/** Deja una sola fila de nota al pie (A:F). */
+/** Texto plano de una celda (sin fórmulas). */
+function excelCotCeldaPlain_(ws, r, c) {
+    try {
+        const v = ws.getCell(r, c).value;
+        if (v && typeof v === "object" && v.richText) return v.richText.map(function (t) { return t.text; }).join("");
+        if (v && typeof v === "object" && v.text) return String(v.text);
+        if (v && typeof v === "object" && v.formula) return "";
+        return v == null ? "" : String(v);
+    } catch (e) { return ""; }
+}
+
+/** Deja una sola fila de nota al pie (A:F) y limpia restos en G+ (plantilla / merges rotos). */
 function excelCotLimpiarNotaDuplicada_(ws, esEn) {
     const re = /^(Nota:|Note:)/i;
+    const reFragmento = /VAT|invoice may vary|enabled in the quote|factura final|direccion de entrega|cotizaci[oó]n/i;
     const notaTxt = esEn
         ? "Note: VAT shown above only applies when enabled in the quote. Final invoice may vary by delivery address."
         : "Nota: El IVA mostrado solo aplica si esta activo en la cotizacion. La factura final puede variar segun la direccion de entrega.";
     const hits = [];
     const maxR = Math.min(Number(ws.rowCount) || 60, 80);
     for (let r = 1; r <= maxR; r++) {
-        let plain = "";
-        try {
-            const v = ws.getCell(r, 1).value;
-            if (v && typeof v === "object" && v.richText) plain = v.richText.map(function (t) { return t.text; }).join("");
-            else if (v && typeof v === "object" && v.text) plain = v.text;
-            else if (v && typeof v === "object" && v.formula) plain = "";
-            else plain = v == null ? "" : String(v);
-        } catch (e) { plain = ""; }
-        if (re.test(plain.trim())) hits.push(r);
+        const plain = excelCotCeldaPlain_(ws, r, 1).trim();
+        if (re.test(plain)) hits.push(r);
     }
     if (!hits.length) return;
     const keep = hits[0];
     hits.slice(1).forEach(function (r) {
         try { ws.unMergeCells(r, 1, r, 6); } catch (e1) {}
-        for (let c = 1; c <= 6; c++) {
+        try { ws.unMergeCells(r, 1, r, 7); } catch (e1b) {}
+        for (let c = 1; c <= 12; c++) {
             try { ws.getCell(r, c).value = null; } catch (e2) {}
         }
         excelCotOcultarFila_(ws, r, true);
     });
-    excelCotTituloFila_(ws, keep, notaTxt, 1, 6);
+    /* Romper merges anchos de la plantilla que dejaban texto colgando en G. */
+    try { ws.unMergeCells(keep, 1, keep, 7); } catch (eU7) {}
+    try { ws.unMergeCells(keep, 2, keep, 7); } catch (eU27) {}
+    try { ws.unMergeCells(keep, 7, keep, 12); } catch (eUG) {}
+    excelCotTituloFila_(ws, keep, notaTxt, 1, 6, { bold: false });
     try {
         const cell = ws.getCell(keep, 1);
-        cell.font = Object.assign({}, cell.font || {}, {
+        const master = cell.master || cell;
+        master.font = Object.assign({}, master.font || {}, {
             bold: false, italic: true, size: 8, name: "Calibri", color: { argb: "FF666666" }
         });
     } catch (e3) {}
+    /* Limpiar G+ en la fila de la nota y vecinas (restos tipo G39). */
+    for (let r = Math.max(1, keep - 2); r <= Math.min(maxR, keep + 4); r++) {
+        for (let c = 7; c <= 12; c++) {
+            const t = excelCotCeldaPlain_(ws, r, c);
+            if (!t) continue;
+            if (r === keep || re.test(t.trim()) || reFragmento.test(t)) {
+                try { ws.getCell(r, c).value = null; } catch (eG) {}
+            }
+        }
+    }
 }
 
 async function rellenarHojaCotizacionExcel_(wb, avisos) {
@@ -2521,7 +2604,9 @@ window.exportarPresupuestoExcel = async function (opts) {
                     matrizItems: el.matrizItems,
                     escalas: el.escalas,
                     fichaComercial: el.fichaComercial,
-                    comentario: [ver.comentario, el.nombre].filter(Boolean).join(" · ")
+                    comentario: [ver.comentario, el.nombre].filter(Boolean).join(" · "),
+                    /* Obs. Costos propias de cada pieza → OBSERVACIONES de su pestaña. */
+                    obsCostos: String(el.obsCostos != null ? el.obsCostos : "")
                 });
                 const proyectoHoja = nombreProyectoElemento_(proyectoBase, codigo, el.nombre);
                 const nCand = (el.matrizItems || []).filter(itemExportCandado_).length;

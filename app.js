@@ -749,7 +749,8 @@ function elementoVacio_(nombre) {
         escalas: [{ id: "l1", q: 1 }],
         historialChat: [],
         faseIA: "idle",
-        fichaComercial: typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {}
+        fichaComercial: typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {},
+        obsCostos: ""
     };
 }
 
@@ -767,7 +768,8 @@ function sincronizarElementoActivoEnVersion_(ver) {
             escalas: clonarJson_(ver.escalas && ver.escalas.length ? ver.escalas : [{ id: "l1", q: 1 }]),
             historialChat: clonarJson_(ver.historialChat || []),
             faseIA: ver.faseIA || "idle",
-            fichaComercial: clonarJson_(ver.fichaComercial || {})
+            fichaComercial: clonarJson_(ver.fichaComercial || {}),
+            obsCostos: String(ver.obsCostos || "")
         });
         if (ver.imgCotizacion) primero.imgCotizacion = ver.imgCotizacion;
         if (ver.imgRef) primero.imgRef = ver.imgRef;
@@ -792,6 +794,9 @@ function sincronizarElementoActivoEnVersion_(ver) {
     el.historialChat = clonarJson_(ver.historialChat || []);
     el.faseIA = ver.faseIA || "idle";
     el.fichaComercial = clonarJson_(ver.fichaComercial || {});
+    /* Observaciones (Costos) por pieza en grupal. */
+    el.obsCostos = String((document.getElementById("obsCostos") || {}).value || el.obsCostos || "");
+    ver.obsCostos = el.obsCostos;
     return ver;
 }
 
@@ -812,6 +817,8 @@ function cargarElementoEnUI_(el, ver) {
     }
     const nom = document.getElementById("nombreElementoActivo");
     if (nom) nom.value = el.nombre || "";
+    const taObsC = document.getElementById("obsCostos");
+    if (taObsC && document.activeElement !== taObsC) taObsC.value = String(el.obsCostos || "");
     asegurarArchivosGrupoEnUI_(ver);
 }
 
@@ -829,6 +836,7 @@ function aplanarVersionesAIndividual_() {
         ver.historialChat = clonarJson_(el.historialChat || ver.historialChat || []);
         ver.faseIA = el.faseIA || ver.faseIA;
         ver.fichaComercial = clonarJson_(el.fichaComercial || ver.fichaComercial || {});
+        ver.obsCostos = String(el.obsCostos != null ? el.obsCostos : (ver.obsCostos || ""));
         if (el.imgCotizacion) ver.imgCotizacion = el.imgCotizacion;
         if (el.imgRef) ver.imgRef = el.imgRef;
         if (el.imgCotizacionNombre) ver.imgCotizacionNombre = el.imgCotizacionNombre;
@@ -1093,7 +1101,8 @@ function versionVacia_(id, comentario) {
         escalas: [{ id: "l1", q: 1 }],
         historialChat: [],
         faseIA: "idle",
-        fichaComercial: typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {}
+        fichaComercial: typeof fichaComercialVacia === "function" ? fichaComercialVacia() : {},
+        obsCostos: ""
     };
 }
 
@@ -1115,7 +1124,9 @@ function snapshotDesdeUI_(id, comentario) {
         escalas: clonarJson_(typeof lotesSimulacion !== "undefined" && lotesSimulacion.length ? lotesSimulacion : [{ id: "l1", q: 1 }]),
         historialChat: clonarJson_(window.historialChatIA || []),
         faseIA: window.faseIA || "idle",
-        fichaComercial: clonarJson_(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : (fuente && fuente.fichaComercial) || {})
+        fichaComercial: clonarJson_(typeof leerFichaComercialUI === "function" ? leerFichaComercialUI() : (fuente && fuente.fichaComercial) || {}),
+        /* Individual: notas en la versión. Grupal: van en cada elemento (sincronizarElementoActivoEnVersion_). */
+        obsCostos: String((document.getElementById("obsCostos") || {}).value || (prev && prev.obsCostos) || "")
     };
     if (esPresupuestoGrupal()) {
         snap.elementos = clonarJson_((fuente && fuente.elementos) || []);
@@ -1125,6 +1136,9 @@ function snapshotDesdeUI_(id, comentario) {
             snap.briefGrupal = compactarChatParaBrief_(window.historialChatIA);
         }
         sincronizarElementoActivoEnVersion_(snap);
+        /* Espejo de la pieza activa en la versión (compat / Excel individual). */
+        const elAct = (snap.elementos || []).find(function (e) { return e.id === snap.elementoActivoId; });
+        if (elAct) snap.obsCostos = String(elAct.obsCostos || "");
     }
     return snap;
 }
@@ -1220,6 +1234,8 @@ function aplicarVersionEnUI(id, omitirSnapshot) {
             if (el && ver.datosAdicionales[k] != null) el.value = ver.datosAdicionales[k];
         });
     }
+    const taObsC = document.getElementById("obsCostos");
+    if (taObsC && document.activeElement !== taObsC) taObsC.value = String(ver.obsCostos || "");
     if (typeof aplicarMercado === "function") aplicarMercado(ver.tipoPresupuesto || "NACIONAL");
     if (esPresupuestoGrupal() && ver.elementos && ver.elementos.length) {
         const el = ver.elementos.find(function (e) { return e.id === ver.elementoActivoId; }) || ver.elementos[0];
@@ -1855,6 +1871,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
 
     ['simTRM', 'simComision', 'simFee'].forEach(id => { const el = document.getElementById(id); if(el) el.onchange = () => { if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero(); if (id === "simFee" && typeof logisticaFeeLibreCambio_ === "function") logisticaFeeLibreCambio_(); programarGuardarSesion(); }; });
+    const taObsCostos = document.getElementById("obsCostos");
+    if (taObsCostos && !taObsCostos.getAttribute("data-obs-on")) {
+        taObsCostos.setAttribute("data-obs-on", "1");
+        const syncObsC_ = function () {
+            if (typeof snapshotVersionActual === "function") snapshotVersionActual();
+            if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+        };
+        taObsCostos.addEventListener("change", syncObsC_);
+        taObsCostos.addEventListener("blur", syncObsC_);
+    }
     idsCabeceraSesion().forEach(function (id) {
         const el = document.getElementById(id);
         if (el) el.addEventListener("change", programarGuardarSesion);

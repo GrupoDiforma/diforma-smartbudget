@@ -304,6 +304,10 @@
           </div>
           <div class="row g-3" id="panelFinanciero"><div class="col-12 text-center py-4 border rounded text-muted">Agrega materiales.</div></div>
           <div id="resumenStand" class="d-none mt-3"></div>
+          <div id="obsCostosWrap" class="mt-3">
+            <label class="form-label small fw-semibold mb-1" for="obsCostos" title="Individual: con la versión. Grupal: cada pieza tiene las suyas. En Excel → OBSERVACIONES de la pestaña de esa pieza.">Observaciones (Costos)</label>
+            <textarea id="obsCostos" class="form-control form-control-sm" rows="3" maxlength="4000" placeholder="Notas del presupuesto / costos (en grupal, de esta pieza)…" title="Individual: se guardan con la versión. Grupal: independientes por pieza y salen en la pestaña Excel de cada una (OBSERVACIONES, Arial)."></textarea>
+          </div>
         </div>
 
         </div><!-- /tabIngenieria -->
@@ -601,8 +605,8 @@
                     </div>
                     <div id="logEnvLineas"></div>
                     <div id="logEnvObsInternasWrap" class="log-env-obs-int">
-                      <label class="small mb-1" for="logEnvObsInternas" title="Notas internas de Duties y Taxes. No salen en el PDF; sí en el Excel al final.">Obs. internas</label>
-                      <textarea id="logEnvObsInternas" class="form-control form-control-sm" rows="2" maxlength="2000" placeholder="Notas internas Duties / Taxes (no salen en el PDF)…" title="Un solo campo para Duties y Taxes. No se imprime en el PDF. En Excel van después de las observaciones generales."></textarea>
+                      <label class="small mb-1" for="logEnvObsInternas" title="Notas internas de logística (cualquier Incoterm). No salen en el PDF; sí en el Excel al final. Con Opciones, cada opción tiene las suyas.">Obs. internas</label>
+                      <textarea id="logEnvObsInternas" class="form-control form-control-sm" rows="2" maxlength="2000" placeholder="Notas internas de logística (no salen en el PDF)…" title="Cualquier Incoterm. No se imprime en el PDF. En Excel van después de las observaciones generales. Con Opciones, son por opción."></textarea>
                     </div>
                     <div id="logEnvSuma" class="log-env-suma" hidden></div>
                   </div>
@@ -2039,12 +2043,12 @@
   
   <script src="admin.js?v=1.0.97"></script>
     <script src="seguridad.js?v=1.0.26"></script>
-    <script src="app.js?v=1.0.66"></script>
+    <script src="app.js?v=1.0.68"></script>
   <script src="engine.js?v=1.0.43"></script>
   <script src="connectors.js?v=1.0.53"></script>
   <script src="ia-core.js?v=1.0.51"></script>
-  <script src="export-excel.js?v=1.0.59"></script>
-  <script src="logistica.js?v=1.0.264"></script>
+  <script src="export-excel.js?v=1.0.64"></script>
+  <script src="logistica.js?v=1.0.268"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>

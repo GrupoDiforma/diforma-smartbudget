@@ -1367,9 +1367,11 @@ function logEnvEscNorm_(src, base) {
         cubPeso: logCubNum_(s.cubPeso != null ? s.cubPeso : b.cubPeso),
         cubKgVol: logCubNum_(s.cubKgVol != null ? s.cubKgVol : b.cubKgVol),
         valores: {}, fuentes: {}, notas: {}, pcts: {},
-        /* Obs. internas Duties/Taxes (no PDF). Por opción; vacío = hereda global. */
-        obsInternas: s.obsInternas != null ? String(s.obsInternas) : ""
     };
+    /* Obs. internas: solo si la opción ya las editó. Sin clave → hereda global al leer. */
+    if (Object.prototype.hasOwnProperty.call(s, "obsInternas")) {
+        out.obsInternas = String(s.obsInternas || "");
+    }
     if (!out.destinoCodigo && out.destinoPais) out.destinoCodigo = logEnvCodigoDePais_(out.destinoPais) || "";
     ["valores", "fuentes", "notas", "pcts"].forEach(function (k) {
         if (s[k] && typeof s[k] === "object") Object.keys(s[k]).forEach(function (id) { out[k][id] = s[k][id]; });
@@ -2341,7 +2343,7 @@ function logEnvNormalizar_(src) {
     d.lineas = Array.isArray(e.lineas) ? e.lineas.map(function (ln, i) {
         let tipoLn = String(ln.tipo || "servicio");
         if (tipoLn === "libre") tipoLn = "servicio"; /* legado: fila libre = servicio */
-        return {
+        const outLn = {
             id: ln.id || ("c" + (i + 1)),
             tipo: tipoLn,
             concepto: String(ln.concepto || ""),
@@ -2355,6 +2357,9 @@ function logEnvNormalizar_(src) {
             arancelFirma: String(ln.arancelFirma || "").slice(0, 120),
             arancelNota: String(ln.arancelNota || "").slice(0, 180)
         };
+        /* Servicio (y extra) por opción: sin escId = legado compartido en todas. */
+        if (ln.escId) outLn.escId = String(ln.escId);
+        return outLn;
     }) : [];
     d.porEsc = {};
     if (e.porEsc && typeof e.porEsc === "object") {
@@ -2418,13 +2423,18 @@ function logEnvObsInternasMigrar_(e) {
     if (parts.length) e.obsInternas = parts.join("\n");
 }
 
-/** Obs. internas Duties/Taxes (no PDF). Por opción o global. */
+/** Obs. internas logística (no PDF). Por opción o global. */
 function logEnvObsInternas_(escId) {
     const e = logEnv_();
     logEnvObsInternasMigrar_(e);
-    if (escId && e.porEsc && e.porEsc[escId]
-        && Object.prototype.hasOwnProperty.call(e.porEsc[escId], "obsInternas")) {
-        return String(e.porEsc[escId].obsInternas || "");
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    if (escId && escs.length) {
+        /* Con opciones: cada una es independiente. Sin texto propio → vacío (no heredar). */
+        if (e.porEsc && e.porEsc[escId]
+            && Object.prototype.hasOwnProperty.call(e.porEsc[escId], "obsInternas")) {
+            return String(e.porEsc[escId].obsInternas || "");
+        }
+        return "";
     }
     return String(e.obsInternas || "");
 }
@@ -2435,9 +2445,10 @@ function logEnvObsInternasEscribir_(escId, txt) {
     if (escId) {
         const st = logEnvEsc_(escId);
         if (st) st.obsInternas = val;
-        /* Primera opción / sin más: espejo en global para cotizaciones sin porEsc. */
+        /* Sin opciones (o una sola): espejo global para cotizaciones viejas. */
         const escs = typeof logEscList_ === "function" ? logEscList_() : [];
-        if (!escs.length || (escs[0] && escs[0].id === escId)) e.obsInternas = val;
+        if (!escs.length) e.obsInternas = val;
+        else if (escs.length === 1 && escs[0] && escs[0].id === escId) e.obsInternas = val;
     } else {
         e.obsInternas = val;
     }
@@ -2508,6 +2519,17 @@ function logEsExtraEnvio_(ln) {
     return !!(ln && ln.tipo === "extra");
 }
 
+/**
+ * ¿Este servicio/extra pertenece a la opción?
+ * Con opciones, los nuevos llevan escId. Sin escId (cotizaciones viejas) se ven en todas.
+ */
+function logEnvLineaEnEsc_(ln, escId) {
+    if (!ln) return false;
+    if (!escId) return true;
+    if (!ln.escId) return true;
+    return String(ln.escId) === String(escId);
+}
+
 /** Línea con costo usable en UI/PDF (concepto o valor). */
 function logEnvLineaUsada_(ln) {
     if (!ln) return false;
@@ -2516,12 +2538,18 @@ function logEnvLineaUsada_(ln) {
     return !!String(ln.concepto || "").trim();
 }
 
-function logEnvServiciosDe_(lineas) {
-    return (lineas || []).filter(logEsServicio_);
+function logEnvServiciosDe_(lineas, escId) {
+    return (lineas || []).filter(function (ln) {
+        return logEsServicio_(ln) && logEnvLineaEnEsc_(ln, escId || "");
+    });
 }
 
-function logEnvEnvioDe_(lineas) {
-    return (lineas || []).filter(function (ln) { return !logEsServicio_(ln); });
+function logEnvEnvioDe_(lineas, escId) {
+    return (lineas || []).filter(function (ln) {
+        if (logEsServicio_(ln)) return false;
+        if (logEsExtraEnvio_(ln) && escId) return logEnvLineaEnEsc_(ln, escId);
+        return true;
+    });
 }
 
 /** Monto impreso de un ítem de logEnvFilasImpresas_. */
@@ -2546,7 +2574,7 @@ function logEnvMontoImpreso_(item, baseProd, escId) {
 function logEnvServiciosImpresos_(lineas, esEn, escId, idioma) {
     const base = typeof logBaseLogistica_ === "function" ? logBaseLogistica_(idioma || "es", escId || "") : 0;
     const out = [];
-    logEnvFilasImpresas_(logEnvServiciosDe_(lineas), esEn, escId).forEach(function (item) {
+    logEnvFilasImpresas_(logEnvServiciosDe_(lineas, escId), esEn, escId).forEach(function (item) {
         if (!item.servicio) return;
         const m = logEnvMontoImpreso_(item, base, escId);
         if (m == null) return;
@@ -2732,8 +2760,8 @@ function logEnvLineasDeEsc_(escId, esEn) {
     const exterior = logEsCotizacionExterior_();
     const vista = logEnvVistaEsc_(escId);
     const prev = e.lineas || [];
-    const servicios = prev.filter(logEsServicio_);
-    const extras = prev.filter(logEsExtraEnvio_);
+    const servicios = prev.filter(function (ln) { return logEsServicio_(ln) && logEnvLineaEnEsc_(ln, escId); });
+    const extras = prev.filter(function (ln) { return logEsExtraEnvio_(ln) && logEnvLineaEnEsc_(ln, escId); });
     if (exterior && String(vista.incoterm || "").toUpperCase() === "EXW") return servicios.slice();
     const tipos = logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior);
     const usados = {};
@@ -3213,12 +3241,22 @@ function logEnvSumaFiltrada_(baseProd, escId, pred) {
 
 /** Solo envío/importación (entra en «Una línea»). */
 function logEnvSumaEnvio_(baseProd, escId) {
-    return logEnvSumaFiltrada_(baseProd, escId, function (ln) { return !logEsServicio_(ln); });
+    return logEnvSumaFiltrada_(baseProd, escId, function (ln) {
+        if (logEsServicio_(ln)) return false;
+        /* Sin opción (zona libre): no sumar extras ligados a una opción. */
+        if (!escId && logEsExtraEnvio_(ln) && ln.escId) return false;
+        return true;
+    });
 }
 
 /** Solo servicios (fuera de «Una línea» y de Duties/CIF). */
 function logEnvSumaServicios_(baseProd, escId) {
-    return logEnvSumaFiltrada_(baseProd, escId, logEsServicio_);
+    return logEnvSumaFiltrada_(baseProd, escId, function (ln) {
+        if (!logEsServicio_(ln)) return false;
+        /* Sin opción: solo servicios globales (legado). Con opción: logEnvLineasDeEsc_ ya filtró. */
+        if (!escId) return !ln.escId;
+        return true;
+    });
 }
 
 /** Envío + servicios (gran total logístico de costos). */
@@ -3322,29 +3360,70 @@ function logObsFinalEscKey_(fila) {
     return ov.obsEsc ? String(ov.obsEsc) : "";
 }
 
-/** Observaciones finales ligadas a una opción (o base), tras GRAN TOTAL / Vista 3D. */
-function logObsFinalHtmlTrasGran_(escId, nCols, esEn, edrFn) {
+/** HTML de una fila Observaciones (final). */
+function logObsFinalHtmlFila_(f, nCols, esEn, escId, edrFn) {
     const key = String(escId || "");
     const idioma = esEn ? "en" : "es";
     const ph = esEn ? "Closing notes (after grand total)" : "Observaciones al pie (después del gran total)";
-    const filas = (logQuote.filas || []).filter(function (f) {
+    const lab = esEn ? "Notes" : "Observaciones";
+    const v = logFilaValores_(f, idioma, f.escId || key || "");
+    const cuerpo = typeof edrFn === "function"
+        ? edrFn(f, "titulo", v.titulo, ph)
+        : logEsc_(v.titulo || "");
+    return "<tr class=\"obs obs-final\" data-r=\"" + (f.uid || "") + "\"" +
+        (f.escId ? " data-e=\"" + logEsc_(f.escId) + "\"" : "") + ">" +
+        "<td colspan=\"" + nCols + "\"><div class=\"obs-final-box\"><div class=\"obs-final-lab\">" +
+        logEsc_(lab) + "</div>" + cuerpo + "</div></td></tr>";
+}
+
+/** Observaciones finales ligadas a una opción (o base). Orden = orden de fichas. */
+function logObsFinalHtmlTrasGran_(escId, nCols, esEn, edrFn) {
+    const key = String(escId || "");
+    return (logQuote.filas || []).filter(function (f) {
         if (!logEsObsFinalFila_(f)) return false;
         const k = logObsFinalEscKey_(f);
         if (key) return k === key;
         return !k || k === "base";
-    });
-    if (!filas.length) return "";
-    const lab = esEn ? "Notes" : "Observaciones";
-    return filas.map(function (f) {
-        const v = logFilaValores_(f, idioma, f.escId || key || "");
-        const cuerpo = typeof edrFn === "function"
-            ? edrFn(f, "titulo", v.titulo, ph)
-            : logEsc_(v.titulo || "");
-        return "<tr class=\"obs obs-final\" data-r=\"" + (f.uid || "") + "\"" +
-            (f.escId ? " data-e=\"" + logEsc_(f.escId) + "\"" : "") + ">" +
-            "<td colspan=\"" + nCols + "\"><div class=\"obs-final-box\"><div class=\"obs-final-lab\">" +
-            logEsc_(lab) + "</div>" + cuerpo + "</div></td></tr>";
+    }).map(function (f) {
+        return logObsFinalHtmlFila_(f, nCols, esEn, key, edrFn);
     }).join("");
+}
+
+/**
+ * Pie tras GRAN TOTAL: Vista 3D y Obs. finales en el mismo orden que las fichas del panel.
+ * Si hay captura 3D sin fila (legado), se agrega al final.
+ */
+function logPieTrasGranHtml_(escId, nCols, esEn, edrFn) {
+    const key = String(escId || "");
+    let html = "";
+    let haySim3d = false;
+    (logQuote.filas || []).forEach(function (f) {
+        if (!f) return;
+        if (logEsSim3dFila_(f)) {
+            const k = logSim3dEscKey_(f);
+            const ok = key ? (k === key) : (!k || k === "base");
+            if (!ok) return;
+            const bit = logSim3dHtmlFila_(f, nCols, esEn, key || "");
+            if (bit) { html += bit; haySim3d = true; }
+            return;
+        }
+        if (logEsObsFinalFila_(f)) {
+            const k = logObsFinalEscKey_(f);
+            const ok = key ? (k === key) : (!k || k === "base");
+            if (!ok) return;
+            html += logObsFinalHtmlFila_(f, nCols, esEn, key, edrFn);
+        }
+    });
+    if (!haySim3d) {
+        const datos = logSim3dDatosDe_(key);
+        if (datos.img) {
+            html += logSim3dHtmlFila_({
+                uid: "", tipo: "sim3d",
+                over: { sim3dEsc: key || undefined, sim3dW: 100, sim3dAlign: "center", sim3dSalto: false }
+            }, nCols, esEn, key || "");
+        }
+    }
+    return html;
 }
 
 /** Layout de la captura 3D en la hoja (guardado en fila.over). */
@@ -4339,7 +4418,18 @@ function logisticaQuitarEscenario_(id) {
         if (f.excl) delete f.excl[id];
         if (f.over) { delete f.over["qty:" + id]; delete f.over["unit:" + id]; }
     });
-    if (logEnv_().porEsc) delete logEnv_().porEsc[id];
+    /* Servicios/extras de esa opción: sin opciones quedan globales; si quedan otras, se borran. */
+    const eEnv = logEnv_();
+    if (eEnv && Array.isArray(eEnv.lineas)) {
+        if (!resto.length) {
+            eEnv.lineas.forEach(function (ln) {
+                if (ln && ln.escId === id) delete ln.escId;
+            });
+        } else {
+            eEnv.lineas = eEnv.lineas.filter(function (ln) { return !(ln && ln.escId === id); });
+        }
+    }
+    if (eEnv.porEsc) delete eEnv.porEsc[id];
     if (logQuote.comision && logQuote.comision.porEsc) delete logQuote.comision.porEsc[id];
     if (logQuote.descuento && logQuote.descuento.porEsc) delete logQuote.descuento.porEsc[id];
     if (logQuote.pago && logQuote.pago.porEsc) delete logQuote.pago.porEsc[id];
@@ -5269,7 +5359,7 @@ function logisticaTablaHTML_(idioma) {
         }) : [];
         const envLineasK = logOnK ? logEnvLineasDeEsc_(k, esEn) : [];
         const servImpK = logOnK ? logEnvServiciosImpresos_(envLineasK, esEn, k, idioma) : [];
-        const envioLineasK = logEnvEnvioDe_(envLineasK);
+        const envioLineasK = logEnvEnvioDe_(envLineasK, k);
         const hayEnvioK = enviosK.length || envioLineasK.length;
         const hayServK = servImpK.length > 0;
         const hayLogK = hayEnvioK || hayServK;
@@ -5332,15 +5422,14 @@ function logisticaTablaHTML_(idioma) {
                 }
             }
         }
-        /* Vista 3D + observaciones al pie, justo después del Gran Total / pago de esta opción. */
-        h += logSim3dHtmlTrasGran_(k, n, esEn);
-        h += logObsFinalHtmlTrasGran_(k, n, esEn, edr);
+        /* Vista 3D + Obs. finales: mismo orden que las fichas de la opción. */
+        h += logPieTrasGranHtml_(k, n, esEn, edr);
         return h;
     };
     const mostrarGran = !!logQuote.totales && logQuote.filas.length;
     const envLineas = logOn ? (logEnv_().lineas || []) : [];
     const servImp = logOn ? logEnvServiciosImpresos_(envLineas, esEn, "", idioma) : [];
-    const envioLineas = logEnvEnvioDe_(envLineas);
+    const envioLineas = logEnvEnvioDe_(envLineas, "");
     const hayEnvio = envios.length || envioLineas.length;
     const hayServ = servImp.length > 0;
     const hayLog = hayEnvio || hayServ;
@@ -5445,10 +5534,9 @@ function logisticaTablaHTML_(idioma) {
             }
         }
     }
-    /* Sin opciones: Vista 3D + observaciones al pie inmediatamente después del Gran Total (y pago). */
+    /* Sin opciones: Vista 3D + Obs. finales en el orden de las fichas. */
     if (!escs.length) {
-        totalHtml += logSim3dHtmlTrasGran_("", n, esEn);
-        totalHtml += logObsFinalHtmlTrasGran_("", n, esEn, edr);
+        totalHtml += logPieTrasGranHtml_("", n, esEn, edr);
     }
     const colgroup = "<colgroup>" + cols.map(function (c) { return "<col style=\"width:" + c.w + "%\">"; }).join("") + "</colgroup>";
     const rzAttr = function (idx) {
@@ -7294,10 +7382,15 @@ function logHtmlTarjetaFila_(fila, idioma, vers, p, escs) {
         const esObs = fila.tipo === "obs" || fila.tipo === "obsFinal";
         if (fila.tipo === "obs") badge = "<span class=\"badge text-bg-info\">Observaciones</span>";
         else if (fila.tipo === "obsFinal") badge = "<span class=\"badge text-bg-info\" title=\"Después del GRAN TOTAL\">Observaciones (final)</span>";
+        let origenObs = "";
+        if (esObs && fila.escId && escs && escs.length) {
+            const ixObs = escs.findIndex(function (e) { return e.id === fila.escId; });
+            if (ixObs >= 0) origenObs = "<span class=\"badge text-bg-primary\" title=\"Solo esta opción\">" + (ixObs + 1) + "</span>";
+        }
         const ph = fila.tipo === "obsFinal"
             ? "Texto al pie (después del GRAN TOTAL)…"
             : (fila.tipo === "obs" ? "Escribe las observaciones…" : "Título de la sección");
-        const top = "<div class=\"log-fila-top\">" + grip + badge + acc + "</div>";
+        const top = "<div class=\"log-fila-top\">" + grip + badge + origenObs + acc + "</div>";
         if (esObs) {
             return "<div class=\"log-fila log-fila-simple" + (fila.tipo === "obsFinal" ? " log-fila-obs-final" : "") +
                 "\" data-r=\"" + fila.uid + "\">" + top +
@@ -7383,16 +7476,9 @@ function logisticaPintarFilas_() {
     if (nota) nota.textContent = "";
     logisticaPintarEnv_();
     logNormalizarFilasSim3dEnOpcion_();
-    /** Productos primero, Vista 3D al final del mismo contenedor. */
+    /** Respeta el orden de fichas del contenedor (arrastre = PDF). */
     const ordenFilasBucket_ = function (filas) {
-        const prod = [];
-        const s3 = [];
-        (filas || []).forEach(function (f) {
-            if (!f) return;
-            if (f.tipo === "sim3d") s3.push(f);
-            else prod.push(f);
-        });
-        return prod.concat(s3);
+        return (filas || []).filter(Boolean);
     };
     if (escs.length) {
         const baseFilas = ordenFilasBucket_((logQuote.filas || []).filter(function (f) {
@@ -8111,18 +8197,18 @@ function logisticaAgregarFila_(ev) {
         return;
     }
     else if (tipo === "seccion") fila = { uid: logNuevoUid_(), tipo: "seccion", over: {} };
-    else if (tipo === "obs") fila = { uid: logNuevoUid_(), tipo: "obs", over: {} };
-    else if (tipo === "obsFinal") {
-        fila = { uid: logNuevoUid_(), tipo: "obsFinal", over: {} };
+    else if (tipo === "obs" || tipo === "obsFinal") {
+        /* Con opciones: van a la opción activa (independientes, como productos en contenedor). */
+        fila = { uid: logNuevoUid_(), tipo: tipo, over: {} };
         const escActObs = logEscList_().length ? (logOpcionUiSel_ || logOpcionUiAsegurar_() || "") : "";
         if (escActObs) {
             fila.escId = escActObs;
-            fila.over.obsEsc = escActObs;
+            if (tipo === "obsFinal") fila.over.obsEsc = escActObs;
         }
         logQuote.filas.push(fila);
         logMarcarSucio_();
         logisticaRefrescarTabla_();
-        if (typeof mostrarNotificacion === "function") {
+        if (tipo === "obsFinal" && typeof mostrarNotificacion === "function") {
             mostrarNotificacion("Observaciones al pie: salen después del GRAN TOTAL en el PDF.", "info");
         }
         return;
@@ -9829,7 +9915,13 @@ function logisticaLeerEnvUi_() {
                 }
                 delete stSel.fuentes[ln.id];
                 if (kt) delete stSel.fuentes[kt];
-                if (!escSel || escSel === (logEscList_()[0] || {}).id) ln.valor = valorNuevo;
+                /* Servicio/extra con escId: el valor vive en la línea (solo de esa opción).
+                   Envío tipado: espejo en ln solo en la 1.ª opción (legado). */
+                if (logEsServicio_(ln) || logEsExtraEnvio_(ln)) {
+                    if (!ln.escId || String(ln.escId) === String(escSel)) ln.valor = valorNuevo;
+                } else if (!escSel || escSel === (logEscList_()[0] || {}).id) {
+                    ln.valor = valorNuevo;
+                }
                 if (pctEl) {
                     ln.pct = pctNuevo;
                     if (pctNuevo == null) {
@@ -9869,7 +9961,8 @@ function logisticaLeerEnvUi_() {
             if (!prev.porEsc[escObs]) prev.porEsc[escObs] = logEnvEscSemilla_(prev);
             prev.porEsc[escObs].obsInternas = valObs;
             const escs0 = logEscList_();
-            if (!escs0.length || (escs0[0] && escs0[0].id === escObs)) prev.obsInternas = valObs;
+            /* Solo espejo global si no hay opciones o hay una sola (no contaminar otras). */
+            if (!escs0.length || escs0.length === 1) prev.obsInternas = valObs;
         } else {
             prev.obsInternas = valObs;
         }
@@ -10651,9 +10744,10 @@ function logisticaPintarEnv_(forzar) {
     if (box || boxServ) {
         const tiposActivosUi = logEnvTiposActivos_(vista.modalidad, vista.incoterm, exterior);
         let lineasUi = (e.lineas && e.lineas.length) ? e.lineas : logEnvLineasDeEsc_(escUi || "", esEn);
-        /* Con opciones de distinta modalidad, e.lineas es la unión: en UI solo la modalidad activa + servicios. */
+        /* Con opciones: modalidad activa + servicios/extras de ESTA opción (o legado sin escId). */
         lineasUi = lineasUi.filter(function (ln) {
-            return logEsServicio_(ln) || logEsExtraEnvio_(ln) || tiposActivosUi.indexOf(ln.tipo) >= 0;
+            if (logEsServicio_(ln) || logEsExtraEnvio_(ln)) return logEnvLineaEnEsc_(ln, escUi || "");
+            return tiposActivosUi.indexOf(ln.tipo) >= 0;
         });
         if ((!e.lineas || !e.lineas.length) && lineasUi.length) e.lineas = lineasUi;
         const escSuma = escUi || (logEscList_().length ? logOpcionUiAsegurar_() : "");
@@ -10743,15 +10837,14 @@ function logisticaPintarEnv_(forzar) {
                     "</div>");
             }
         }
-        /* Obs. internas unificadas (Duties/Taxes). Visible si hay aranceles o ya hay texto. */
+        /* Obs. internas: visibles con cualquier Incoterm (no solo DDP/Duties). Por opción; no PDF. */
         const wrapObsInt = document.getElementById("logEnvObsInternasWrap");
         const taObsInt = document.getElementById("logEnvObsInternas");
-        const hayAraUi = envioUi.some(function (ln) { return ln && (ln.tipo === "duties" || ln.tipo === "taxes"); });
         logEnvObsInternasMigrar_(e);
         const txtObsInt = logEnvObsInternas_(escUi || "");
         if (wrapObsInt) {
-            wrapObsInt.hidden = !hayAraUi && !String(txtObsInt || "").trim();
-            wrapObsInt.classList.toggle("d-none", wrapObsInt.hidden);
+            wrapObsInt.hidden = false;
+            wrapObsInt.classList.remove("d-none");
         }
         if (taObsInt && document.activeElement !== taObsInt) taObsInt.value = txtObsInt || "";
         logActivarTipConcepto_();
@@ -10839,7 +10932,8 @@ function logisticaOnEnvUi_(ev) {
         const i = e.lineas.findIndex(function (ln) { return ln.id === id; });
         if (i >= 0) {
             const src = e.lineas[i];
-            e.lineas.splice(i + 1, 0, {
+            const escDup = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_() || "") : "";
+            const copiaLn = {
                 id: "c" + Date.now(),
                 tipo: src.tipo,
                 concepto: src.concepto,
@@ -10852,7 +10946,10 @@ function logisticaOnEnvUi_(ev) {
                 arancelManual: !!src.arancelManual,
                 arancelFirma: src.arancelFirma || "",
                 arancelNota: src.arancelNota || ""
-            });
+            };
+            if (src.escId) copiaLn.escId = src.escId;
+            else if (escDup && (logEsServicio_(src) || logEsExtraEnvio_(src))) copiaLn.escId = escDup;
+            e.lineas.splice(i + 1, 0, copiaLn);
         }
         logMarcarSucio_();
         logisticaPintarEnv_(true);
@@ -10895,7 +10992,7 @@ function logisticaOnEnvUi_(ev) {
             e.activo = true;
         }
         const nuevoId = "c" + Date.now();
-        e.lineas.push({
+        const nuevaLn = {
             id: nuevoId,
             tipo: esExtra ? "extra" : "servicio",
             concepto: "",
@@ -10903,7 +11000,10 @@ function logisticaOnEnvUi_(ev) {
             valor: null,
             pct: null,
             notas: ""
-        });
+        };
+        /* Con opciones: el ítem pertenece solo a la opción activa (como costos de envío por porEsc). */
+        if (escL) nuevaLn.escId = escL;
+        e.lineas.push(nuevaLn);
         logMarcarSucio_();
         logisticaPintarEnv_(true);
         logisticaRefrescarTabla_();
