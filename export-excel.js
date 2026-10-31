@@ -2873,6 +2873,13 @@ window.exportarPresupuestoExcel = async function (opts) {
         if (typeof logQuote === "undefined" || !logQuote || !logQuote.filas || !logQuote.filas.length) {
             return mostrarNotificacion("Arma la cotización en Logística antes de exportar Excel.", "warning");
         }
+        /* 2) Bloquear si cotización y Costos no son la misma versión de presupuesto. */
+        const chk = typeof window.logisticaVersionExportOk_ === "function"
+            ? window.logisticaVersionExportOk_()
+            : { ok: true };
+        if (!chk.ok) {
+            return mostrarNotificacion(chk.mensaje || "La versión de Costos no coincide con la cotización.", "warning");
+        }
     }
     const versiones = typeof window.listarVersionesPresupuesto === "function"
         ? window.listarVersionesPresupuesto()

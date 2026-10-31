@@ -4261,6 +4261,77 @@ function logVerIgual_(a, b) {
     return String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
 }
 
+/**
+ * Versión de presupuesto que usa la cotización abierta (1.ª fila del proyecto en Costos).
+ * Así CONS …-V1 no se exporta con la matriz de V2 solo porque Costos estaba en V2.
+ */
+function logVersionPresupuestoCotizacion_(soloProyectoAbierto) {
+    const filas = (typeof logQuote !== "undefined" && logQuote && logQuote.filas) ? logQuote.filas : [];
+    const items = filas.filter(function (f) {
+        return f && f.tipo === "item" && String(f.ver || "").trim();
+    });
+    if (!items.length) return "";
+    let candidatos = items;
+    if (soloProyectoAbierto !== false) {
+        const p = typeof logisticaLeerProyecto_ === "function" ? logisticaLeerProyecto_() : null;
+        if (p && p.hayProyecto) {
+            const delProy = items.filter(function (f) {
+                return typeof logNormCod_ === "function"
+                    ? logNormCod_(f.proy) === logNormCod_(p.codigo)
+                    : String(f.proy || "").trim().toUpperCase() === String(p.codigo || "").trim().toUpperCase();
+            });
+            if (delProy.length) candidatos = delProy;
+            else return "";
+        }
+    }
+    /* Misma prioridad que el código del documento: 1.ª fila de la 1.ª opción. */
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    if (escs.length && typeof logFilasDeEsc_ === "function") {
+        const deOp = logFilasDeEsc_(escs[0].id).filter(function (f) {
+            return candidatos.indexOf(f) >= 0;
+        });
+        if (deOp.length) return String(deOp[0].ver || "").trim();
+    }
+    return String(candidatos[0].ver || "").trim();
+}
+
+/** Pone Costos en la versión de la cotización abierta (mismo proyecto). */
+function logisticaAlinearCostosACotizacion_() {
+    const verCot = logVersionPresupuestoCotizacion_(true);
+    if (!verCot) return false;
+    if (logVerIgual_(verCot, window.versionActivaId || "V1")) return false;
+    const vers = typeof logVersiones_ === "function" ? logVersiones_() : (window.versionesPresupuesto || []);
+    const existe = (vers || []).some(function (v) { return logVerIgual_(v.id, verCot); });
+    if (!existe) return false;
+    if (typeof aplicarVersionEnUI !== "function") return false;
+    try {
+        aplicarVersionEnUI(verCot);
+    } catch (eAl) {
+        console.warn("alinear Costos↔cotización:", eAl);
+        return false;
+    }
+    return true;
+}
+
+/** true si cotización y Costos apuntan a la misma versión de presupuesto (o no aplica). */
+function logisticaVersionExportOk_() {
+    const verCot = logVersionPresupuestoCotizacion_(true);
+    if (!verCot) return { ok: true, verCot: "", verCostos: "" };
+    const verCostos = String(window.versionActivaId || "V1").trim();
+    if (logVerIgual_(verCot, verCostos)) return { ok: true, verCot: verCot, verCostos: verCostos };
+    return {
+        ok: false,
+        verCot: verCot,
+        verCostos: verCostos,
+        mensaje: "La cotización usa el presupuesto " + verCot
+            + " y en Costos está " + verCostos
+            + ". Cambia a " + verCot + " en Costos (o vuelve a abrir la cotización) antes de exportar."
+    };
+}
+window.logisticaVersionExportOk_ = logisticaVersionExportOk_;
+window.logisticaAlinearCostosACotizacion_ = logisticaAlinearCostosACotizacion_;
+window.logVersionPresupuestoCotizacion_ = logVersionPresupuestoCotizacion_;
+
 function logPreciosVersion_(verId, elemId) {
     try {
         if (typeof calcularPreciosVersion_ !== "function") return null;
@@ -9194,12 +9265,19 @@ async function logisticaAbrirGuardada_(id, rev) {
     setv("logMargen", g.margenMm || 16);
     /* Pintar ya: Drive / 3D / fotos van en segundo plano (PDF/Excel quedan deshabilitados). */
     if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+    /* 1) Costos → misma versión de presupuesto que la cotización (evita Excel V1+V2). */
+    let alineoVer = false;
+    try { alineoVer = !!logisticaAlinearCostosACotizacion_(); } catch (eAlin) { alineoVer = false; }
     try {
         logisticaActualizarVista();
         logisticaPintarEstado_();
         logisticaPintarBadge_();
         if (typeof mostrarNotificacion === "function") {
-            mostrarNotificacion("Abierta " + d.numero + " (" + d.id + " Rev " + d.rev + "). Fotos y 3D cargan en segundo plano.", "success");
+            let msg = "Abierta " + d.numero + " (" + d.id + " Rev " + d.rev + "). Fotos y 3D cargan en segundo plano.";
+            if (alineoVer) {
+                msg += " Costos pasó a " + (window.versionActivaId || "") + " para coincidir con la cotización.";
+            }
+            mostrarNotificacion(msg, "success");
         }
     } catch (eVista) {
         if (typeof mostrarNotificacion === "function") {
