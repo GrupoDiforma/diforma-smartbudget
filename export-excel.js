@@ -2873,12 +2873,19 @@ window.exportarPresupuestoExcel = async function (opts) {
         if (typeof logQuote === "undefined" || !logQuote || !logQuote.filas || !logQuote.filas.length) {
             return mostrarNotificacion("Arma la cotización en Logística antes de exportar Excel.", "warning");
         }
-        /* 2) Bloquear si cotización y Costos no son la misma versión de presupuesto. */
-        const chk = typeof window.logisticaVersionExportOk_ === "function"
-            ? window.logisticaVersionExportOk_()
-            : { ok: true };
+        /* 2) Bloquear si falta Generar en CUALQUIER opción (m³/peso/modalidad). Fallo cerrado. */
+        let chk = { ok: false, mensaje: "No se pudo validar costos logísticos de todas las opciones." };
+        try {
+            if (typeof window.logisticaExportCotizacionOk_ === "function") {
+                chk = window.logisticaExportCotizacionOk_() || chk;
+            } else if (typeof window.logisticaVersionExportOk_ === "function") {
+                chk = window.logisticaVersionExportOk_() || chk;
+            }
+        } catch (eChk) {
+            chk = { ok: false, mensaje: "Error al validar costos logísticos: " + String((eChk && eChk.message) || eChk) };
+        }
         if (!chk.ok) {
-            return mostrarNotificacion(chk.mensaje || "La versión de Costos no coincide con la cotización.", "warning");
+            return mostrarNotificacion(chk.mensaje || "No se puede exportar Excel: regenera costos de todas las opciones (Análisis → Generar).", "warning");
         }
     }
     const versiones = typeof window.listarVersionesPresupuesto === "function"

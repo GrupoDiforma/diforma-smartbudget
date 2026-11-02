@@ -53,6 +53,20 @@ window.mostrarEsperaNube = mostrarEsperaNube;
 window.textoEsperaNube = textoEsperaNube;
 window.ocultarEsperaNube = ocultarEsperaNube;
 
+/** Barra de avance en Ingeniería de Costos (misma idea que #logCargaBar). */
+function costosCargaBar_(html) {
+    const el = document.getElementById("costosCargaBar");
+    if (!el) return;
+    if (!html) {
+        el.classList.add("d-none");
+        el.innerHTML = "";
+        return;
+    }
+    el.classList.remove("d-none");
+    el.innerHTML = html;
+}
+window.costosCargaBar_ = costosCargaBar_;
+
 /**
  * Confirmación con identidad SmartBudget (reemplazo de window.confirm).
  * @returns {Promise<boolean>}
@@ -680,24 +694,34 @@ window.cargarRendersVisor = function (opts) {
     _cargaRendersP = (async function () {
         const btn = document.getElementById("btnCargarRenders");
         if (btn) btn.disabled = true;
+        const fase_ = function (t) {
+            costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>" + t);
+            if (!opts.silencio && typeof textoEsperaNube === "function") textoEsperaNube(t);
+        };
         if (!opts.silencio && typeof mostrarEsperaNube === "function") mostrarEsperaNube("Cargando renders…");
+        else fase_("Cargando renders en segundo plano…");
         let odooOk = false;
         let nPins = 0;
         try {
+            fase_("Buscando imagen de Odoo (Grupo)…");
             if (typeof window.cargarImagenOdooEnVisor === "function") {
                 await window.cargarImagenOdooEnVisor({ force: true });
                 odooOk = (window.archivosGemaBase64 || []).some(function (f) { return f && f._odoo; });
             }
+            fase_("Hidratando renders de cotización…");
             await hidratarRendersCotizacionNube_();
+            fase_("Recuperando pins de cotización…");
             nPins = await recuperarRendersDesdeCotizaciones_();
             ponerRendersCotizacionEnVisor_();
             if (typeof window.asegurarPinOdooIndividual_ === "function") {
+                fase_("Ajustando pin individual…");
                 await window.asegurarPinOdooIndividual_();
             }
             nPins = (window.archivosGemaBase64 || []).filter(function (f) { return f && f._pinCotizacion; }).length || nPins;
         } finally {
             if (btn) btn.disabled = false;
             if (!opts.silencio && typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+            costosCargaBar_("");
         }
         if (!opts.silencio && typeof mostrarNotificacion === "function") {
             const cod = (typeof codigoOportunidadActual_ === "function" ? codigoOportunidadActual_() : "")
@@ -1812,6 +1836,7 @@ function restaurarSesionTrabajo() {
         s.versiones = versionesLivianas;
         localStorage.setItem(SESION_TRABAJO_KEY, JSON.stringify(s));
     } catch (eLite) { /* noop */ }
+    costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Sesión restaurada. Preparando mesa de trabajo…");
     if (typeof mostrarNotificacion === "function") {
         mostrarNotificacion("Sesión restaurada. Cargando renders en segundo plano…", "info");
     }
@@ -1822,10 +1847,15 @@ function programarCargaRendersTrasSesion_() {
     if (!_restauroNecesitaRenders && !(document.getElementById("inputCodigo")?.value || "").trim()) return;
     _restauroNecesitaRenders = false;
     const run = function () {
+        costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando renders en segundo plano…");
         if (typeof window.cargarRendersVisor === "function") {
-            window.cargarRendersVisor({ silencio: true }).catch(function () {});
+            window.cargarRendersVisor({ silencio: true }).catch(function () {
+                costosCargaBar_("");
+            });
         } else if (typeof window.cargarImagenOdooEnVisor === "function") {
-            window.cargarImagenOdooEnVisor();
+            Promise.resolve(window.cargarImagenOdooEnVisor()).finally(function () { costosCargaBar_(""); });
+        } else {
+            costosCargaBar_("");
         }
     };
     if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 1200 });
@@ -1847,7 +1877,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         ? obtenerTRMOficial().catch(function () {})
         : Promise.resolve();
 
-    restaurarSesionTrabajo();
+    costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Iniciando SmartBudget…");
+    const restauroOk = restaurarSesionTrabajo();
     window._codigoProyectoActivo = String(document.getElementById("inputCodigo")?.value || "").trim();
     /* Normaliza Nombre Proyecto a «código + nombre» y limpia basura (“$”). */
     (function () {
@@ -1866,9 +1897,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     asegurarV1_();
     pintarSelectorVersiones();
     pintarBarraElementos();
+    /* Ceder un frame tras restaurar sesión para que el chrome pinte antes de la matriz. */
+    if (restauroOk) {
+        costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Pintando matriz de costos…");
+        await new Promise(function (ok) {
+            window.requestAnimationFrame(function () { setTimeout(ok, 0); });
+        });
+    }
     if (typeof renderizarTablaItems === "function") renderizarTablaItems();
     if (typeof inicializarDragAndDropArchivos === "function") inicializarDragAndDropArchivos();
     if (typeof habilitarVentanasFlotantes === "function") habilitarVentanasFlotantes();
+    if (!restauroOk) costosCargaBar_("");
 
     ['simTRM', 'simComision', 'simFee'].forEach(id => { const el = document.getElementById(id); if(el) el.onchange = () => { if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero(); if (id === "simFee" && typeof logisticaFeeLibreCambio_ === "function") logisticaFeeLibreCambio_(); programarGuardarSesion(); }; });
     const taObsCostos = document.getElementById("obsCostos");
@@ -1897,15 +1936,32 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     programarCargaRendersTrasSesion_();
 
+    costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando configuración…");
     await pConfig;
     if (typeof poblarSelectComisiones === "function") poblarSelectComisiones();
+    /* Ceder frame antes del 2.º pintado (CONFIG listo: AIU / comisión) para no apilar trabajo sync. */
+    await new Promise(function (ok) {
+        window.requestAnimationFrame(function () { setTimeout(ok, 0); });
+    });
     /* La matriz ya se pintó sin CONFIG: ahora sí salen la ficha AIU y la comisión hacia Logística. */
     if (typeof renderizarTablaItems === "function") renderizarTablaItems();
     else if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
     if (typeof verificarAccesoCorporativo === "function") verificarAccesoCorporativo();
+    /* Historial de cotizaciones: idle, no compite con la mesa de Costos al arrancar. */
     if (localStorage.getItem("smartbudget_token") && typeof logisticaPrefetchHistorial_ === "function") {
-        logisticaPrefetchHistorial_();
+        const prefetchHist_ = function () { try { logisticaPrefetchHistorial_(); } catch (eH) { /* noop */ } };
+        if (typeof requestIdleCallback === "function") requestIdleCallback(prefetchHist_, { timeout: 4000 });
+        else setTimeout(prefetchHist_, 800);
     }
+    costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Consultando TRM…");
     await pTrm;
     if (typeof actualizarSimuladorFinanciero === "function") actualizarSimuladorFinanciero();
+    /* Renders en curso o programados tras restaurar sesión: ellos limpian la barra. */
+    if (_cargaRendersP) {
+        /* barra la actualiza cargarRendersVisor */
+    } else if (restauroOk) {
+        costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando renders en segundo plano…");
+    } else {
+        costosCargaBar_("");
+    }
 });

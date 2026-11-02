@@ -841,7 +841,7 @@
     /** Contenedores sin arrays .cajas (se reconstruyen desde instanciasCajas). */
     function slimContenedores_(conts) {
         return (conts || []).map(function (c) {
-            return {
+            var out = {
                 tipoKey: c.tipoKey || "40ft",
                 nombre: c.nombre || "",
                 w: c.w, h: c.h, d: c.d,
@@ -850,6 +850,12 @@
                 volActual: c.volActual || 0,
                 lenUsada: c.lenUsada || 0
             };
+            if (c.ghost || c.tipoKey === "open") {
+                out.ghost = true;
+                out.tipoKey = "open";
+                out.ghostBase = c.ghostBase || "40hc";
+            }
+            return out;
         });
     }
 
@@ -947,6 +953,15 @@
         e.listaEmpaque = st.listaEmpaque;
         e.instanciasCajas = st.instanciasCajas;
         e.contenedoresFisicos = st.contenedoresFisicos;
+        /* No tocar e.agrupaciones / e.cajasCrudas aquí: viven en el escenario y se
+         * serializan en slExportarEstado. Si faltan crudas, congelar desde lista suelta. */
+        if (!(e.cajasCrudas && e.cajasCrudas.length)) {
+            var crudas = (st.listaEmpaque || []).filter(function (it) {
+                return it && (!it.slMeta || it.slMeta.cruda || it.slMeta.unidad === "caja" || it.slMeta.rol === "suelta");
+            });
+            if (crudas.length) e.cajasCrudas = JSON.parse(JSON.stringify(crudas));
+        }
+        if (agrupacionesTienenModo_(e.agrupaciones)) e.modularizado = true;
     }
 
     function pintarTabsEscenarios_() {
@@ -989,9 +1004,19 @@
         if ((!e.contenedoresFisicos || !e.contenedoresFisicos.length) && e.mixSugerido) {
             e.contenedoresFisicos = contenedoresDesdeMix_(e.mixSugerido);
         }
-        /* Agrupación puede tener datos y Lista de carga vacía (p. ej. opción 2 tras Traer). */
+        /* Agrupaciones: preservar modos; solo regenerar listaEmpaque si hace falta. */
         asegurarAgrupaciones_(e);
-        if (!(e.listaEmpaque || []).length && (e.agrupaciones || []).length) {
+        var hayInstGuardadas = ((e.instanciasCajas || []).length > 0);
+        var listaVacia = !(e.listaEmpaque || []).length;
+        var listaSoloSueltas = (e.listaEmpaque || []).length > 0 && (e.listaEmpaque || []).every(function (it) {
+            return !it || !it.slMeta || it.slMeta.unidad === "caja" || it.slMeta.rol === "suelta" || it.slMeta.cruda;
+        });
+        /* Si hay pallet/master guardados pero la lista es suelta/vacía, regenerar módulos.
+         * Si ya hay instancias 3D guardadas, no tocar (evitar vaciar el contenedor). */
+        if (!hayInstGuardadas && (agrupacionesTienenModo_(e.agrupaciones) || e.modularizado)
+            && (listaVacia || listaSoloSueltas)) {
+            aplicarAgrupacionesAlEscenario_(e);
+        } else if (listaVacia && (e.agrupaciones || []).length) {
             aplicarAgrupacionesAlEscenario_(e);
         }
         restoreEstado_({
@@ -1019,12 +1044,16 @@
         pintarListaModulos_();
         actualizarNombreLoadUI_();
         resizeViewer_();
-        /* Si hay lista pero el contenedor está vacío, optimizar esta opción. */
+        /* Lista con ítems pero contenedor vacío → Optimizar para colocar (agrupaciones se conservan). */
         if (!opts.sinAutoOpt) {
             var hayLista = (listaEmpaque || []).length > 0;
             var vacio = !(contenedoresFisicos || []).some(function (c) { return c.cajas && c.cajas.length; });
             if (hayLista && vacio && typeof window.optimizarCarga === "function") {
-                try { window.optimizarCarga(); } catch (eOpt) { /* noop */ }
+                /* Contador: ensureInit puede disparar 2× (tab+click); el worker es async. */
+                window._slOptDesdeRestaurar = (window._slOptDesdeRestaurar || 0) + 1;
+                try { window.optimizarCarga(); } catch (eOpt) {
+                    window._slOptDesdeRestaurar = Math.max(0, (window._slOptDesdeRestaurar || 1) - 1);
+                }
             }
         }
     }
@@ -1445,9 +1474,39 @@
         };
     }
 
+    function agrupacionesTienenModo_(ags) {
+        return (ags || []).some(function (a) { return a && a.modo && a.modo !== "ninguna"; });
+    }
+
     function asegurarAgrupaciones_(esc) {
         if (!esc) return [];
         if (!Array.isArray(esc.agrupaciones)) esc.agrupaciones = [];
+        /*
+         * Si ya hay pallet/huacal/master guardados, NO reconstruir desde listaEmpaque
+         * (esa lista puede ser módulos y las claves no coinciden → todo volvía a «cajas sueltas»).
+         * Solo refrescar totales desde cajasCrudas cuando existan.
+         */
+        if (agrupacionesTienenModo_(esc.agrupaciones) || esc.modularizado) {
+            var crudasOk = (esc.cajasCrudas && esc.cajasCrudas.length) ? esc.cajasCrudas : null;
+            if (crudasOk) {
+                var byClaveKeep = {};
+                esc.agrupaciones.forEach(function (a) { if (a && a.clave) byClaveKeep[a.clave] = a; });
+                crudasOk.forEach(function (caja) {
+                    if (!caja) return;
+                    var kk = claveCaja_(caja);
+                    if (byClaveKeep[kk]) {
+                        byClaveKeep[kk].total = Math.max(1, Math.floor(num_(caja.qty, byClaveKeep[kk].total)));
+                        byClaveKeep[kk].boxW = num_(caja.w);
+                        byClaveKeep[kk].boxD = num_(caja.d);
+                        byClaveKeep[kk].boxH = num_(caja.h);
+                        byClaveKeep[kk].weight = num_(caja.weight, 0);
+                        byClaveKeep[kk].desc = caja.desc || byClaveKeep[kk].desc;
+                        byClaveKeep[kk].color = caja.color || byClaveKeep[kk].color;
+                    }
+                });
+            }
+            return esc.agrupaciones;
+        }
         var fuentes = (esc.cajasCrudas && esc.cajasCrudas.length)
             ? esc.cajasCrudas
             : (esc.listaEmpaque || []).filter(function (it) {
@@ -1471,6 +1530,10 @@
             } else {
                 next.push(nuevaAgrupacionDeCaja_(caja));
             }
+        });
+        /* Conservar agrupaciones huérfanas con modo distinto de «ninguna». */
+        Object.keys(byClave).forEach(function (ck) {
+            if (byClave[ck] && byClave[ck].modo && byClave[ck].modo !== "ninguna") next.push(byClave[ck]);
         });
         esc.agrupaciones = next;
         return next;
@@ -1750,6 +1813,37 @@
     function actualizarPreviewAgrupacionUI_() {
         var ag = agPorId_(slAgrupEditId);
         if (!ag) return;
+        /* 1) Medidas de la caja unitaria (antes de rejilla / master). */
+        var bw = num_((document.getElementById("ag-box-w") || {}).value, ag.boxW);
+        var bd = num_((document.getElementById("ag-box-d") || {}).value, ag.boxD);
+        var bh = num_((document.getElementById("ag-box-h") || {}).value, ag.boxH);
+        var bkg = num_((document.getElementById("ag-box-kg") || {}).value, ag.weight);
+        var dimsCambiaron = false;
+        if (bw > 0 && Math.abs(bw - num_(ag.boxW)) > 0.001) { ag.boxW = bw; dimsCambiaron = true; }
+        if (bd > 0 && Math.abs(bd - num_(ag.boxD)) > 0.001) { ag.boxD = bd; dimsCambiaron = true; }
+        if (bh > 0 && Math.abs(bh - num_(ag.boxH)) > 0.001) { ag.boxH = bh; dimsCambiaron = true; }
+        if (bkg >= 0 && isFinite(bkg)) ag.weight = bkg;
+        if (dimsCambiaron) {
+            /* Recalcular orientaciones válidas; conservar la actual si sigue siendo posible. */
+            var oriAntes = (ag.ori || []).join(",");
+            llenarOriSelect_(ag);
+            var selOri = document.getElementById("ag-ori");
+            if (selOri && oriAntes) {
+                var sigue = Array.prototype.some.call(selOri.options, function (o) { return o.value === oriAntes || o.value.split(",").join("x") === (ag.ori || []).join("x"); });
+                if (!sigue && selOri.options.length) {
+                    var prim = selOri.options[0].value.split(",");
+                    if (prim.length === 3) ag.ori = [num_(prim[0]), num_(prim[1]), num_(prim[2])];
+                    selOri.value = selOri.options[0].value;
+                }
+            }
+            /* Master exterior: volver a sugerir si el usuario no lo tocó. */
+            ["ag-mw", "ag-md", "ag-mh"].forEach(function (idEl) {
+                var el = document.getElementById(idEl);
+                if (el) el.dataset.touched = "0";
+            });
+        }
+        var dimsEl = document.getElementById("ag-dims");
+        if (dimsEl) dimsEl.textContent = r1_(ag.boxW) + " × " + r1_(ag.boxD) + " × " + r1_(ag.boxH) + " cm · " + r2_(ag.weight) + " kg / caja";
         ag.total = Math.max(1, Math.floor(num_((document.getElementById("ag-total") || {}).value, ag.total)));
         ag.modo = (document.getElementById("ag-modo") || {}).value || "ninguna";
         ag.nx = Math.max(1, Math.floor(num_((document.getElementById("ag-nx") || {}).value, 1)));
@@ -1841,7 +1935,16 @@
         if (!modal) return;
         document.getElementById("ag-id").value = ag.id;
         document.getElementById("ag-desc").textContent = ag.desc || "Caja";
-        document.getElementById("ag-dims").textContent = r1_(ag.boxW) + " × " + r1_(ag.boxD) + " × " + r1_(ag.boxH) + " cm · " + r2_(ag.weight) + " kg";
+        var elW = document.getElementById("ag-box-w");
+        var elD = document.getElementById("ag-box-d");
+        var elH = document.getElementById("ag-box-h");
+        var elKg = document.getElementById("ag-box-kg");
+        if (elW) elW.value = r1_(ag.boxW);
+        if (elD) elD.value = r1_(ag.boxD);
+        if (elH) elH.value = r1_(ag.boxH);
+        if (elKg) elKg.value = r2_(ag.weight);
+        var dimsEl0 = document.getElementById("ag-dims");
+        if (dimsEl0) dimsEl0.textContent = r1_(ag.boxW) + " × " + r1_(ag.boxD) + " × " + r1_(ag.boxH) + " cm · " + r2_(ag.weight) + " kg / caja";
         document.getElementById("ag-total").value = ag.total;
         document.getElementById("ag-modo").value = ag.modo || "ninguna";
         document.getElementById("ag-nx").value = ag.nx || 1;
@@ -1946,7 +2049,7 @@
     window.pintarListaModulos_ = pintarListaModulos_;
 
     function wireAgrupacionModal_() {
-        ["ag-total", "ag-modo", "ag-nx", "ag-ny", "ag-nz", "ag-ori", "ag-no-tilt", "ag-no-turn", "ag-floor"].forEach(function (id) {
+        ["ag-box-w", "ag-box-d", "ag-box-h", "ag-box-kg", "ag-total", "ag-modo", "ag-nx", "ag-ny", "ag-nz", "ag-ori", "ag-no-tilt", "ag-no-turn", "ag-floor"].forEach(function (id) {
             var el = document.getElementById(id);
             if (!el || el._slAgWired) return;
             el._slAgWired = true;
@@ -2088,29 +2191,216 @@
         return true;
     }
 
+    function contEsGhost_(c) {
+        return !!(c && (c.ghost || c.tipoKey === "open"));
+    }
+
     function mixDesdeContenedores_(conts) {
         var mix = { c20: 0, c40: 0, c40hc: 0 };
         (conts || []).forEach(function (c) {
+            if (contEsGhost_(c)) return;
             var k = String(c.tipoKey || "");
             if (k === "20ft") mix.c20++;
             else if (k === "40hc") mix.c40hc++;
             else if (k === "40ft" || k.indexOf("40") === 0) mix.c40++;
-            else mix.c40++;
+            else if (k && k !== "open") mix.c40++;
         });
         return mix;
     }
 
     function metricasDesdeContenedores_(conts) {
         var volAct = 0, volMax = 0, kgAct = 0, kgMax = 0;
+        var ghost = false;
         (conts || []).forEach(function (c) {
+            if (contEsGhost_(c)) ghost = true;
             volAct += Number(c.volActual) || 0;
             volMax += Number(c.maxVol) || 0;
             kgAct += Number(c.pesoActual) || 0;
             kgMax += Number(c.maxWeight) || 0;
         });
         var occ = volMax > 0 ? Math.round(volAct * 1000 / volMax) / 10 : 0;
-        return { m3: Math.round(volAct * 1000) / 1000, m3Max: volMax, kg: Math.round(kgAct), kgMax: kgMax, ocupacionPct: occ, nCont: (conts || []).length };
+        return {
+            m3: Math.round(volAct * 1000) / 1000,
+            m3Max: volMax,
+            kg: Math.round(kgAct),
+            kgMax: kgMax,
+            ocupacionPct: occ,
+            nCont: (conts || []).length,
+            ghost: ghost
+        };
     }
+
+    /** Kg volumétricos de la carga empacada (courier ÷5000 / aéreo ÷6000). */
+    function kgVolDesdeContenedores_(conts, escId) {
+        var div = typeof logKgVolDivisor_ === "function" ? logKgVolDivisor_(escId) : null;
+        if (!div) return null;
+        var cm3 = 0;
+        (conts || []).forEach(function (c) {
+            (c.cajas || []).forEach(function (caja) {
+                cm3 += (Number(caja.drawW) || 0) * (Number(caja.drawH) || 0) * (Number(caja.drawD) || 0);
+            });
+        });
+        if (!(cm3 > 0)) return null;
+        return Math.round((cm3 / div) * 10) / 10;
+    }
+
+    function numCerca_(a, b, eps) {
+        a = Number(a); b = Number(b);
+        if (!isFinite(a)) a = 0;
+        if (!isFinite(b)) b = 0;
+        return Math.abs(a - b) <= (eps == null ? 0.05 : eps);
+    }
+
+    /**
+     * Referencia en Logística: prioriza el último pack aplicado (sim3d.m3/kg);
+     * si no hay, cubM3/cubPeso o el cúbico efectivo de costos.
+     */
+    function packLogDeEsc_(esc) {
+        if (typeof logEnv_ !== "function") return null;
+        var env = logEnv_();
+        if (!env) return null;
+        var escId = esc && esc.logEscId ? String(esc.logEscId) : "";
+        var st = (escId && env.porEsc && env.porEsc[escId]) ? env.porEsc[escId] : env;
+        var sim = (st && st.sim3d) || {};
+        var m3 = sim.m3 != null ? sim.m3 : (st && st.cubM3);
+        var kg = sim.kg != null ? sim.kg : (st && st.cubPeso);
+        if ((m3 == null && kg == null) && typeof logCostosCubEfectivo_ === "function") {
+            try {
+                var cub = logCostosCubEfectivo_(escId || null) || {};
+                if (m3 == null && cub.m3 != null) m3 = cub.m3;
+                if (kg == null && cub.pesoKg != null) kg = cub.pesoKg;
+            } catch (eCub) { /* noop */ }
+        }
+        return { m3: m3, kg: kg };
+    }
+
+    /** m³/kg actuales del 3D (sin redondear kg a entero: la UI muestra decimales). */
+    function packActualEsc_(esc) {
+        var conts = (esc && esc.contenedoresFisicos) || [];
+        var volAct = 0, kgAct = 0;
+        conts.forEach(function (c) {
+            volAct += Number(c.volActual) || 0;
+            kgAct += Number(c.pesoActual) || 0;
+        });
+        return { m3: volAct, kg: kgAct };
+    }
+
+    /** Solo volumen o peso distinto → Aplicar. Mix/kg-vol/reorden no ensucian. */
+    function packCambioRelevante_(act, log) {
+        if (!act) return false;
+        var aM = Number(act.m3), aK = Number(act.kg);
+        if (!isFinite(aM)) aM = 0;
+        if (!isFinite(aK)) aK = 0;
+        if (!log || (log.m3 == null && log.kg == null)) {
+            return aM > 0.001 || aK > 0.05;
+        }
+        if (log.m3 != null && !numCerca_(aM, log.m3, 0.05)) return true;
+        if (log.kg != null && !numCerca_(aK, log.kg, 1)) return true;
+        /* Si Logística solo tiene uno de los dos, comparar ese. */
+        if (log.m3 == null && log.kg == null) return aM > 0.001 || aK > 0.05;
+        return false;
+    }
+
+    /**
+     * opts.soloActivo: tras Optimizar solo mira la opción en pantalla
+     * (las demás pueden estar sin colocar aún → falso «Sin aplicar»).
+     */
+    function sim3dHayCambioVsLogistica_(opts) {
+        opts = opts || {};
+        var lista;
+        if (!slEscenarios.length) {
+            lista = [{ contenedoresFisicos: contenedoresFisicos, logEscId: null, listaEmpaque: listaEmpaque }];
+        } else if (opts.soloActivo) {
+            lista = slEscenarios[slEscActivo] != null ? [slEscenarios[slEscActivo]] : [];
+        } else {
+            lista = slEscenarios.slice();
+        }
+        return lista.some(function (esc) {
+            var act = packActualEsc_(esc);
+            var vacio = !(Number(act.m3) > 0.001) && !(Number(act.kg) > 0.05);
+            var hayPlan = ((esc.listaEmpaque || []).length > 0) || ((esc.agrupaciones || []).length > 0);
+            /* Opción con lista pero aún sin colocar en contenedor: no comparar. */
+            if (vacio && hayPlan && !opts.soloActivo) return false;
+            return packCambioRelevante_(act, packLogDeEsc_(esc));
+        });
+    }
+
+    function pintarBadgeSim3dPendiente_() {
+        var pendApply = false;
+        var pendCostos = false;
+        var nOpPend = 0;
+        try {
+            if (typeof logEnv_ === "function") {
+                var env = logEnv_();
+                pendApply = !!(env && env.sim3dPendiente);
+                pendCostos = !!(env && env.logCostosPendiente);
+            }
+            if (typeof window.logCostosOpcionesPendientes_ === "function") {
+                var ops = window.logCostosOpcionesPendientes_() || [];
+                nOpPend = ops.length;
+                if (nOpPend) pendCostos = true;
+            } else if (typeof window.logCostosHayPendienteEnAlgunaOpcion_ === "function") {
+                pendCostos = !!window.logCostosHayPendienteEnAlgunaOpcion_();
+            }
+        } catch (eB) { /* noop */ }
+        var pend = pendApply || pendCostos;
+        ["badge-sim3d-dirty", "badge-sim3d-dirty-header"].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            el.classList.toggle("d-none", !pend);
+            if (pendApply) el.textContent = id.indexOf("header") >= 0 ? "Cambios sin aplicar" : "Sin aplicar";
+            else if (pendCostos) {
+                el.textContent = nOpPend > 1
+                    ? (id.indexOf("header") >= 0 ? ("Faltan costos (" + nOpPend + " opc.)") : ("Costos×" + nOpPend))
+                    : (id.indexOf("header") >= 0 ? "Falta generar costos" : "Falta costos");
+            }
+        });
+        var btn = document.getElementById("slBtnAplicarLog");
+        if (btn) {
+            btn.classList.toggle("btn-warning", pendApply);
+            btn.classList.toggle("btn-outline-success", !pendApply);
+            btn.title = pendApply
+                ? "Hay cambios 3D sin aplicar a Logística"
+                : (pendCostos
+                    ? "Ya aplicado: Análisis + Generar en Logística (todas las opciones)"
+                    : "Escribe el mix validado en Logística");
+        }
+        var tab = document.getElementById("tabBtnSimulador3d");
+        if (tab) tab.classList.toggle("sl-tab-pendiente", pend);
+        var tabLog = document.getElementById("tabBtnLogistica");
+        if (tabLog) tabLog.classList.toggle("sl-tab-pendiente", pendCostos && !pendApply);
+    }
+
+    function marcarSim3dPendiente_() {
+        if (typeof logEnv_ !== "function") return;
+        var env = logEnv_();
+        if (!env) return;
+        if (env.sim3dPendiente) {
+            pintarBadgeSim3dPendiente_();
+            return;
+        }
+        env.sim3dPendiente = true;
+        if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
+        pintarBadgeSim3dPendiente_();
+    }
+
+    function limpiarSim3dPendiente_() {
+        if (typeof logEnv_ !== "function") return;
+        var env = logEnv_();
+        if (env) env.sim3dPendiente = false;
+        pintarBadgeSim3dPendiente_();
+    }
+
+    window.slMarcarSim3dPendiente = marcarSim3dPendiente_;
+    window.slLimpiarSim3dPendiente = limpiarSim3dPendiente_;
+    window.slPintarBadgeSim3dPendiente = pintarBadgeSim3dPendiente_;
+    window.slSim3dHayPendiente = function () {
+        try {
+            if (typeof logEnv_ !== "function") return false;
+            var env = logEnv_();
+            return !!(env && env.sim3dPendiente);
+        } catch (e) { return false; }
+    };
 
     function aplicarALogistica_() {
         guardarEscenarioActivo_();
@@ -2126,11 +2416,18 @@
         slEscenarios.forEach(function (esc) {
             var mix = mixDesdeContenedores_(esc.contenedoresFisicos);
             var met = metricasDesdeContenedores_(esc.contenedoresFisicos);
+            var kgVol = kgVolDesdeContenedores_(esc.contenedoresFisicos, esc.logEscId);
+            var partsMix = [];
+            if (met.ghost) partsMix.push("sin contenedor");
+            else {
+                if (mix.c20) partsMix.push(mix.c20 + "×20'");
+                if (mix.c40) partsMix.push(mix.c40 + "×40'");
+                if (mix.c40hc) partsMix.push(mix.c40hc + "×40HC");
+            }
             var txt = (esc.nombre || esc.id) + ": " +
-                (mix.c20 ? mix.c20 + "×20' " : "") +
-                (mix.c40 ? mix.c40 + "×40' " : "") +
-                (mix.c40hc ? mix.c40hc + "×40HC " : "") +
-                "(" + met.ocupacionPct + "% · " + met.m3 + " m³ · " + met.kg + " kg)";
+                (partsMix.join(" ") || "—") +
+                " (" + (met.ghost ? "" : (met.ocupacionPct + "% · ")) + met.m3 + " m³ · " + met.kg + " kg" +
+                (kgVol != null ? (" · " + kgVol + " kg vol") : "") + ")";
             resumen.push(txt.trim());
         });
         if (!window.confirm("¿Aplicar este mix a Logística?\n\n" + resumen.join("\n"))) return;
@@ -2141,27 +2438,61 @@
         slEscenarios.forEach(function (esc) {
             var mix = mixDesdeContenedores_(esc.contenedoresFisicos);
             var met = metricasDesdeContenedores_(esc.contenedoresFisicos);
-            var nota = "Simulador 3D: " + met.ocupacionPct + "% occ · " + met.m3 + " m³ · " + met.kg + " kg · " + resumenUnidades_(esc.listaEmpaque);
+            var kgVol = kgVolDesdeContenedores_(esc.contenedoresFisicos, esc.logEscId);
+            var nota = met.ghost
+                ? ("Simulador 3D (carga suelta): " + met.m3 + " m³ · " + met.kg + " kg" + (kgVol != null ? (" · " + kgVol + " kg vol") : "") + " · " + resumenUnidades_(esc.listaEmpaque))
+                : ("Simulador 3D: " + met.ocupacionPct + "% occ · " + met.m3 + " m³ · " + met.kg + " kg · " + resumenUnidades_(esc.listaEmpaque));
+            var packSim = {
+                m3: met.m3,
+                kg: met.kg,
+                ocupacionPct: met.ghost ? null : met.ocupacionPct,
+                kgVol: kgVol,
+                ghost: !!met.ghost,
+                nota: nota
+            };
             if (esc.logEscId) {
-                if (!env.porEsc[esc.logEscId]) env.porEsc[esc.logEscId] = {};
+                if (!env.porEsc[esc.logEscId]) {
+                    env.porEsc[esc.logEscId] = (typeof logEnvEscSemilla_ === "function")
+                        ? logEnvEscSemilla_(env)
+                        : {};
+                }
                 var st = env.porEsc[esc.logEscId];
                 st.contenedores = mix;
                 st.contenedoresManual = true;
-                st.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
+                /* Cubicaje de Envío: el 3D manda el volumen/peso real empacado (LCL / aéreo / courier). */
+                st.cubM3 = met.m3;
+                st.cubPeso = met.kg > 0 ? met.kg : null;
+                st.cubKgVol = kgVol;
+                st.sim3d = packSim;
+                /* Esta opción cambió m³/kg → costos logísticos quedan viejos hasta Generar. */
+                st.logCostosPendiente = true;
+                delete st.costosFirma;
                 /* No borrar sim3dImg: la captura al PDF es manual y se conserva. */
             } else {
                 env.contenedores = mix;
                 env.contenedoresManual = true;
-                env.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
+                env.cubM3 = met.m3;
+                env.cubPeso = met.kg > 0 ? met.kg : null;
+                env.cubKgVol = kgVol;
+                env.sim3d = packSim;
+                env.logCostosPendiente = true;
+                delete env.costosFirma;
             }
         });
+        env.logCostosPendiente = true;
 
         if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv();
+        limpiarSim3dPendiente_();
+        /* m³/kg ya en Envío; invalidar fletes viejos y bloquear PDF/Excel hasta Generar. */
+        if (typeof window.logisticaInvalidarCostosTrasSim3d_ === "function") {
+            try { window.logisticaInvalidarCostosTrasSim3d_(); } catch (eInv) { /* noop */ }
+        }
         if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
         if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
         if (typeof logisticaPintarFilas_ === "function") logisticaPintarFilas_();
         if (typeof logisticaActualizarVista === "function") logisticaActualizarVista();
-        toast_("Envío actualizado con el mix del Simulador 3D (ocupación / m³ / kg).");
+        pintarBadgeSim3dPendiente_();
+        toast_("Envío actualizado (m³ / kg / mix). Ve a Logística → Análisis costos logísticos → Generar datos logísticos. PDF/Excel siguen bloqueados hasta entonces.");
     }
 
     /**
@@ -2202,9 +2533,13 @@
             }
             var idioma = idiomaCotizacion_();
             var en = idioma === "en";
-            var mix = mixDesdeContenedores_(esc.contenedoresFisicos || contenedoresFisicos);
-            var mixTxt = (typeof logContenedoresTexto_ === "function") ? logContenedoresTexto_(mix) : "";
-            var met = metricasDesdeContenedores_(esc.contenedoresFisicos || contenedoresFisicos);
+            var contsCap = esc.contenedoresFisicos || contenedoresFisicos;
+            var mix = mixDesdeContenedores_(contsCap);
+            var met = metricasDesdeContenedores_(contsCap);
+            var kgVol = kgVolDesdeContenedores_(contsCap, esc.logEscId);
+            var mixTxt = met.ghost
+                ? (en ? "Loose cargo (no container)" : "Carga suelta (sin contenedor)")
+                : ((typeof logContenedoresTexto_ === "function") ? logContenedoresTexto_(mix) : "");
             var listaU = esc.listaEmpaque || listaEmpaque;
             var crudas = (esc.cajasCrudas && esc.cajasCrudas.length) ? esc.cajasCrudas : listaU;
             var totalCajas = totalCajasLista_(crudas);
@@ -2218,11 +2553,17 @@
             ctx.font = "bold 20px Segoe UI, Arial, sans-serif";
             ctx.fillStyle = "#ffffff";
             ctx.fillText([mixTxt, units].filter(Boolean).join(en ? "  ·  " : "   ·   ").slice(0, 96), 20, drawH + 66);
-            var metParts = [
-                (en ? "Occupancy " : "Ocupación ") + met.ocupacionPct + "% vol",
-                met.m3 + " m³"
-            ];
+            var metParts = [];
+            if (!met.ghost) metParts.push((en ? "Occupancy " : "Ocupación ") + met.ocupacionPct + "% vol");
+            metParts.push(met.m3 + " m³");
             if (met.kg > 0) metParts.push(met.kg + " kg");
+            if (kgVol != null && kgVol > 0) {
+                metParts.push(kgVol + (en ? " kg vol" : " kg vol"));
+                if (met.kg > 0) {
+                    var charge = Math.max(met.kg, kgVol);
+                    metParts.push((en ? "chargeable " : "cobrable ") + charge + " kg");
+                }
+            }
             ctx.font = "bold 18px Segoe UI, Arial, sans-serif";
             ctx.fillStyle = "#ffffff";
             ctx.fillText(metParts.join(en ? "  ·  " : "   ·   "), 20, drawH + 94);
@@ -2249,35 +2590,46 @@
         window._slPdfCaptures = slPdfCaptures;
         var idioma = idiomaCotizacion_();
         var en = idioma === "en";
-        var met = metricasDesdeContenedores_(esc.contenedoresFisicos || []);
+        var contsCap = esc.contenedoresFisicos || [];
+        var met = metricasDesdeContenedores_(contsCap);
+        var kgVol = kgVolDesdeContenedores_(contsCap, esc.logEscId);
         var listaU = esc.listaEmpaque || listaEmpaque;
         var crudas = (esc.cajasCrudas && esc.cajasCrudas.length) ? esc.cajasCrudas : listaU;
         var units = resumenUnidades_(listaU, idioma, { totalCajas: totalCajasLista_(crudas) });
         var notaParts = [
-            (en ? "3D simulator" : "Simulador 3D") + ": " + met.ocupacionPct + "%",
+            (en ? "3D simulator" : "Simulador 3D") + (met.ghost ? (en ? " (loose)" : " (suelta)") : "") +
+                (met.ghost ? "" : (": " + met.ocupacionPct + "%")),
             met.m3 + " m³",
             units
         ];
         if (met.kg > 0) notaParts.splice(2, 0, met.kg + " kg");
+        if (kgVol != null && kgVol > 0) notaParts.splice(met.kg > 0 ? 3 : 2, 0, kgVol + " kg vol");
         var nota = notaParts.join(" · ");
         if (typeof logEnv_ === "function") {
             var env = logEnv_();
+            var pack = {
+                m3: met.m3, kg: met.kg,
+                ocupacionPct: met.ghost ? null : met.ocupacionPct,
+                kgVol: kgVol, ghost: !!met.ghost, nota: nota
+            };
             if (esc.logEscId) {
                 if (!env.porEsc) env.porEsc = {};
                 if (!env.porEsc[esc.logEscId]) env.porEsc[esc.logEscId] = {};
                 env.porEsc[esc.logEscId].sim3dImg = url;
-                env.porEsc[esc.logEscId].sim3d = {
-                    m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota
-                };
+                env.porEsc[esc.logEscId].sim3d = pack;
             } else {
                 env.sim3dImg = url;
-                env.sim3d = { m3: met.m3, kg: met.kg, ocupacionPct: met.ocupacionPct, nota: nota };
+                env.sim3d = pack;
             }
         }
     }
 
     /** Captura la vista actual y crea/actualiza la fila Vista 3D (fuera de contenedores) tras el Gran Total. */
     function agregarVista3dPdf_(idx) {
+        if (typeof window.slSim3dHayPendiente === "function" && window.slSim3dHayPendiente()) {
+            toast_("Hay cambios 3D sin aplicar a Logística. Pulsa «Aplicar a Logística» antes de poner la Vista 3D en el PDF.");
+            return;
+        }
         if (!slEscenarios.length) {
             toast_("Trae carga desde Logística antes de capturar la Vista 3D.");
             return;
@@ -2389,7 +2741,15 @@
     window.slImportarEstado = function (st) {
         if (!st || !Array.isArray(st.escenarios) || !st.escenarios.length) return false;
         slEscenarios = st.escenarios.map(function (e) {
-            var conts = e.contenedoresFisicos || [];
+            var conts = (e.contenedoresFisicos || []).map(function (c) {
+                if (!c) return c;
+                if (c.tipoKey === "open" || c.ghost) {
+                    c.ghost = true;
+                    c.tipoKey = "open";
+                    c.ghostBase = c.ghostBase || "40hc";
+                }
+                return c;
+            });
             var insts = e.instanciasCajas || [];
             reinyectarCajasEnContenedores_(conts, insts);
             return {
@@ -2415,9 +2775,20 @@
             activarEscenario_(ix);
             pintarTabsEscenarios_();
             actualizarNombreLoadUI_();
+            try {
+                var ribbon = document.getElementById("ribbon-cont-type");
+                var c0 = slEscenarios[ix] && slEscenarios[ix].contenedoresFisicos && slEscenarios[ix].contenedoresFisicos[0];
+                if (ribbon && c0 && c0.tipoKey) ribbon.value = c0.tipoKey;
+                if (c0 && c0.ghostBase) {
+                    var gb = document.getElementById("ribbon-ghost-base");
+                    if (gb) gb.value = c0.ghostBase;
+                }
+                if (typeof syncGhostBaseUi_ === "function") syncGhostBaseUi_();
+            } catch (eUi) { /* noop */ }
         } else {
             slEscActivo = Math.max(0, Math.min(st.activo || 0, slEscenarios.length - 1));
         }
+        pintarBadgeSim3dPendiente_();
         return true;
     };
 
@@ -2464,7 +2835,8 @@
         pintarTabsEscenarios_();
         actualizarNombreLoadUI_();
         if (slEscenarios.length && slEscActivo >= 0 && slEscActivo < slEscenarios.length) {
-            try { activarEscenario_(slEscActivo, { sinAutoOpt: true }); } catch (eAct) { /* noop */ }
+            /* Permitir auto-Optimizar si el packing restaurado trae lista pero sin instancias 3D. */
+            try { activarEscenario_(slEscActivo, { sinAutoOpt: false }); } catch (eAct) { /* noop */ }
         }
     }
 
@@ -2481,22 +2853,55 @@
                 slInited = true;
                 try { aplicarContenedoresCfgADb_(slSim3dCfg_()); } catch (eCfg) { /* noop */ }
             }
-            /* Si ya hay trabajo en memoria (Optimizar / capturas), NO reimportar el bundle
-             * viejo de env: eso borraba los ajustes al volver desde Logística. */
+            var env0 = typeof logEnv_ === "function" ? logEnv_() : null;
+            /* Preferir siempre el bundle guardado en la cotización (agrupaciones / packing). */
+            var bundle = env0 && env0.sim3dBundle;
+            /* Acepta bundle completo o LITE (drive:true + escenarios con agrupaciones). */
+            var bundleOk = !!(bundle && Array.isArray(bundle.escenarios) && bundle.escenarios.length);
+            if (bundleOk && typeof window.slImportarEstado === "function") {
+                var hayMemoria = slEscenarios.some(escenarioTieneCarga_);
+                var yaBuenas = slEscenarios.some(function (e) {
+                    return agrupacionesTienenModo_(e && e.agrupaciones) || (e && e.modularizado)
+                        || ((e && e.instanciasCajas) || []).length > 0;
+                });
+                var bundleBuenas = (bundle.escenarios || []).some(function (e) {
+                    return agrupacionesTienenModo_(e && e.agrupaciones) || (e && e.modularizado)
+                        || ((e && e.instanciasCajas) || []).length > 0;
+                });
+                /* Importar bundle si no hay memoria, o si memoria es solo «sueltas» y el guardado tiene packing. */
+                if (!hayMemoria || (!yaBuenas && bundleBuenas)) {
+                    try { window.slImportarEstado(bundle); } catch (eImp) { console.warn("sim3d import:", eImp); }
+                }
+                refrescarVistaTrasTab_();
+                pintarBadgeSim3dPendiente_();
+                return;
+            }
+            /* Bundle aún en Drive ({drive:true}): no pisar con Traer hasta que RestaurarSim3d termine. */
+            if (env0 && (env0.sim3dRef || (bundle && bundle.drive)) && !slEscenarios.some(escenarioTieneCarga_)) {
+                toast_("Cargando packing 3D guardado…");
+                try {
+                    if (typeof logisticaRestaurarSim3d_ === "function" && logQuote) {
+                        await logisticaRestaurarSim3d_({
+                            sim3d: bundle,
+                            sim3dRef: env0.sim3dRef
+                        });
+                    }
+                } catch (eRs) { console.warn("sim3d restore tab:", eRs); }
+                if (slEscenarios.some(escenarioTieneCarga_)) {
+                    refrescarVistaTrasTab_();
+                    pintarBadgeSim3dPendiente_();
+                    return;
+                }
+            }
+            /* Si ya hay trabajo en memoria, no regenerar desde Logística. */
             if (slEscenarios.some(escenarioTieneCarga_)) {
                 try { if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv(); } catch (eP) { /* noop */ }
                 refrescarVistaTrasTab_();
                 return;
             }
-            var env0 = typeof logEnv_ === "function" ? logEnv_() : null;
-            var restored = false;
-            if (env0 && env0.sim3dBundle && typeof window.slImportarEstado === "function") {
-                restored = !!window.slImportarEstado(env0.sim3dBundle);
-            }
-            if (!restored && !slEscenarios.some(escenarioTieneCarga_)) {
-                traerDesdeLogistica_({ silencioso: true });
-            }
+            traerDesdeLogistica_({ silencioso: true });
             refrescarVistaTrasTab_();
+            pintarBadgeSim3dPendiente_();
         } catch (e) {
             console.error("Simulador 3D init:", e);
             toast_("No se pudo iniciar el Simulador 3D: " + ((e && e.message) || e));
@@ -2560,6 +2965,17 @@
         window.slAfterOptimizar = function () {
             guardarEscenarioActivo_();
             actualizarResumenAgrupLive_();
+            var nRest = window._slOptDesdeRestaurar || 0;
+            if (nRest > 0) {
+                window._slOptDesdeRestaurar = nRest - 1;
+                /* Reabrir/rehidratar no es un cambio del usuario: no ensuciar «Sin aplicar». */
+            } else if (sim3dHayCambioVsLogistica_({ soloActivo: true })) {
+                marcarSim3dPendiente_();
+            } else {
+                /* Mismo m³/peso que Envío en la opción activa: no exige Aplicar. */
+                limpiarSim3dPendiente_();
+            }
+            try { if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv(); } catch (ePo) { /* noop */ }
         };
         /** Tras Abrir .load: guarda el packing importado en la opción activa (no lo regenera desde Agrupación). */
         window.slAfterAbrirLoad = function () {
@@ -2586,6 +3002,7 @@
                 pintarListaModulos_();
                 actualizarResumenAgrupLive_();
                 actualizarNombreLoadUI_();
+                marcarSim3dPendiente_();
                 if (typeof window.slPersistirEnEnv === "function") {
                     try { window.slPersistirEnEnv(); } catch (eP) { /* noop */ }
                 }
@@ -2897,6 +3314,7 @@
             if (typeof construirEscena3D === "function") construirEscena3D();
         } catch (eUi) { /* noop */ }
         try { pintarTabsEscenarios_(); } catch (eT) { /* noop */ }
+        try { pintarBadgeSim3dPendiente_(); } catch (eB) { /* noop */ }
     };
 
     window.slTraerDesdeLogistica = traerDesdeLogistica_;

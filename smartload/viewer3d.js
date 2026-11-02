@@ -197,17 +197,24 @@ function construirEscena3D() {
 
     let currentOffsetX = 0;
     contenedoresFisicos.forEach((contenedor, idx) => {
-        const contGeo = new THREE.BoxGeometry(contenedor.w, contenedor.h, contenedor.d); 
-        contGeo.translate((contenedor.w/2) + currentOffsetX, contenedor.h/2, contenedor.d/2);
-        
-        const boxMesh = new THREE.Mesh(contGeo, globalMats.contFill); 
-        boxMesh.userData = { isContainer: true, contIdx: idx }; 
-        mainGroup.add(boxMesh);
-        
-        const edgeMesh = new THREE.LineSegments(new THREE.EdgesGeometry(contGeo), globalMats.contEdge); 
-        edgeMesh.userData = { isContainerEdge: true, contIdx: idx }; 
-        mainGroup.add(edgeMesh);
-        
+        const isGhost = !!(contenedor.ghost || contenedor.tipoKey === 'open'
+            || (typeof dbContenedores !== 'undefined' && dbContenedores[contenedor.tipoKey] && dbContenedores[contenedor.tipoKey].ghost));
+
+        if (!isGhost) {
+            const contGeo = new THREE.BoxGeometry(contenedor.w, contenedor.h, contenedor.d);
+            contGeo.translate((contenedor.w/2) + currentOffsetX, contenedor.h/2, contenedor.d/2);
+
+            const boxMesh = new THREE.Mesh(contGeo, globalMats.contFill);
+            boxMesh.userData = { isContainer: true, contIdx: idx };
+            mainGroup.add(boxMesh);
+
+            const edgeMesh = new THREE.LineSegments(new THREE.EdgesGeometry(contGeo), globalMats.contEdge);
+            edgeMesh.userData = { isContainerEdge: true, contIdx: idx };
+            mainGroup.add(edgeMesh);
+        } else {
+            /* Sin contenedor: no dibujar piso ni marco (solo la carga en el vacío). */
+        }
+
         if(contenedor.cajas) {
             contenedor.cajas.forEach(caja => {
                 let cajaGroup = new THREE.Group();

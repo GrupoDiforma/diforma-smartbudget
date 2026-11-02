@@ -998,7 +998,8 @@ async function logisticaCargarOdoo_(force) {
     }
     logisticaPintarEstado_();
     logMediaActualizarUiGate_();
-    logisticaActualizarVista();
+    /* El HTML de la hoja es pesado: avisar y ceder frame para no congelar en silencio. */
+    await logisticaRepintarConAviso_("Actualizando la hoja con contacto y comercial de Odoo…");
 }
 
 /** Al abrir la pestaña: adopta el idioma del proyecto, repinta y trae datos de Odoo si faltan. */
@@ -1380,6 +1381,12 @@ function logEnvEscNorm_(src, base) {
     if (s.sim3d && typeof s.sim3d === "object") out.sim3d = s.sim3d;
     if (s.sim3dImg) out.sim3dImg = String(s.sim3dImg);
     if (s.sim3dImgRef) out.sim3dImgRef = String(s.sim3dImgRef);
+    /* Costos de catálogo desfasados tras 3D / cambio de cubicaje (por opción). */
+    out.logCostosPendiente = !!s.logCostosPendiente;
+    if (s.costosFirma) out.costosFirma = String(s.costosFirma);
+    /* Epoch de Generar: debe igualar env.costosEpoch para poder exportar. */
+    const ep = parseInt(s.costosEpoch, 10);
+    out.costosEpoch = isFinite(ep) && ep > 0 ? ep : 0;
     return out;
 }
 
@@ -1478,9 +1485,17 @@ function logEscLeerMap_(mapa, ln, asNum) {
 function logEscValor_(ln, escId) {
     if (!ln) return null;
     if (!escId) return ln.valor != null && isFinite(Number(ln.valor)) ? Number(ln.valor) : null;
-    const st = logEnvEscDe_(logEnv_(), escId);
+    const e = logEnv_();
+    const raw = e.porEsc && e.porEsc[escId];
+    const st = logEnvEscDe_(e, escId);
     const v = st ? logEscLeerMap_(st.valores, ln, true) : null;
     if (v != null) return v;
+    /*
+     * Con opciones: NO heredar ln.valor (suele ser de la opción activa / Op1).
+     * Eso hacía que Opción 2 “tuviera” costos de Opción 1 en el PDF sin Generar.
+     * Solo hereda si esta opción aún no tiene bloque porEsc propio (legado).
+     */
+    if (raw) return null;
     return ln.valor != null && isFinite(Number(ln.valor)) ? Number(ln.valor) : null;
 }
 function logEscPct_(ln, escId) {
@@ -2371,6 +2386,13 @@ function logEnvNormalizar_(src) {
     if (e.sim3dImgRef) d.sim3dImgRef = String(e.sim3dImgRef);
     if (e.sim3dBundle && typeof e.sim3dBundle === "object") d.sim3dBundle = e.sim3dBundle;
     if (e.sim3dRef) d.sim3dRef = String(e.sim3dRef);
+    /* Cambios del Simulador 3D aún no aplicados a Envío / costos. */
+    d.sim3dPendiente = !!e.sim3dPendiente;
+    /* Tras Aplicar 3D: falta Análisis + Generar datos logísticos (m³/kg ya cambiaron). */
+    d.logCostosPendiente = !!e.logCostosPendiente;
+    /* Contador global: cada invalidación (3D/m³/peso/modalidad) lo sube; Generar alinea por opción. */
+    const epG = parseInt(e.costosEpoch, 10);
+    d.costosEpoch = isFinite(epG) && epG > 0 ? epG : 1;
     return d;
 }
 
@@ -2390,6 +2412,7 @@ function logEnv_() {
     if (!e.contenedores || typeof e.contenedores !== "object") e.contenedores = { c20: 0, c40: 0, c40hc: 0 };
     if (!e.margenNal || typeof e.margenNal !== "object") e.margenNal = { envio: 0, montaje: 0, bodega: 0, otro: 0 };
     if (e.obsInternas == null) e.obsInternas = "";
+    if (!(parseInt(e.costosEpoch, 10) > 0)) e.costosEpoch = 1;
     return e;
 }
 
@@ -3178,11 +3201,15 @@ async function logCargarAranceles_() {
         if (typeof logPintarSelectPartida_ === "function") {
             logPintarSelectPartida_(elAct && elAct.fichaComercial ? elAct.fichaComercial.partida : "");
         }
-        /* Siempre repintar cotización: el select de partida filtra por Aranceles del destino Envío. */
-        if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
-        if (logAplicarAranceles_()) {
-            if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
+        /* Solo repintar la hoja si Logística está visible (Ctrl+F5 en Costos no debe armar el PDF). */
+        if (logisticaTabActiva_()) {
             if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+            if (logAplicarAranceles_()) {
+                if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
+                if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+            }
+        } else {
+            try { logAplicarAranceles_(); } catch (eAr) { /* datos listos; la hoja se pinta al abrir la pestaña */ }
         }
     } catch (e) {
         logAranceles.pedido = false; /* el backend publicado todavía no tiene esta acción */
@@ -3934,8 +3961,9 @@ function logNormalizarOverTrasMigrar_(fila, escId) {
 }
 
 /**
- * Cotizaciones ya migradas con over.unit clonado a todas las opciones (no coincidía con el PDF).
- * Si el mismo unit/qty está en todas las copias del producto, se quita y manda el snap/escala.
+ * Cotizaciones ya migradas con over.qty clonado a todas las opciones.
+ * Solo limpia qty idéntico (contaminación de clon). NUNCA borra unit:
+ * el PU manual (mismo en varias opciones) debe sobrevivir al guardar/abrir.
  */
 function logRepararOverClonadoLegado_() {
     const grupos = {};
@@ -3947,18 +3975,64 @@ function logRepararOverClonadoLegado_() {
     Object.keys(grupos).forEach(function (k) {
         const g = grupos[k];
         if (g.length < 2) return;
-        ["unit", "qty"].forEach(function (campo) {
-            const vals = g.map(function (f) {
-                return f.over && Object.prototype.hasOwnProperty.call(f.over, campo) ? f.over[campo] : null;
-            });
-            if (vals.some(function (v) { return v == null; })) return;
-            if (!vals.every(function (v) { return v === vals[0]; })) return;
-            g.forEach(function (f) {
-                delete f.over[campo];
-                if (typeof logQuedanPreciosFijos_ === "function" && !logQuedanPreciosFijos_(f)) delete f.puFijo;
-            });
+        /* Solo qty: unit se respeta siempre (puFijo o no). */
+        const vals = g.map(function (f) {
+            return f.over && Object.prototype.hasOwnProperty.call(f.over, "qty") ? f.over.qty : null;
+        });
+        if (vals.some(function (v) { return v == null; })) return;
+        if (!vals.every(function (v) { return v === vals[0]; })) return;
+        g.forEach(function (f) {
+            if (!f.over) return;
+            delete f.over.qty;
         });
     });
+}
+
+/**
+ * Contenedor (fila.escId): overrides van en claves planas. Migra unit:eId / qty:eId
+ * residuales del editor PDF y marca puFijo si hay unit escrito.
+ */
+function logAsegurarPuManualFilas_() {
+    (logQuote.filas || []).forEach(function (fila) {
+        if (!fila || fila.tipo !== "item") return;
+        if (!fila.over || typeof fila.over !== "object") return;
+        if (fila.escId) {
+            const uEsc = "unit:" + fila.escId;
+            const qEsc = "qty:" + fila.escId;
+            if (fila.over.unit == null && Object.prototype.hasOwnProperty.call(fila.over, uEsc)
+                && fila.over[uEsc] != null && isFinite(Number(fila.over[uEsc]))) {
+                fila.over.unit = Number(fila.over[uEsc]);
+            }
+            if (fila.over.qty == null && Object.prototype.hasOwnProperty.call(fila.over, qEsc)
+                && fila.over[qEsc] != null && isFinite(Number(fila.over[qEsc]))) {
+                fila.over.qty = Number(fila.over[qEsc]);
+            }
+            Object.keys(fila.over).forEach(function (k) {
+                if (/^(unit|qty):/.test(k)) delete fila.over[k];
+            });
+        }
+        if (fila.over.unit != null && isFinite(Number(fila.over.unit))) fila.puFijo = true;
+        else if (Object.keys(fila.over).some(function (k) { return /^unit:/.test(k) && fila.over[k] != null; })) {
+            fila.puFijo = true;
+        }
+    });
+}
+
+/** PU manual (over.unit) → COP para congelar en snap al guardar. */
+function logPuManualACop_(fila) {
+    if (!fila || !fila.over) return null;
+    let base = null;
+    if (fila.over.unit != null && isFinite(Number(fila.over.unit))) base = Number(fila.over.unit);
+    else {
+        const keys = Object.keys(fila.over).filter(function (k) { return /^unit:/.test(k); });
+        if (keys.length === 1 && isFinite(Number(fila.over[keys[0]]))) base = Number(fila.over[keys[0]]);
+    }
+    if (base == null) return null;
+    if (logQuote && logQuote.moneda === "USD") {
+        const trm = logTrm_() || (fila.snap && fila.snap.trm) || 1;
+        return base * (trm > 0 ? trm : 1);
+    }
+    return base;
 }
 
 function logDuplicarFilaEnEsc_(uid, escIdDest) {
@@ -4328,7 +4402,445 @@ function logisticaVersionExportOk_() {
             + ". Cambia a " + verCot + " en Costos (o vuelve a abrir la cotización) antes de exportar."
     };
 }
+
+/**
+ * Cubicaje efectivo (override o auto) de una opción / global.
+ * Un “cambio” relevante es alterar m³ o peso global de la mercancía.
+ */
+function logCostosCubEfectivo_(escId) {
+    const cub = typeof logCubicajeTotal_ === "function"
+        ? logCubicajeTotal_("es", escId || "")
+        : { m3: 0, pesoKg: 0, kgVol: 0 };
+    const m3 = Math.round((Number(cub.m3) || 0) * 1000) / 1000;
+    const pesoKg = Math.round((Number(cub.pesoKg) || 0) * 100) / 100;
+    const kgVol = Math.round((Number(cub.kgVol) || 0) * 100) / 100;
+    const kgFact = Math.round(Math.max(pesoKg, kgVol || 0) * 100) / 100;
+    return { m3: m3, pesoKg: pesoKg, kgVol: kgVol, kgFact: kgFact };
+}
+
+/** Firma de cubicaje/mix/modalidad de UNA opción (o global si escId vacío). */
+function logCostosFirmaEsc_(escId) {
+    const e = logEnv_();
+    const vista = typeof logEnvVistaEsc_ === "function" ? logEnvVistaEsc_(escId || "") : e;
+    const st = escId ? (e.porEsc && e.porEsc[escId]) : e;
+    const cont = (st && st.contenedores) || e.contenedores || {};
+    const cub = logCostosCubEfectivo_(escId);
+    return [
+        String((vista && vista.modalidad) || e.modalidad || ""),
+        String((vista && vista.incoterm) || e.incoterm || ""),
+        cub.m3,
+        cub.pesoKg,
+        cub.kgFact,
+        Number(cont.c20) || 0,
+        Number(cont.c40) || 0,
+        Number(cont.c40hc) || 0
+    ].join("|");
+}
+
+/** Claves de opción a validar: todas las de la cotización, o [""] si no hay opciones. */
+function logCostosClavesOpciones_() {
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    if (escs.length) return escs.map(function (x) { return x.id; });
+    return [""];
+}
+
+function logCostosNombreOp_(escId) {
+    if (!escId) return "";
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    const ix = escs.findIndex(function (x) { return x.id === escId; });
+    if (ix < 0) return escId;
+    return (typeof logEscNombre_ === "function")
+        ? logEscNombre_(escs[ix] || {}, ix, "es")
+        : ("Opción " + (ix + 1));
+}
+
+/**
+ * ¿Esta opción (o el global) debe llevar costos regenerados para poder exportar?
+ * EXW / sin filas de envío → no exige. Resto sí.
+ */
+function logCostosOpcionExigeFirma_(escId) {
+    try {
+        if (escId && typeof logEnvActivo_ === "function" && !logEnvActivo_(escId)) return false;
+        if (typeof logEsCotizacionExterior_ === "function" && !logEsCotizacionExterior_()) return false;
+        const vista = typeof logEnvVistaEsc_ === "function" ? logEnvVistaEsc_(escId || "") : (logEnv_() || {});
+        const inc = String((vista && vista.incoterm) || "").toUpperCase();
+        const mod = String((vista && vista.modalidad) || "");
+        const tipos = typeof logEnvTiposActivos_ === "function"
+            ? logEnvTiposActivos_(mod, inc, true)
+            : [];
+        if (!tipos.length) return false;
+        if (inc === "EXW") return false;
+        return true;
+    } catch (eEx) {
+        return true;
+    }
+}
+
+/** ¿La opción tiene montos propios en porEsc (no heredados de otra opción)? */
+function logCostosOpcionTieneValoresPropios_(escId) {
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return false;
+    if (!escId) {
+        return !!(e.lineas || []).some(function (ln) {
+            return ln && !logEsServicio_(ln) && ln.valor != null && isFinite(Number(ln.valor));
+        });
+    }
+    const st = e.porEsc && e.porEsc[escId];
+    if (!st || !st.valores || typeof st.valores !== "object") return false;
+    return Object.keys(st.valores).some(function (id) {
+        const v = st.valores[id];
+        return v != null && isFinite(Number(v));
+    });
+}
+
+/** Sube el epoch global (invalida TODAS las opciones hasta el próximo Generar). */
+function logCostosBumpEpoch_() {
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return 0;
+    e.costosEpoch = (parseInt(e.costosEpoch, 10) > 0 ? parseInt(e.costosEpoch, 10) : 1) + 1;
+    return e.costosEpoch;
+}
+
+/**
+ * Opciones con costos desfasados — revisa TODAS (no solo la pestaña activa).
+ * Regla definitiva (AND):
+ *  1) !logCostosPendiente
+ *  2) costosEpoch de la opción === env.costosEpoch (solo Generar lo alinea)
+ *  3) costosFirma === firma actual (m³/peso/modalidad/mix)
+ *  4) tiene valores propios en porEsc (no costos “prestados” de otra opción)
+ */
+function logCostosOpcionesPendientes_() {
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return [{ id: "", nombre: "Cotización", pendiente: true, desfaseFirma: true, desfaseSim3d: false, desfaseEpoch: true }];
+    if (!(parseInt(e.costosEpoch, 10) > 0)) e.costosEpoch = 1;
+    const epochG = parseInt(e.costosEpoch, 10);
+    const out = [];
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    logCostosClavesOpciones_().forEach(function (k) {
+        const st = k ? (e.porEsc && e.porEsc[k]) : e;
+        if (k && escs.length) {
+            const apagada = typeof logEnvActivo_ === "function" && !logEnvActivo_(k);
+            const tuvo = !!(st && (st.logCostosPendiente || st.costosFirma || st.costosEpoch
+                || (st.sim3d && (st.sim3d.m3 != null || st.sim3d.kg != null))
+                || logCostosOpcionTieneValoresPropios_(k)));
+            if (apagada && !tuvo) return;
+        }
+        const exige = logCostosOpcionExigeFirma_(k);
+        if (!exige) return;
+
+        const pendFlag = k
+            ? !!(st && st.logCostosPendiente)
+            : !!(e.logCostosPendiente || (st && st.logCostosPendiente));
+        const firma = st && st.costosFirma ? String(st.costosFirma) : "";
+        const actual = logCostosFirmaEsc_(k);
+        const desfaseFirma = !firma || firma !== actual;
+        const epochOp = st ? (parseInt(st.costosEpoch, 10) || 0) : (parseInt(e.costosEpoch, 10) || 0);
+        /* Global mode (sin opciones): epoch de la opción es el del env tras Generar. */
+        const desfaseEpoch = k
+            ? (epochOp !== epochG)
+            : (pendFlag || desfaseFirma || !(parseInt(e.costosEpochOk, 10) === epochG));
+        const sinValores = !logCostosOpcionTieneValoresPropios_(k);
+
+        let desfaseSim3d = false;
+        if (st && st.sim3d) {
+            const sm = Number(st.sim3d.m3);
+            const sk = Number(st.sim3d.kg);
+            const cub = logCostosCubEfectivo_(k);
+            if (isFinite(sm) && Math.abs(sm - cub.m3) > 0.001) desfaseSim3d = true;
+            if (isFinite(sk) && sk > 0 && Math.abs(sk - cub.pesoKg) > 0.05) desfaseSim3d = true;
+            if (firma) {
+                const parts = firma.split("|");
+                const fm3 = Number(parts[2]);
+                const fkg = Number(parts[3]);
+                if (isFinite(sm) && isFinite(fm3) && Math.abs(sm - fm3) > 0.001) desfaseSim3d = true;
+                if (isFinite(sk) && sk > 0 && isFinite(fkg) && Math.abs(sk - fkg) > 0.05) desfaseSim3d = true;
+            } else {
+                desfaseSim3d = true;
+            }
+        }
+
+        if (pendFlag || desfaseFirma || desfaseEpoch || desfaseSim3d || sinValores) {
+            out.push({
+                id: k,
+                nombre: logCostosNombreOp_(k) || (k ? k : "Cotización"),
+                pendiente: pendFlag,
+                desfaseFirma: desfaseFirma,
+                desfaseEpoch: desfaseEpoch,
+                desfaseSim3d: desfaseSim3d,
+                sinValores: sinValores
+            });
+        }
+    });
+    return out;
+}
+
+function logCostosHayPendienteEnAlgunaOpcion_() {
+    if (logRecalcPendiente_) return true;
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (e && e.logCostosPendiente) return true;
+    return logCostosOpcionesPendientes_().length > 0;
+}
+
+function logCostosSincronizarFlagGlobal_() {
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return;
+    /* Con opciones: OR de porEsc. Sin opciones (modo única): el flag vive en env global. */
+    e.logCostosPendiente = logCostosClavesOpciones_().some(function (k) {
+        if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return false;
+        const st = k ? (e.porEsc && e.porEsc[k]) : e;
+        return !!(st && st.logCostosPendiente);
+    });
+}
+
+/**
+ * Bloquea PDF / Excel si:
+ * 1) el Simulador 3D cambió y falta «Aplicar a Logística», o
+ * 2) CUALQUIER opción tiene costos logísticos desfasados (epoch/firma/valores).
+ * Fallo cerrado: cualquier error ⇒ no exportar.
+ */
+function logisticaSim3dExportOk_() {
+    try {
+        const hayOps = !!(typeof logEscList_ === "function" && logEscList_().length);
+        if (typeof window.slSim3dHayPendiente === "function" && window.slSim3dHayPendiente()) {
+            return {
+                ok: false,
+                mensaje: "El Simulador 3D tiene cambios sin aplicar a Logística (embalaje / volumen / peso). "
+                    + "Abre Simulador 3D → «Aplicar a Logística», luego Análisis y Generar datos logísticos"
+                    + (hayOps ? " (todas las opciones)." : ".")
+            };
+        }
+        const env = typeof logEnv_ === "function" ? logEnv_() : null;
+        if (env && env.sim3dPendiente) {
+            return {
+                ok: false,
+                mensaje: "El Simulador 3D tiene cambios sin aplicar a Logística. "
+                    + "Pulsa «Aplicar a Logística» antes de exportar PDF o Excel."
+            };
+        }
+        const pend = logCostosOpcionesPendientes_();
+        if (pend.length || logRecalcPendiente_ || (env && env.logCostosPendiente)) {
+            const nombres = pend.map(function (p) { return p.nombre; }).filter(Boolean);
+            const lista = nombres.length
+                ? (" Falta regenerar: " + nombres.join(", ") + ".")
+                : "";
+            return {
+                ok: false,
+                mensaje: (hayOps
+                    ? ("No se puede exportar: hay opciones sin Generar datos logísticos tras cambio de embalaje/m³/peso/modalidad." + lista)
+                    : "No se puede exportar: faltan costos logísticos regenerados (m³/peso/modalidad).")
+                    + " En Logística: «Análisis costos logísticos» → «Generar datos logísticos»"
+                    + (hayOps ? " (un Generar actualiza todas las opciones de la cotización)." : ".")
+            };
+        }
+        return { ok: true };
+    } catch (eS3) {
+        return {
+            ok: false,
+            mensaje: "No se pudo validar los costos logísticos de todas las opciones. "
+                + "Pulsa Análisis → Generar datos logísticos antes de PDF o Excel. "
+                + String((eS3 && eS3.message) || eS3 || "")
+        };
+    }
+}
+
+/**
+ * Marca costos pendientes cuando cambian m³ / peso / modalidad (UI o 3D).
+ * Sube epoch global ⇒ TODAS las opciones quedan desfasadas hasta Generar.
+ */
+function logisticaMarcarCostosPendientePorCub_(escId, opts) {
+    opts = opts || {};
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return;
+    if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    logCostosBumpEpoch_();
+    delete e.costosEpochOk;
+    /* Invalidar todas las opciones: Generar las vuelve a alinear en bloque. */
+    logCostosClavesOpciones_().forEach(function (k) {
+        if (k) {
+            if (!e.porEsc[k]) e.porEsc[k] = logEnvEscSemilla_(e);
+            e.porEsc[k].logCostosPendiente = true;
+            delete e.porEsc[k].costosFirma;
+            e.porEsc[k].costosEpoch = 0;
+        } else {
+            e.logCostosPendiente = true;
+            delete e.costosFirma;
+        }
+    });
+    if (escId && e.porEsc[escId]) {
+        e.porEsc[escId].logCostosPendiente = true;
+        e.porEsc[escId].costosEpoch = 0;
+        delete e.porEsc[escId].costosFirma;
+    }
+    e.logCostosPendiente = true;
+    logCostosSincronizarFlagGlobal_();
+    logRecalcPendiente_ = true;
+    if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
+    if (!opts.silencio && typeof logPintarRecalcAviso_ === "function") {
+        try { logPintarRecalcAviso_(); } catch (eAv) { /* noop */ }
+    }
+    if (typeof window.slPintarBadgeSim3dPendiente === "function") {
+        try { window.slPintarBadgeSim3dPendiente(); } catch (eBd) { /* noop */ }
+    }
+    if (typeof logExportActualizarUiGate_ === "function") {
+        try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
+    }
+}
+window.logisticaMarcarCostosPendientePorCub_ = logisticaMarcarCostosPendientePorCub_;
+
+/**
+ * Tras Aplicar a Logística desde el 3D: marca pendiente en CADA opción,
+ * sube epoch, borra catálogo y bloquea PDF/Excel hasta Generar.
+ */
+function logisticaInvalidarCostosTrasSim3d_() {
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return;
+    if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    logCostosBumpEpoch_();
+    delete e.costosEpochOk;
+    const claves = logCostosClavesOpciones_();
+    claves.forEach(function (k) {
+        if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return;
+        if (k) {
+            if (!e.porEsc[k]) e.porEsc[k] = logEnvEscSemilla_(e);
+            e.porEsc[k].logCostosPendiente = true;
+            delete e.porEsc[k].costosFirma;
+            e.porEsc[k].costosEpoch = 0;
+        } else {
+            e.logCostosPendiente = true;
+            delete e.costosFirma;
+        }
+    });
+    e.logCostosPendiente = true;
+    const nOp = claves.filter(Boolean).length;
+    const msg = "Se aplicó el Simulador 3D (nuevo embalaje / m³ / kg)"
+        + (nOp > 1 ? (" a " + nOp + " opciones") : "")
+        + ". Borré los costos de catálogo. Pulsa Análisis costos logísticos y luego Generar datos logísticos "
+        + "antes de PDF o Excel"
+        + (nOp > 1 ? " (cubre todas las opciones)." : ".");
+    try {
+        logBorrarCalculoLog_(false, {
+            notaHistorial: msg,
+            toast: msg,
+            silencio: false
+        });
+    } catch (eBor) {
+        logRecalcPendiente_ = true;
+        if (logIa) {
+            logIa.analizado = false;
+            logIa.diagnostico = "";
+            logIa.sugerencia = "";
+            logIa.motivo = "";
+        }
+        if (typeof mostrarNotificacion === "function") mostrarNotificacion(msg, "warning");
+    }
+    logCostosSincronizarFlagGlobal_();
+    if (typeof logPintarRecalcAviso_ === "function") {
+        try { logPintarRecalcAviso_(); } catch (eAv) { /* noop */ }
+    }
+    if (typeof logIaPintar_ === "function") {
+        try { logIaPintar_(); } catch (eIa) { /* noop */ }
+    }
+    if (typeof window.slPintarBadgeSim3dPendiente === "function") {
+        try { window.slPintarBadgeSim3dPendiente(); } catch (eBd) { /* noop */ }
+    }
+    if (typeof logExportActualizarUiGate_ === "function") {
+        try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
+    }
+    const btnA = document.getElementById("btnLogIaAnalisis");
+    if (btnA) {
+        btnA.classList.add("btn-warning");
+        btnA.classList.remove("btn-diforma-blue");
+    }
+}
+
+/**
+ * Tras Generar: limpia pendiente, graba firma + epoch SOLO en opciones liquidadas
+ * que tengan valores propios (o EXW). No libera export si queda alguna desfasada.
+ */
+function logisticaLimpiarCostosPendiente_(opts) {
+    opts = opts || {};
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return;
+    if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    if (!(parseInt(e.costosEpoch, 10) > 0)) e.costosEpoch = 1;
+    const epochG = parseInt(e.costosEpoch, 10);
+    const solo = opts.escIds && opts.escIds.length ? opts.escIds : null;
+    const claves = solo || logCostosClavesOpciones_();
+    claves.forEach(function (k) {
+        if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return;
+        const exige = logCostosOpcionExigeFirma_(k);
+        if (k) {
+            if (!e.porEsc[k]) e.porEsc[k] = logEnvEscSemilla_(e);
+            const st = e.porEsc[k];
+            /* No marcar OK si exige costos y no hay montos propios de ESTA opción. */
+            if (exige && !logCostosOpcionTieneValoresPropios_(k)) {
+                st.logCostosPendiente = true;
+                st.costosEpoch = 0;
+                delete st.costosFirma;
+                return;
+            }
+            st.logCostosPendiente = false;
+            st.costosFirma = logCostosFirmaEsc_(k);
+            st.costosEpoch = epochG;
+        } else {
+            if (exige && !logCostosOpcionTieneValoresPropios_("")) {
+                e.logCostosPendiente = true;
+                delete e.costosFirma;
+                delete e.costosEpochOk;
+                return;
+            }
+            e.logCostosPendiente = false;
+            e.costosFirma = logCostosFirmaEsc_("");
+            e.costosEpochOk = epochG;
+        }
+    });
+    logCostosSincronizarFlagGlobal_();
+    /* Solo apaga el aviso global si ya no queda ninguna opción pendiente. */
+    if (!logCostosHayPendienteEnAlgunaOpcion_()) {
+        logRecalcPendiente_ = false;
+        const btnA = document.getElementById("btnLogIaAnalisis");
+        if (btnA) {
+            btnA.classList.remove("btn-warning");
+            btnA.classList.add("btn-diforma-blue");
+        }
+    }
+    if (typeof logPintarRecalcAviso_ === "function") {
+        try { logPintarRecalcAviso_(); } catch (eAv) { /* noop */ }
+    }
+    if (typeof window.slPintarBadgeSim3dPendiente === "function") {
+        try { window.slPintarBadgeSim3dPendiente(); } catch (eBd) { /* noop */ }
+    }
+    if (typeof logExportActualizarUiGate_ === "function") {
+        try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
+    }
+}
+window.logisticaInvalidarCostosTrasSim3d_ = logisticaInvalidarCostosTrasSim3d_;
+window.logisticaLimpiarCostosPendiente_ = logisticaLimpiarCostosPendiente_;
+window.logCostosOpcionesPendientes_ = logCostosOpcionesPendientes_;
+window.logCostosHayPendienteEnAlgunaOpcion_ = logCostosHayPendienteEnAlgunaOpcion_;
+
+/** Une chequeos previos a exportar cotización (versión Costos + sync 3D). Fallo cerrado. */
+function logisticaExportCotizacionOk_() {
+    try {
+        const v = logisticaVersionExportOk_();
+        if (!v || !v.ok) {
+            return v && v.mensaje ? v : { ok: false, mensaje: "La versión de Costos no coincide con la cotización." };
+        }
+        const s3 = logisticaSim3dExportOk_();
+        if (!s3 || !s3.ok) {
+            return s3 && s3.mensaje ? s3 : { ok: false, mensaje: "Faltan costos logísticos regenerados en una o más opciones." };
+        }
+        return { ok: true };
+    } catch (eOk) {
+        return {
+            ok: false,
+            mensaje: "No se pudo validar el export: " + String((eOk && eOk.message) || eOk)
+        };
+    }
+}
 window.logisticaVersionExportOk_ = logisticaVersionExportOk_;
+window.logisticaSim3dExportOk_ = logisticaSim3dExportOk_;
+window.logisticaExportCotizacionOk_ = logisticaExportCotizacionOk_;
 window.logisticaAlinearCostosACotizacion_ = logisticaAlinearCostosACotizacion_;
 window.logVersionPresupuestoCotizacion_ = logVersionPresupuestoCotizacion_;
 
@@ -5107,7 +5619,8 @@ function logHayCalculoLog_() {
     });
 }
 
-function logBorrarCalculoLog_(resetCont) {
+function logBorrarCalculoLog_(resetCont, opts) {
+    opts = opts || {};
     const e = logEnv_();
     (e.lineas || []).forEach(function (ln) {
         const esCat = ln.fuente === "[Catálogo]" || ln.fuente === "[Estimado IA]";
@@ -5131,9 +5644,13 @@ function logBorrarCalculoLog_(resetCont) {
             if (st && !st.contenedoresManual) st.contenedores = { c20: 0, c40: 0, c40hc: 0 };
         });
     }
+    const notaHist = opts.notaHistorial
+        || "El presupuesto cambió. Este análisis ya no aplica. Pulsa Análisis costos logísticos otra vez.";
+    const toastMsg = opts.toast
+        || "El presupuesto cambió. Borré el cálculo logístico de este borrador. Hay que analizarlo otra vez.";
     if (logIa) {
         if (logIa.historial && logIa.historial.length) {
-            logIa.historial.push({ role: "nota", text: "El presupuesto cambió. Este análisis ya no aplica. Pulsa Análisis costos logísticos otra vez." });
+            logIa.historial.push({ role: "nota", text: notaHist });
         }
         logIa.analizado = false;
         logIa.diagnostico = "";
@@ -5142,9 +5659,30 @@ function logBorrarCalculoLog_(resetCont) {
         logIa.fase = logIa.historial && logIa.historial.length ? "entrevista" : "inicio";
     }
     logRecalcPendiente_ = true;
+    /* Marcar pendiente en TODAS las opciones + subir epoch (bloquea PDF/Excel). */
+    try {
+        if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+        if (typeof logCostosBumpEpoch_ === "function") logCostosBumpEpoch_();
+        delete e.costosEpochOk;
+        logCostosClavesOpciones_().forEach(function (k) {
+            if (k) {
+                if (!e.porEsc[k]) e.porEsc[k] = logEnvEscSemilla_(e);
+                e.porEsc[k].logCostosPendiente = true;
+                delete e.porEsc[k].costosFirma;
+                e.porEsc[k].costosEpoch = 0;
+            } else {
+                e.logCostosPendiente = true;
+                delete e.costosFirma;
+            }
+        });
+        e.logCostosPendiente = true;
+        if (typeof logCostosSincronizarFlagGlobal_ === "function") logCostosSincronizarFlagGlobal_();
+        if (typeof logExportActualizarUiGate_ === "function") logExportActualizarUiGate_();
+    } catch (ePend) { e.logCostosPendiente = true; }
     if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
-    if (typeof mostrarNotificacion === "function") {
-        mostrarNotificacion("El presupuesto cambió. Borré el cálculo logístico de este borrador. Hay que analizarlo otra vez.", "warning");
+    if (opts.silencio) { /* sin toast */ }
+    else if (typeof mostrarNotificacion === "function") {
+        mostrarNotificacion(toastMsg, "warning");
     }
     if (typeof logIaPintar_ === "function") logIaPintar_();
 }
@@ -5841,8 +6379,53 @@ function logCargaBar_(html) {
     el.innerHTML = html;
 }
 
+/** Cede al navegador un frame (+ macrotarea) para que pinte spinners/avisos antes de HTML pesado. */
+function logYieldUi_() {
+    return new Promise(function (ok) {
+        window.requestAnimationFrame(function () {
+            setTimeout(ok, 0);
+        });
+    });
+}
+
+/** ¿La pestaña Logística está visible? Evita overlay/HTML pesado si el usuario está en Costos. */
+function logisticaTabActiva_() {
+    const pane = document.getElementById("tabLogistica");
+    return !!(pane && pane.classList.contains("active"));
+}
+
+/**
+ * Repinta la hoja avisando en barra (overlay solo si Logística está a la vista)
+ * para no «congelar» sin feedback tras Odoo / renders.
+ */
+async function logisticaRepintarConAviso_(msg) {
+    const texto = msg || "Actualizando la hoja…";
+    /* Si no estás en Logística, no armes el HTML de la hoja ni el overlay a pantalla completa. */
+    if (!logisticaTabActiva_()) {
+        logMediaActualizarUiGate_();
+        return;
+    }
+    logCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>" + texto);
+    let mostroEspera = false;
+    try {
+        if (typeof mostrarEsperaNube === "function") {
+            mostrarEsperaNube(texto);
+            mostroEspera = true;
+        }
+    } catch (eM) { mostroEspera = false; }
+    await logYieldUi_();
+    try {
+        logisticaActualizarVista();
+    } finally {
+        if (mostroEspera && typeof ocultarEsperaNube === "function") {
+            try { ocultarEsperaNube(); } catch (eO) { /* noop */ }
+        }
+        logMediaActualizarUiGate_();
+    }
+}
+
 /** Carga pesada (renders / 3D / Odoo) en segundo plano: la pestaña sigue usable. */
-var logMediaBg_ = { token: 0, pendiente: false };
+var logMediaBg_ = { token: 0, pendiente: false, fase: "" };
 
 function logisticaExportacionesBloqueadas_() {
     if (logMediaBg_.pendiente) return true;
@@ -5852,8 +6435,40 @@ function logisticaExportacionesBloqueadas_() {
 }
 
 function logMediaActualizarUiGate_() {
-    const bloq = logisticaExportacionesBloqueadas_();
-    const tipBloq = "Espera a que terminen Odoo y las fotos / Vista 3D…";
+    logExportActualizarUiGate_();
+    if (logMediaBg_.pendiente) {
+        const fase = logMediaBg_.fase
+            ? ("<span class=\"spinner-border spinner-border-sm me-1\"></span>" + logMediaBg_.fase)
+            : "<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando fotos y Vista 3D en segundo plano…";
+        logCargaBar_(fase);
+    } else if (typeof logOdoo !== "undefined" && logOdoo && logOdoo.estado === "cargando") {
+        logCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando datos de Odoo…");
+    } else if (typeof logImgOdoo !== "undefined" && logImgOdoo && logImgOdoo.estado === "cargando") {
+        logCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando imagen de Odoo…");
+    } else if (typeof logisticaFilasImgPendientes_ === "function" && logisticaFilasImgPendientes_().length) {
+        logisticaAvisarImgsPendientes_();
+    } else {
+        logCargaBar_("");
+    }
+}
+
+/** Deshabilita PDF/Excel si falta media O si hay m³/kg sin regenerar costos (cualquier opción). */
+function logExportActualizarUiGate_() {
+    const bloqMedia = logisticaExportacionesBloqueadas_();
+    let chk = { ok: false, mensaje: "Validando costos logísticos…" };
+    if (!bloqMedia && typeof logisticaExportCotizacionOk_ === "function") {
+        try {
+            chk = logisticaExportCotizacionOk_() || { ok: false, mensaje: "Validación de export sin respuesta." };
+        } catch (eChk) {
+            chk = { ok: false, mensaje: "No se pudo validar costos de todas las opciones. Genera datos logísticos antes de exportar." };
+        }
+    } else if (!bloqMedia) {
+        chk = { ok: false, mensaje: "Falta el validador de export. Recarga la página." };
+    }
+    const bloq = bloqMedia || !chk.ok;
+    const tipBloq = bloqMedia
+        ? "Espera a que terminen Odoo y las fotos / Vista 3D…"
+        : (chk.mensaje || "Regenera costos logísticos de TODAS las opciones antes de exportar.");
     [
         { id: "btnLogPDF", tipOk: "Descargar cotización en PDF" },
         { id: "btnLogExcel", tipOk: "Exporta presupuesto + cotización en la plantilla Excel (COT/QUOT). Requiere presupuesto abierto en Costos." }
@@ -5864,21 +6479,13 @@ function logMediaActualizarUiGate_() {
         b.disabled = bloq;
         b.setAttribute("title", bloq ? tipBloq : (b.dataset.tip0 || it.tipOk));
         b.classList.toggle("disabled", bloq);
+        if (bloq) b.setAttribute("aria-disabled", "true");
+        else b.removeAttribute("aria-disabled");
     });
-    if (logMediaBg_.pendiente) {
-        logCargaBar_("Cargando fotos y Vista 3D en segundo plano…");
-    } else if (typeof logOdoo !== "undefined" && logOdoo && logOdoo.estado === "cargando") {
-        logCargaBar_("Cargando datos de Odoo…");
-    } else if (typeof logImgOdoo !== "undefined" && logImgOdoo && logImgOdoo.estado === "cargando") {
-        logCargaBar_("Cargando imagen de Odoo…");
-    } else if (typeof logisticaFilasImgPendientes_ === "function" && logisticaFilasImgPendientes_().length) {
-        logisticaAvisarImgsPendientes_();
-    } else {
-        logCargaBar_("");
-    }
 }
 
 window.logisticaExportacionesBloqueadas_ = logisticaExportacionesBloqueadas_;
+window.logExportActualizarUiGate_ = logExportActualizarUiGate_;
 
 function logBotonBusy_(id, on, label) {
     const b = document.getElementById(id);
@@ -5888,8 +6495,13 @@ function logBotonBusy_(id, on, label) {
         b.disabled = true;
         b.innerHTML = "<span class=\"spinner-border spinner-border-sm me-1\"></span>" + (label || "Cargando…");
     } else {
-        b.disabled = false;
         if (b.dataset.html0) b.innerHTML = b.dataset.html0;
+        /* PDF/Excel: no reactivar a ciegas si aún faltan costos de alguna opción. */
+        if ((id === "btnLogPDF" || id === "btnLogExcel") && typeof logExportActualizarUiGate_ === "function") {
+            try { logExportActualizarUiGate_(); } catch (eG) { b.disabled = false; }
+        } else {
+            b.disabled = false;
+        }
     }
 }
 
@@ -8480,6 +9092,8 @@ function logisticaSincronizarTituloPdf_(doc) {
 function logisticaSerializar_(idioma) {
     /* Volcar UI → env antes de congelar (Una línea, margen, destino, costos por opción…). */
     try { logisticaLeerEnvUi_(); } catch (eUi) { /* ok */ }
+    /* Normalizar PU manual (unit:eId → unit + puFijo) antes de congelar. */
+    try { logAsegurarPuManualFilas_(); } catch (ePu) { /* ok */ }
     const D = logisticaDatosDoc_(idioma);
     const cab = {};
     LOG_CAMPOS_CAB.forEach(function (k) { cab[k] = D[k]; });
@@ -8521,14 +9135,36 @@ function logisticaSerializar_(idioma) {
             sim3dParaDatos = raw;
         }
         if (sim3dParaDatos) sim3dParaDatos.captures = {};
-        /* Bundle compacto → archivo JSON en Drive (bóveda Cotizaciones); en la hoja solo queda la ref. */
+        /* Bundle grande → Drive; en la hoja queda un LITE (agrupaciones/lista) para no perder packing si falla Drive. */
         if (sim3dParaDatos) {
             try {
                 const js = JSON.stringify(sim3dParaDatos);
                 if (js.length > 4000) {
                     const b64 = btoa(unescape(encodeURIComponent(js)));
                     imagenes.push({ k: "sim3d:bundle", data: "data:application/json;base64," + b64 });
-                    sim3dParaDatos = { v: sim3dParaDatos.v || 1, activo: sim3dParaDatos.activo || 0, drive: true };
+                    const liteEsc = (sim3dParaDatos.escenarios || []).map(function (e) {
+                        return {
+                            id: e.id,
+                            nombre: e.nombre,
+                            logEscId: e.logEscId,
+                            cajasCrudas: e.cajasCrudas || [],
+                            listaEmpaque: e.listaEmpaque || [],
+                            instanciasCajas: [],
+                            contenedoresFisicos: e.contenedoresFisicos || [],
+                            mixSugerido: e.mixSugerido || { c20: 0, c40: 0, c40hc: 0 },
+                            modularizado: !!e.modularizado,
+                            agrupaciones: e.agrupaciones || [],
+                            loadLetra: e.loadLetra || "C",
+                            loadVer: e.loadVer || "V1"
+                        };
+                    });
+                    sim3dParaDatos = {
+                        v: sim3dParaDatos.v || 1,
+                        activo: sim3dParaDatos.activo || 0,
+                        drive: true,
+                        lite: true,
+                        escenarios: liteEsc
+                    };
                 }
             } catch (eB64) { /* si falla btoa, se deja el JSON compacto en la hoja */ }
         }
@@ -8540,7 +9176,12 @@ function logisticaSerializar_(idioma) {
         const v = logFilaValores_(fila, idioma);
         const c = { uid: fila.uid, tipo: fila.tipo, proy: fila.proy || "", ver: fila.ver || "", lote: fila.lote || "", over: clon(fila.over || {}) };
         if (fila.elem) c.elem = fila.elem;
-        if (fila.puFijo) c.puFijo = true;
+        /* PU manual: persistir siempre si hay over.unit (aunque falte el flag en memoria). */
+        const hayPuManual = !!(fila.puFijo || (fila.over && (
+            fila.over.unit != null
+            || Object.keys(fila.over).some(function (k) { return /^unit:/.test(k) && fila.over[k] != null; })
+        )));
+        if (hayPuManual) c.puFijo = true;
         /* Contenedor de opción: sin esto, al reabrir todo cae en Rangos. */
         if (fila.escId) c.escId = String(fila.escId);
         if (fila.opc && Object.keys(fila.opc).length) c.opc = clon(fila.opc);
@@ -8563,6 +9204,22 @@ function logisticaSerializar_(idioma) {
                     pctCom: origen.pct,
                     feeCom: origen.fee
                 };
+            }
+            /* PU escrito a mano: congelarlo también en snap (no solo en over) para que al reabrir no vuelva el de Costos. */
+            if (hayPuManual && c.snap) {
+                const puMan = logPuManualACop_(fila);
+                if (puMan != null && isFinite(puMan)) {
+                    c.snap.puCop = puMan;
+                    if (!Array.isArray(c.snap.escalas)) c.snap.escalas = [];
+                    let hit = c.snap.escalas.find(function (e) { return e && e.id === fila.lote; });
+                    if (!hit) {
+                        hit = { id: fila.lote || "l1", q: c.snap.q != null ? c.snap.q : 1, puCop: puMan };
+                        c.snap.escalas.push(hit);
+                    } else {
+                        hit.puCop = puMan;
+                    }
+                    if (c.snap.q == null && hit.q != null) c.snap.q = hit.q;
+                }
             }
             if (c.snap && c.snap.pctCom == null) {
                 const o = logComisionAsegurar_();
@@ -8777,6 +9434,15 @@ async function logisticaAbrirGuardar_() {
     if (!p.hayProyecto && logQuote.filas.some(function (f) { return f.demo != null; })) {
         if (typeof mostrarNotificacion === "function") mostrarNotificacion("Abre un proyecto en Ingeniería de Costos: lo que se ve ahora son datos de ejemplo.", "warning");
         return;
+    }
+    /* Tras 3D sin regenerar costos: se puede guardar el borrador, pero avisar. */
+    const chkCost = typeof logisticaSim3dExportOk_ === "function" ? logisticaSim3dExportOk_() : { ok: true };
+    if (!chkCost.ok) {
+        const seguir = window.confirm(
+            (chkCost.mensaje || "Hay pendientes de logística / Simulador 3D.")
+            + "\n\n¿Guardar el borrador de todos modos? (PDF y Excel siguen bloqueados hasta regenerar costos.)"
+        );
+        if (!seguir) return;
     }
     const idioma = logisticaLeerOpciones_().idioma;
     logQuote.guardarExistente = null;
@@ -9244,6 +9910,7 @@ async function logisticaAbrirGuardada_(id, rev) {
     logSincronizarModoDesdeEscenarios_();
     if ((logQuote.escenarios || []).length) logMigrarFilasAContenedores_();
     if ((logQuote.escenarios || []).length) logRepararOverClonadoLegado_();
+    logAsegurarPuManualFilas_();
     logMigrarPartidasFilas_();
     logLayout = {
         cols: (g.layout && g.layout.cols && g.layout.cols.length ? g.layout.cols : LOG_COLUMNAS_DEMO).map(function (c) { return { k: c.k, w: c.w }; }),
@@ -9265,6 +9932,9 @@ async function logisticaAbrirGuardada_(id, rev) {
     setv("logMargen", g.margenMm || 16);
     /* Pintar ya: Drive / 3D / fotos van en segundo plano (PDF/Excel quedan deshabilitados). */
     if (typeof ocultarEsperaNube === "function") ocultarEsperaNube();
+    if (typeof window.slPintarBadgeSim3dPendiente === "function") {
+        try { window.slPintarBadgeSim3dPendiente(); } catch (eBadge) { /* noop */ }
+    }
     /* 1) Costos → misma versión de presupuesto que la cotización (evita Excel V1+V2). */
     let alineoVer = false;
     try { alineoVer = !!logisticaAlinearCostosACotizacion_(); } catch (eAlin) { alineoVer = false; }
@@ -9287,23 +9957,44 @@ async function logisticaAbrirGuardada_(id, rev) {
     const gen = ++logMediaBg_.token;
     const abiertaSnap = logQuote.abierta;
     logMediaBg_.pendiente = true;
+    logMediaBg_.fase = "Preparando renders y packing 3D…";
     logMediaActualizarUiGate_();
     (async function logMediaBgAbrir_() {
+        const fase_ = function (t) {
+            if (gen !== logMediaBg_.token) return;
+            logMediaBg_.fase = t;
+            logMediaActualizarUiGate_();
+        };
         try {
+            fase_("Leyendo renders en caché…");
+            await logYieldUi_();
             try { await logisticaHidatarImgsCache_(logQuote.filas); } catch (eC) { /* IDB opcional */ }
             if (gen !== logMediaBg_.token || logQuote.abierta !== abiertaSnap) return;
+            fase_("Restaurando packing del Simulador 3D…");
+            await logYieldUi_();
             try { await logisticaRestaurarSim3d_(g); } catch (eS) { console.warn("sim3d restore bg:", eS); }
             if (gen !== logMediaBg_.token || logQuote.abierta !== abiertaSnap) return;
+            fase_("Preparando capturas Vista 3D…");
+            await logYieldUi_();
             try { await logisticaHidatarSim3dImgs_({}); } catch (eH3) { /* preview sin 3D aún */ }
             if (gen !== logMediaBg_.token || logQuote.abierta !== abiertaSnap) return;
+            fase_("Descargando fotos faltantes…");
+            await logYieldUi_();
             try { await logisticaTraerImgsFaltantes_(); } catch (eT) { /* avisar al final */ }
         } finally {
             if (gen !== logMediaBg_.token) return;
-            logMediaBg_.pendiente = false;
+            logMediaBg_.fase = "Actualizando la hoja…";
             logMediaActualizarUiGate_();
             if (logQuote.abierta === abiertaSnap) {
-                try { logisticaActualizarVista(); } catch (eV2) { /* noop */ }
+                try {
+                    await logisticaRepintarConAviso_("Actualizando la hoja con renders y datos cargados…");
+                } catch (eV2) { /* noop */ }
                 try { logisticaAvisarImgsPendientes_(); } catch (eA) { /* noop */ }
+            }
+            if (gen === logMediaBg_.token) {
+                logMediaBg_.pendiente = false;
+                logMediaBg_.fase = "";
+                logMediaActualizarUiGate_();
             }
         }
     })();
@@ -9329,13 +10020,18 @@ async function logisticaRestaurarSim3d_(g) {
             }
         } catch (eFetch) { console.warn("sim3d Drive restore:", eFetch); }
     }
-    if (st && st.drive) st = null;
-    if (st) {
+    /* drive sin escenarios = stub vacío; drive+lite/escenarios = usable si falló Drive. */
+    if (st && st.drive && !(Array.isArray(st.escenarios) && st.escenarios.length)) st = null;
+    if (st && Array.isArray(st.escenarios) && st.escenarios.length) {
+        /* Bundle completo (o LITE con agrupaciones) en memoria. */
         logQuote.env.sim3dBundle = st;
         if (ref) logQuote.env.sim3dRef = ref;
         if (typeof window.slImportarEstado === "function") {
             try { window.slImportarEstado(st); } catch (eSl) { console.warn("sim3d restore:", eSl); }
         }
+    }
+    if (typeof window.slPintarBadgeSim3dPendiente === "function") {
+        try { window.slPintarBadgeSim3dPendiente(); } catch (eBd) { /* noop */ }
     }
 }
 
@@ -10381,13 +11077,27 @@ function logAplicarFaltasAnalisis_() {
 function logPintarRecalcAviso_() {
     const el = document.getElementById("logRecalcAviso");
     if (!el) return;
-    if (!logRecalcPendiente_) {
+    const pendOps = typeof logCostosOpcionesPendientes_ === "function" ? logCostosOpcionesPendientes_() : [];
+    const env = typeof logEnv_ === "function" ? logEnv_() : null;
+    const porSim3d = !!(env && env.logCostosPendiente) || pendOps.length > 0;
+    if (!logRecalcPendiente_ && !porSim3d) {
         el.textContent = "";
         el.classList.add("d-none");
         return;
     }
-    el.textContent = "Cambió un dato de Costos que mueve esta logística (medidas, empaque, cantidad o precio). Borré el cálculo de este borrador. Pulsa Análisis costos logísticos para calcularlo de nuevo.";
+    const nombres = pendOps.map(function (p) { return p.nombre; }).filter(Boolean);
+    const lista = nombres.length ? (" Opciones: " + nombres.join(", ") + ".") : "";
+    const hayOps = !!(typeof logEscList_ === "function" && logEscList_().length);
+    el.textContent = porSim3d
+        ? ("El embalaje / m³ / kg cambió (Simulador 3D u override). Borré costos de catálogo."
+            + lista
+            + " Pulsa Análisis → Generar datos logísticos. PDF/Excel bloqueados"
+            + (hayOps ? " hasta regenerar todas las opciones." : " hasta regenerar."))
+        : "Cambió un dato de Costos que mueve esta logística (medidas, empaque, cantidad o precio). Borré el cálculo de este borrador. Pulsa Análisis costos logísticos para calcularlo de nuevo.";
     el.classList.remove("d-none");
+    if (typeof logExportActualizarUiGate_ === "function") {
+        try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
+    }
 }
 
 /** Peso facturable (kg): mayor entre real y volumétrico. */
@@ -11133,6 +11843,13 @@ function logisticaOnEnvUi_(ev) {
         }
     }
     if (t && (t.id === "logC20" || t.id === "logC40" || t.id === "logC40hc")) logQuote.env.contenedoresManual = true;
+    /* Volumen / peso global (modo sin opciones o campos globales): marca costos pendientes. */
+    if (t && (t.id === "logCubM3" || t.id === "logCubPeso" || t.id === "logCubKgVol"
+        || t.id === "logC20" || t.id === "logC40" || t.id === "logC40hc")
+        && typeof logisticaMarcarCostosPendientePorCub_ === "function") {
+        const escCub = logEscList_().length ? (logEnvEscSel_ || logOpcionUiAsegurar_() || "") : "";
+        logisticaMarcarCostosPendientePorCub_(escCub, { silencio: true });
+    }
     /* Solo si el usuario cambia Modalidad/Incoterm/Mercado a mano (no al saltar de opción). */
     if (t && (t.id === "logModalidad" || t.id === "logIncoterm" || t.id === "logMercado")
         && (logQuote.env.modalidad !== modAntes || logQuote.env.incoterm !== incAntes || t.id === "logMercado")) {
@@ -11168,6 +11885,10 @@ function logisticaOnEnvUi_(ev) {
                 ln.arancelFirma = "";
             }
         });
+        /* Cambio de modalidad/Incoterm invalida costos: hay que Generar de nuevo (bloquea PDF/Excel). */
+        if (typeof logisticaMarcarCostosPendientePorCub_ === "function") {
+            logisticaMarcarCostosPendientePorCub_(escClr || "", { silencio: true });
+        }
     }
     /* Al cambiar aéreo ↔ courier el kg vol usa otro divisor (6000 vs 5000): soltar override de ESA opción. */
     if (t && t.id === "logModalidad" && logQuote.env.modalidad !== modAntes) {
@@ -11369,26 +12090,30 @@ function logisticaActivarTabla_(doc) {
         logHacerEditable_(doc, el);
         const numerico = campo === "qty" || campo === "unit";
         const escId = el.getAttribute("data-e") || ""; /* con escenarios, lo escrito vale solo para esa opción */
-        const clave = escId ? campo + ":" + escId : campo;
         el.addEventListener("input", function () {
             if (logPintandoHoja_) return;
             logMarcarSucio_();
             const txt = el.textContent.replace(/\s+/g, " ").trim();
-            if (numerico) {
-                if (txt === "") { delete fila.over[clave]; }
+            if (!fila.over) fila.over = {};
+            if (campo === "unit") {
+                /* Misma ruta que el sidebar: clave plana en contenedor + puFijo. */
+                if (!logEscribirPrecioFila_(fila, txt, escId)) return;
+            } else if (campo === "qty") {
+                const qClave = fila.escId ? "qty" : (escId ? "qty:" + escId : "qty");
+                if (txt === "") delete fila.over[qClave];
                 else {
                     const n = logParseNum_(txt, idioma);
                     if (n == null) return;
-                    const previo = fila.over[clave];
-                    delete fila.over[clave];
-                    const auto = logFilaValores_(fila, idioma, escId);
-                    const autoN = campo === "qty" ? auto.qty : auto.unit;
+                    const previo = fila.over[qClave];
+                    delete fila.over[qClave];
+                    const auto = logFilaValores_(fila, idioma, fila.escId || escId || "");
                     const tol = logDecimales_() === 0 ? 0.51 : 0.02;
-                    if (autoN != null && Math.abs(n - Number(autoN)) <= tol) {
-                        /* el número es el del presupuesto: no se congela */
-                    } else if (campo === "unit") fila.over[clave] = n / (logComisionFactor_(fila) || 1);
-                    else fila.over[clave] = n;
-                    if (fila.over[clave] == null && previo != null && autoN == null) fila.over[clave] = previo;
+                    if (auto.qty != null && Math.abs(n - Number(auto.qty)) <= tol) {
+                        /* igual al presupuesto */
+                    } else {
+                        fila.over[qClave] = n;
+                    }
+                    if (fila.over[qClave] == null && previo != null && auto.qty == null) fila.over[qClave] = previo;
                 }
             } else {
                 fila.over[campo] = txt;
@@ -11397,7 +12122,7 @@ function logisticaActivarTabla_(doc) {
         });
         if (numerico) {
             el.addEventListener("blur", function () {
-                const v = logFilaValores_(fila, idioma, escId);
+                const v = logFilaValores_(fila, idioma, fila.escId || escId || "");
                 const n = campo === "qty" ? v.qty : v.unit;
                 if (n == null) { el.textContent = ""; return; }
                 el.textContent = campo === "qty"
@@ -11541,6 +12266,9 @@ function logisticaActualizarVista(opts) {
     } finally {
         logPintandoHoja_ = Math.max(0, logPintandoHoja_ - 1);
     }
+    if (typeof logExportActualizarUiGate_ === "function") {
+        try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
+    }
 }
 
 async function logisticaDescargarPDF() {
@@ -11549,6 +12277,23 @@ async function logisticaDescargarPDF() {
     if (logisticaExportacionesBloqueadas_()) {
         if (typeof mostrarNotificacion === "function") {
             mostrarNotificacion("Espera a que terminen de cargar Odoo y las fotos / Vista 3D.", "warning");
+        }
+        return;
+    }
+    let chkExp = { ok: false, mensaje: "No se pudo validar costos logísticos de todas las opciones." };
+    try {
+        chkExp = typeof logisticaExportCotizacionOk_ === "function"
+            ? (logisticaExportCotizacionOk_() || chkExp)
+            : chkExp;
+    } catch (eExp) {
+        chkExp = { ok: false, mensaje: "Error al validar costos: " + String((eExp && eExp.message) || eExp) };
+    }
+    if (!chkExp.ok) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion(chkExp.mensaje || "No se puede generar el PDF: regenera costos de todas las opciones (Análisis → Generar).", "warning");
+        }
+        if (typeof logExportActualizarUiGate_ === "function") {
+            try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
         }
         return;
     }
@@ -12966,11 +13711,15 @@ function logCostosAplicarFilas_() {
     const escs = logEscList_();
     const claves = escs.length ? escs.map(function (x) { return x.id; }) : [""];
     const escUi = escs.length ? logOpcionUiAsegurar_() : "";
-    /* Sin opciones: escUi="" y se liquida sobre el env global (proyectos en zona libre). */
-    logEnvAsegurarLineas_(false, false, escUi || undefined);
+    /* Asegurar plantilla de filas para CADA opción (no solo la pestaña activa). */
+    claves.forEach(function (k) {
+        logEnvAsegurarLineas_(false, false, k || undefined);
+    });
     const avisos = [];
     let n = 0;
     const bagPorOp = {};
+    /* Opciones liquidables (EXW cuenta como “ok sin filas” para cerrar pendiente). */
+    const escOk = [];
     claves.forEach(function (k) {
         const envLive = logEnv_();
         const eK = logEnvParaTarifa_(k);
@@ -12978,10 +13727,14 @@ function logCostosAplicarFilas_() {
         const nombreOp = k ? (logEscNombre_(escs.find(function (x) { return x.id === k; }) || {}, claves.indexOf(k), "es") + ": ") : "";
         if (logEsCotizacionExterior_() && String(eK.incoterm || "").toUpperCase() === "EXW") {
             avisos.push(nombreOp + "EXW no tiene filas de costo logístico.");
+            escOk.push(k);
+            bagPorOp[k || "_"] = {};
             return;
         }
         if (!tiposK.length) {
             avisos.push(nombreOp + "Este Incoterm no abre filas de costo.");
+            escOk.push(k);
+            bagPorOp[k || "_"] = {};
             return;
         }
         const cub = typeof logCubicajeTotal_ === "function" ? logCubicajeTotal_("es", k) : { m3: 0, kgVol: 0, pesoKg: 0 };
@@ -12989,6 +13742,7 @@ function logCostosAplicarFilas_() {
         if (typeof logAplicarContenedoresSugeridos_ === "function") logAplicarContenedoresSugeridos_(envLive, cub, k);
         const ctx = logTarCtx_(envLive, cub, valor, k);
         const bag = {};
+        let nOp = 0;
         tiposK.forEach(function (tipo) {
             if (tipo === "duties" || tipo === "taxes" || tipo === "libre" || tipo === "servicio" || tipo === "extra") return;
             const notas = [];
@@ -13012,8 +13766,10 @@ function logCostosAplicarFilas_() {
             }
             bag[tipo] = { valor: Math.round(suma * 100) / 100, fuente: "[Catálogo]", notas: notas.join("\n"), ok: true };
             n += 1;
+            nOp += 1;
         });
         bagPorOp[k || "_"] = bag;
+        if (nOp > 0) escOk.push(k);
     });
     /* Escribir sobre el env actual (misma referencia que verá la ficha). */
     const env = logEnv_();
@@ -13026,24 +13782,34 @@ function logCostosAplicarFilas_() {
             st = env.porEsc[k];
         }
         const escribeLn = !escs.length || !k || k === escUi;
+        const modK = (typeof logEnvModalidad_ === "function" ? logEnvModalidad_(k) : env.modalidad) || env.modalidad;
         Object.keys(bag).forEach(function (tipo) {
             const b = bag[tipo];
             let ln = (env.lineas || []).find(function (x) { return x.tipo === tipo; });
-            if (b.ok && escribeLn && !ln) {
-                /* La plantilla activa no tenía la fila: créala para que la ficha la muestre. */
+            if (b.ok && !ln) {
                 let maxN = 0;
                 (env.lineas || []).forEach(function (x) { maxN = Math.max(maxN, parseInt(String(x.id).replace(/\D/g, ""), 10) || 0); });
                 ln = {
                     id: "c" + (maxN + 1), tipo: tipo,
-                    concepto: logEnvEtiquetaTipo_(tipo, env.modalidad, false),
+                    concepto: logEnvEtiquetaTipo_(tipo, modK, false),
                     conceptoManual: false, valor: null, pct: null, notas: "", fuente: "", base: "",
                     arancelManual: false, arancelFirma: "", arancelNota: ""
                 };
                 env.lineas = env.lineas || [];
                 env.lineas.push(ln);
             }
-            if (b.ok) logEscEscribirCosto_(st, escribeLn ? ln : null, tipo, b.valor, b.fuente, b.notas);
-            else if (st) {
+            /* Siempre persistir en st de ESTA opción; ln.valor solo si es la pestaña activa. */
+            if (b.ok) {
+                if (escribeLn) logEscEscribirCosto_(st, ln, tipo, b.valor, b.fuente, b.notas);
+                else {
+                    logEscEscribirCosto_(st, null, tipo, b.valor, b.fuente, b.notas);
+                    if (st && ln && ln.id) {
+                        st.valores[ln.id] = b.valor;
+                        if (b.fuente) st.fuentes[ln.id] = b.fuente;
+                        st.notas[ln.id] = b.notas || "";
+                    }
+                }
+            } else if (st) {
                 const kt = logEscKeyTipo_(tipo);
                 if (kt) st.notas[kt] = b.notas || "";
                 if (ln) st.notas[ln.id] = b.notas || "";
@@ -13051,6 +13817,8 @@ function logCostosAplicarFilas_() {
         });
     });
     window.logTarAvisos = avisos;
+    /* n sigue siendo el contador de cargos; escIds liquidados para limpiar pendiente por opción. */
+    logCostosAplicarFilas_._escOk = escOk;
     return n;
 }
 
@@ -13270,6 +14038,15 @@ async function logIaAplicarLocal_() {
     if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
     if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
     if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+    /* Costos regenerados: liberar pendiente en TODAS las opciones liquidadas (no solo la UI). */
+    const escOk = (logCostosAplicarFilas_._escOk || []).slice();
+    if (cat > 0 || escOk.length || exwNota) {
+        if (typeof logisticaLimpiarCostosPendiente_ === "function") {
+            logisticaLimpiarCostosPendiente_({
+                escIds: escOk.length ? escOk : logCostosClavesOpciones_()
+            });
+        }
+    }
     const caja = document.getElementById("logEnvLineas");
     if (caja && caja.scrollIntoView) caja.scrollIntoView({ block: "nearest" });
     const extra = (window.logTarAvisos || []).join(" ");
@@ -13302,6 +14079,13 @@ async function logIaConsultar_(modo, textoUsuario) {
         logIa.fase = "entrevista";
         if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
         logIaPintar_();
+        /* Análisis no libera export: sigue haciendo falta Generar si hay firma/pendiente. */
+        if (typeof logPintarRecalcAviso_ === "function") {
+            try { logPintarRecalcAviso_(); } catch (eAv) { /* noop */ }
+        }
+        if (typeof logExportActualizarUiGate_ === "function") {
+            try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
+        }
         return;
     }
     if (modo === "generar") {
@@ -13398,6 +14182,12 @@ function logisticaInitIa_() {
         const onEscEnv = function (ev) {
             const calc = ev.target && ev.target.closest ? ev.target.closest("[data-esc-calc]") : null;
             const togActivo = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-campo") === "activo";
+            const campoCub = ev.target && ev.target.getAttribute ? ev.target.getAttribute("data-campo") : "";
+            const opCub = ev.target && ev.target.getAttribute ? ev.target.getAttribute("data-op") : "";
+            const tocaCub = campoCub === "cubM3" || campoCub === "cubPeso" || campoCub === "cubKgVol"
+                || campoCub === "c20" || campoCub === "c40" || campoCub === "c40hc"
+                || !!(ev.target && ev.target.hasAttribute && ev.target.hasAttribute("data-cont"))
+                || !!calc;
             logisticaLeerEnvUi_();
             if (calc) {
                 const k = calc.getAttribute("data-esc-calc");
@@ -13405,9 +14195,18 @@ function logisticaInitIa_() {
                 if (st) st.contenedoresManual = false;
                 const cubC = logCubicajeTotal_("es", k);
                 logAplicarContenedoresSugeridos_(logEnv_(), cubC, k);
+                if (typeof logisticaMarcarCostosPendientePorCub_ === "function") {
+                    logisticaMarcarCostosPendientePorCub_(k || "", { silencio: true });
+                }
             } else if (ev.target && ev.target.hasAttribute && ev.target.hasAttribute("data-cont")) {
                 const st2 = logEnvEsc_(ev.target.getAttribute("data-op"));
                 if (st2) st2.contenedoresManual = true;
+                if (typeof logisticaMarcarCostosPendientePorCub_ === "function") {
+                    logisticaMarcarCostosPendientePorCub_(ev.target.getAttribute("data-op") || "", { silencio: true });
+                }
+            } else if (tocaCub && typeof logisticaMarcarCostosPendientePorCub_ === "function") {
+                /* Cambio de volumen o peso global → regenerar costos antes de PDF/Excel. */
+                logisticaMarcarCostosPendientePorCub_(opCub || "", { silencio: true });
             }
             /* Al apagar logística de una opción, soltar el foco para que el panel se redibuje. */
             if (togActivo && ev.target && ev.target.blur) ev.target.blur();
@@ -13488,11 +14287,18 @@ function logisticaInit() {
         const pais = logPaisDeCodigo_(cod);
         if (pais && typeof logPintarSelectPais_ === "function") logPintarSelectPais_(pais);
     });
-    logCargarPaises_();
-    logPintarSelectPais_((logQuote && logQuote.env && logQuote.env.destinoPais) || "");
-    logCargarCiudades_();
-    logCargarAranceles_();
-    if (document.getElementById("fichaPartida")) logPintarSelectPartida_("");
+    /* Catálogos pesados (países/ciudades/aranceles): diferir para no congelar Costos en Ctrl+F5. */
+    const diferirCats_ = function () {
+        try { logCargarPaises_(); } catch (eP) { /* noop */ }
+        try { logPintarSelectPais_((logQuote && logQuote.env && logQuote.env.destinoPais) || ""); } catch (eS) { /* noop */ }
+        try { logCargarCiudades_(); } catch (eC) { /* noop */ }
+        try { logCargarAranceles_(); } catch (eA) { /* noop */ }
+        try {
+            if (document.getElementById("fichaPartida")) logPintarSelectPartida_("");
+        } catch (eF) { /* noop */ }
+    };
+    if (typeof requestIdleCallback === "function") requestIdleCallback(diferirCats_, { timeout: 1800 });
+    else setTimeout(diferirCats_, 120);
     logisticaInitIa_();
     ["logMercado", "logModalidad", "logIncoterm", "logDestCiudad", "logDestPais", "logDestCodigo", "logDestPuerto", "logDestTitulo", "logResumenPct", "logMargenLog", "logExwPct", "logCostosOn", "logCubM3", "logCubPeso", "logCubKgVol", "logC20", "logC40", "logC40hc", "logEmbarques", "logEnvObsInternas"].forEach(function (id) {
         const el = document.getElementById(id);
