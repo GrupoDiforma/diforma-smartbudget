@@ -995,12 +995,34 @@ window.abrirModalUsoGemini = function () {
     if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
 };
 
-window.refrescarUsoGemini = async function () {
+/** Evita solapar gemini_uso (en red suele tardar 20–40 s y congelaba la cola GAS). */
+var _geminiUsoP = null;
+var _geminiUsoTs = 0;
+var GEMINI_USO_TTL_MS = 55000;
+
+window.refrescarUsoGemini = async function (opts) {
+    opts = opts || {};
     try {
         if (!localStorage.getItem("smartbudget_token")) return;
-        const data = await realizarPeticionBD({ action: "gemini_uso" });
-        if (data && data.exito) pintarUsoGemini(data.data);
-    } catch (e) {}
+        const ahora = Date.now();
+        if (!opts.forzar && _geminiUsoTs && (ahora - _geminiUsoTs) < GEMINI_USO_TTL_MS && window._ultimoUsoGemini) {
+            pintarUsoGemini(window._ultimoUsoGemini);
+            return window._ultimoUsoGemini;
+        }
+        if (_geminiUsoP) return _geminiUsoP;
+        _geminiUsoP = (async function () {
+            const data = await realizarPeticionBD({ action: "gemini_uso" }, { timeoutMs: 45000 });
+            if (data && data.exito) {
+                _geminiUsoTs = Date.now();
+                pintarUsoGemini(data.data);
+                return data.data;
+            }
+            return null;
+        })().finally(function () { _geminiUsoP = null; });
+        return await _geminiUsoP;
+    } catch (e) {
+        _geminiUsoP = null;
+    }
 };
 
 function esperaIAInicio_(mensaje) {
@@ -1355,10 +1377,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     actualizarBotonGenerar();
-    if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
+    /* Uso Gemini: idle + intervalo largo. Antes cada 40s × ~34s de red saturaba Apps Script. */
+    if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(function () {
+            if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
+        }, { timeout: 4000 });
+    } else if (typeof window.refrescarUsoGemini === "function") {
+        setTimeout(function () { window.refrescarUsoGemini(); }, 1500);
+    }
     setInterval(function () {
         if (typeof window.refrescarUsoGemini === "function") window.refrescarUsoGemini();
-    }, 40000);
+    }, 120000);
     const tog = document.getElementById("togglePro");
     if (tog) tog.addEventListener("change", function () {
         if (tog.checked) ocultarHintGeminiPro();

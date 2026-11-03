@@ -42,12 +42,27 @@ function ocultarEsperaNube() {
     if (_sbEspera.n > 0) return;
     clearInterval(_sbEspera.tick);
     _sbEspera.tick = null;
+    _sbEspera.t0 = 0;
     const el = document.getElementById("sbEspera");
     if (el) {
         el.classList.remove("is-on");
         el.hidden = true;
     }
 }
+
+/** Fuerza a cerrar el overlay si quedó colgado (p. ej. await largo de renders). */
+function forzarOcultarEsperaNube() {
+    _sbEspera.n = 0;
+    clearInterval(_sbEspera.tick);
+    _sbEspera.tick = null;
+    _sbEspera.t0 = 0;
+    const el = document.getElementById("sbEspera");
+    if (el) {
+        el.classList.remove("is-on");
+        el.hidden = true;
+    }
+}
+window.forzarOcultarEsperaNube = forzarOcultarEsperaNube;
 
 window.mostrarEsperaNube = mostrarEsperaNube;
 window.textoEsperaNube = textoEsperaNube;
@@ -563,7 +578,14 @@ async function hidratarRendersCotizacionNube_() {
                 el.imgCotizacionHuella = huellaImgCotizacion_(el.imgCotizacion);
             }
         });
-        if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
+        /* No regenerar la hoja de Logística aquí: al abrir presupuesto desde una cotización
+           NAL/EXP eso congelaba la UI varios minutos con el overlay «Preparando la matriz…». */
+        const paneLog = document.getElementById("tabLogistica");
+        if (paneLog && paneLog.classList.contains("active") && typeof logisticaRefrescarTabla_ === "function") {
+            window.requestAnimationFrame(function () {
+                try { logisticaRefrescarTabla_(); } catch (eR) { /* noop */ }
+            });
+        }
     } catch (e) { /* el pin se reintenta al abrir la cotización */ }
 }
 
@@ -574,7 +596,14 @@ function tituloRenderCubre_(nombre, titulo) {
     return t === n || t.indexOf(n) === 0 || n.indexOf(t) === 0;
 }
 
-/** El guardado en la nube se quedó sin el archivo (el servidor viejo no sube PRE-img). La cotización sí tiene el render en Drive. */
+/**
+ * El guardado en la nube se quedó sin el archivo (servidor viejo no subía PRE-img).
+ * La cotización sí puede tener el render en Drive.
+ *
+ * Presupuestos ANTERIORES al pin Cotización/Grupo: sin imgRef ni nombre no hay
+ * forma de cruzar filas → no listar cotizaciones (eso congelaba minutos).
+ * Con solo huella/fileId local tampoco se puede emparejar: se omite el barrido.
+ */
 async function recuperarRendersDesdeCotizaciones_() {
     const pend = [];
     (window.versionesPresupuesto || []).forEach(function (v) {
@@ -589,12 +618,17 @@ async function recuperarRendersDesdeCotizaciones_() {
         pend.push(v);
     });
     if (!pend.length || typeof realizarPeticionBD !== "function") return 0;
+    /* Sin imgRef ni nombre/título no hay matching posible: evita listar_cotizaciones + N opens. */
+    const cruzables = pend.filter(function (el) {
+        return !!(el.imgRef || el.nombre || el.imgCotizacionNombre);
+    });
+    if (!cruzables.length) return 0;
     const codigo = (typeof codigoOportunidadActual_ === "function" ? codigoOportunidadActual_() : "")
         || String(document.getElementById("inputCodigo")?.value || "").trim();
     if (!codigo) return 0;
     let lista = [];
     try {
-        const r = await realizarPeticionBD({ action: "listar_cotizaciones" });
+        const r = await realizarPeticionBD({ action: "listar_cotizaciones" }, { timeoutMs: 25000 });
         lista = (r && r.data) || [];
     } catch (e) { return 0; }
     const cots = lista.filter(function (c) {
@@ -607,8 +641,9 @@ async function recuperarRendersDesdeCotizaciones_() {
         if (ia !== ib) return ia < ib ? 1 : -1;
         return (Number(b.rev) || 0) - (Number(a.rev) || 0);
     });
+    if (!cots.length) return 0;
     const vistos = {};
-    for (let i = 0; i < cots.length && i < 4; i++) {
+    for (let i = 0; i < cots.length && i < 2; i++) {
         const c = cots[i];
         const clave = String(c.id) + ":" + String(c.rev || "");
         if (vistos[clave]) continue;
@@ -617,7 +652,7 @@ async function recuperarRendersDesdeCotizaciones_() {
         if (!faltan.length) break;
         let filas = [];
         try {
-            const r = await realizarPeticionBD({ action: "obtener_cotizacion", id: c.id, rev: c.rev });
+            const r = await realizarPeticionBD({ action: "obtener_cotizacion", id: c.id, rev: c.rev }, { timeoutMs: 45000 });
             filas = (r && r.data && r.data.datos && r.data.datos.filas) || [];
         } catch (e2) { continue; }
         const libres = filas.filter(function (f) { return f && f.imgRef; });
@@ -1641,7 +1676,7 @@ async function abrirHistorial() {
 async function cargarProyectoBD(idProyecto) {
     mostrarEsperaNube("Abriendo el proyecto…");
     try {
-        const data = await realizarPeticionBD({ action: 'obtener', id: idProyecto });
+        const data = await realizarPeticionBD({ action: 'obtener', id: idProyecto }, { timeoutMs: 90000 });
         if (data.exito && data.data) {
             textoEsperaNube("Preparando la matriz…");
             const p = data.data; const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
@@ -1662,13 +1697,20 @@ async function cargarProyectoBD(idProyecto) {
             }
             hidratarVersionesDesdePayload(p);
             bootstrap.Modal.getInstance(document.getElementById('modalHistorial'))?.hide();
-            const nRenders = typeof window.cargarRendersVisor === "function"
-                ? await window.cargarRendersVisor({ silencio: true })
-                : 0;
             const nVer = (window.versionesPresupuesto || []).length;
             const nChat = (window.historialChatIA || []).length;
-            const avisoRenders = nRenders ? (" Se recuperaron " + nRenders + " render" + (nRenders === 1 ? "" : "s") + " de la cotización guardada.") : "";
-            mostrarNotificacion((nVer > 1 ? (nVer + " versiones. ") : "") + (nChat ? "Proyecto y chat cargados." : "Proyecto cargado.") + avisoRenders, "success");
+            mostrarNotificacion((nVer > 1 ? (nVer + " versiones. ") : "") + (nChat ? "Proyecto y chat cargados." : "Proyecto cargado.") + " Renders en segundo plano…", "success");
+            /* Renders/pins: NO await. Bloqueaba minutos (listar cotizaciones + blobs) con overlay encima de Logística. */
+            if (typeof window.cargarRendersVisor === "function") {
+                costosCargaBar_("<span class=\"spinner-border spinner-border-sm me-1\"></span>Cargando renders en segundo plano…");
+                window.cargarRendersVisor({ silencio: true }).then(function (nRenders) {
+                    if (nRenders && typeof mostrarNotificacion === "function") {
+                        mostrarNotificacion("Se recuperaron " + nRenders + " render" + (nRenders === 1 ? "" : "s") + " de la cotización guardada.", "success");
+                    }
+                }).catch(function () {
+                    costosCargaBar_("");
+                });
+            }
         }
     } catch(e) { mostrarNotificacion(e.message, "danger"); }
     finally { ocultarEsperaNube(); }
