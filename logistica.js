@@ -2840,11 +2840,16 @@ function logMargenDeLinea_(ln) {
     return Number(e.margenPct) || 0;
 }
 
-function logMargenTituloCosto_(ln) {
+function logMargenTituloCosto_(ln, fuenteOverride) {
     if (!ln) return "Costo.";
     if (ln.tipo === "duties" || ln.tipo === "taxes") return "Este valor sale en la cotización. No lleva margen.";
+    const fuente = fuenteOverride != null ? String(fuenteOverride || "") : String(ln.fuente || "");
+    let etiqueta = "";
+    if (fuente === "[Estimado IA]") etiqueta = "[Estimado IA] (aproximación; no es tarifa de Ajustes). ";
+    else if (fuente === "[Catálogo]") etiqueta = "[Catálogo] (Ajustes → Logística). ";
+    else if (fuente === "Aranceles") etiqueta = "Aranceles (Ajustes). ";
     const m = logMargenDeLinea_(ln);
-    const base = (ln.fuente ? ln.fuente + ". " : "") + "Costo.";
+    const base = etiqueta + "Costo.";
     if (ln.valor == null || !m) return base + " Sin margen, este valor sale en la cotización.";
     const mon = (logQuote && logQuote.moneda) || "COP";
     return base + " En la cotización sale " + logEnvValorLinea_(ln, null) + " " + mon + ".";
@@ -10745,6 +10750,11 @@ function logisticaLeerEnvUi_() {
                 });
             } else if (stSel && val) {
                 /* Guardar por id y por tipo: al reconstruir líneas (Courier↔Aéreo) el id puede cambiar. */
+                const prevEsc = (ln.id && Object.prototype.hasOwnProperty.call(stSel.valores, ln.id))
+                    ? stSel.valores[ln.id]
+                    : (kt && Object.prototype.hasOwnProperty.call(stSel.valores, kt) ? stSel.valores[kt] : ln.valor);
+                const cambioValor = !(prevEsc == null && valorNuevo == null)
+                    && Number(prevEsc) !== Number(valorNuevo);
                 if (valorNuevo == null) {
                     delete stSel.valores[ln.id];
                     if (kt) delete stSel.valores[kt];
@@ -10752,8 +10762,12 @@ function logisticaLeerEnvUi_() {
                     stSel.valores[ln.id] = valorNuevo;
                     if (kt) stSel.valores[kt] = valorNuevo;
                 }
-                delete stSel.fuentes[ln.id];
-                if (kt) delete stSel.fuentes[kt];
+                /* Edición manual: quita [Catálogo] / [Estimado IA] (sin etiqueta [Manual]). */
+                if (cambioValor) {
+                    delete stSel.fuentes[ln.id];
+                    if (kt) delete stSel.fuentes[kt];
+                    ln.fuente = "";
+                }
                 /* Servicio/extra con escId: el valor vive en la línea (solo de esa opción).
                    Envío tipado: espejo en ln solo en la 1.ª opción (legado). */
                 if (logEsServicio_(ln) || logEsExtraEnvio_(ln)) {
@@ -10772,7 +10786,10 @@ function logisticaLeerEnvUi_() {
                     }
                 }
             } else {
-                if (val) ln.valor = valorNuevo;
+                if (val) {
+                    if (valorNuevo !== ln.valor) ln.fuente = "";
+                    ln.valor = valorNuevo;
+                }
                 if (pctEl) ln.pct = pctNuevo;
             }
             /* data-ln por fila Duties/Taxes eliminado: Obs. internas unificadas abajo. */
@@ -11657,7 +11674,7 @@ function logisticaPintarEnv_(forzar) {
             return "<div class=\"log-env-row" + (arancel ? " is-arancel" : "") + (esServ ? " is-servicio" : "") + "\" data-lid=\"" + logEsc_(ln.id) + "\">" +
                 "<span class=\"log-env-grip\" title=\"Arrastrar\"><i class=\"bi bi-grip-vertical\"></i></span>" +
                 conc +
-                "<input class=\"form-control form-control-sm text-end" + (fuenteSel === "[Estimado IA]" ? " log-ia-est" : "") + (fuenteSel === "[Catálogo]" ? " log-cat" : "") + (autoVal ? " log-env-auto" : "") + "\" data-lv type=\"number\" step=\"0.01\" placeholder=\"" + (exterior ? "Costo" : "Costo COP") + "\" title=\"" + logEsc_(logMargenTituloCosto_(ln)) + "\"" + (autoVal ? " data-auto-val=\"" + logEsc_(autoVal) + "\"" : "") + " value=\"" + (valorMostrar == null ? "" : valorMostrar) + "\">" +
+                "<input class=\"form-control form-control-sm text-end" + (fuenteSel === "[Estimado IA]" ? " log-ia-est" : "") + (fuenteSel === "[Catálogo]" ? " log-cat" : "") + (autoVal ? " log-env-auto" : "") + "\" data-lv type=\"number\" step=\"0.01\" placeholder=\"" + (exterior ? "Costo" : "Costo COP") + "\" title=\"" + logEsc_(logMargenTituloCosto_(ln, fuenteSel)) + "\"" + (autoVal ? " data-auto-val=\"" + logEsc_(autoVal) + "\"" : "") + " value=\"" + (valorMostrar == null ? "" : valorMostrar) + "\">" +
                 margen +
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" data-ldup title=\"Duplicar\"><i class=\"bi bi-copy\"></i></button>" +
                 "<button type=\"button\" class=\"btn btn-sm btn-outline-danger\" data-ldel title=\"Quitar\"><i class=\"bi bi-trash\"></i></button>" +
@@ -12622,14 +12639,20 @@ Eres el asistente de logística de SmartBudget. Chat interno, SIEMPRE en españo
 ESTILO: frases cortas, una idea por línea. Evita jerga (no digas "contexto", "JSON", "filasAbiertas", "kgVol"). Habla como a un comercial: "flete", "destino", "partida", "contenedor".
 No tocas precios de proyectos, comisión, descuento ni el gran total. Solo hablas del envío.
 La modalidad, el destino y el Incoterm los elige la persona. Puedes SUGIRIR una modalidad (courier, aerea, fcl, lcl, terrestre) y por qué. PROHIBIDO decir que ya la cambiaste.
-Si el catálogo no tiene tarifa para esa ciudad y ese modo, un estimado solo entra con fuente citada (naviera/aerolínea/courier con fecha u otra oferta del país). Sin cita no inventes cifra. Fuente del estimado: "[Estimado IA]".
+CATÁLOGO VS ESTIMADO:
+- Si el diagnóstico ya trae cifra del catálogo (Ajustes) para una partida, esa manda. No la reescribas ni la marques como estimado.
+- Si NO hay tarifa preferida para la ciudad/puerto, puedes aproximar SOLO con: (1) anclas del mismo país listadas en el diagnóstico, y/o (2) fuente pública citada (naviera/aerolínea/courier + fecha u oferta del país).
+- Sin ancla ni cita: PROHIBIDO inventar cifra.
+- Todo estimado lleva fuente "[Estimado IA]". En notas (campo notas) resume la base en ≤120 caracteres (ej. "Ancla Miami +45 · IFS 2026-03" o "Maersk spot 2026-04").
+- En la ficha el estimado se ve con borde ámbar; el catálogo con fondo claro. Duties/Taxes de Ajustes no se estiman.
+- DESTINO / ESTIMADOS: solo anclas del MISMO país y la MISMA modalidad. PROHIBIDO mezclar aérea↔FCL/LCL u otro país. Si no hay ancla válida en Ajustes, no inventes Destino.
 Sin tarifa LCL para comparar: desde 10 m³ sugiere FCL; si no, LCL. Con ambas, compara totales. No cambies el Incoterm.
 DUTIES Y TAXES: si el diagnóstico ya trae %, base (EXW/CIF/CIF+DUTY) o un aviso de partida faltante, explícalo en 1–2 frases. No inventes ni cambies esos %. No llevan margen.
 PESO: si pesoKg es 0 y kgVol > 0, el flete aéreo usa kgVol (pesoCobroKg). PROHIBIDO pedir el peso real.
 ORIGEN Y SEGURO: origen depende solo de la modalidad. Seguro = % de valorMercancia. Si valorMercancia > 0, no digas que falta.
 RANGO AÉREO: si avisoRango trae texto, repítelo tal cual.
 CONTENEDORES Y EMBARQUES: la app ya calculó mix y embarques. No inventes otra cantidad. PROHIBIDO decir que ya cambiaste modalidad, contenedores o embarques.
-PAPEL: las cifras de Ajustes las escribe la app al generar. Tú aclaras huecos y respondes. No reescribas el catálogo.
+PAPEL: al Generar la app aplica primero el catálogo; tú solo propones lineas para HUECOS. No reescribas el catálogo.
 Valores en ${ctx.moneda}, totales del envío. Escribe COSTO sin margen. Filas abiertas: ${tipos}.
 
 CONTEXTO
@@ -12643,13 +12666,13 @@ ${logIa.diagnostico || "(todavía no hay análisis)"}
 
 ${modo === "generar"
         ? `MODO: GENERAR DATOS.
-Una sola frase clara de lo que vas a llenar. AL FINAL un JSON sin markdown:
-{"modalidadSugerida":"aerea","motivo":"una frase","lineas":[{"tipo":"origen","valor":0,"fuente":"[Estimado IA]"}]}
+Una sola frase clara de lo que vas a llenar (di qué viene de catálogo y qué de estimado). AL FINAL un JSON sin markdown:
+{"modalidadSugerida":"aerea","motivo":"una frase","lineas":[{"tipo":"flete_principal","valor":0,"fuente":"[Estimado IA]","notas":"Ancla CiudadX · proveedor · fecha"}]}
 modalidadSugerida: courier, aerea, fcl, lcl, terrestre (vacía en nacional).
-lineas solo con tipos de filasAbiertas. Sin destino o sin cajas: lineas [] y di qué falta.`
+lineas: SOLO tipos sin tarifa de catálogo en el diagnóstico. fuente siempre "[Estimado IA]". Sin destino o sin cajas: lineas [] y di qué falta.`
         : `MODO: ENTREVISTA.
 Máximo 5 líneas, claras. Usa el diagnóstico. No inventes faltantes que el diagnóstico ya negó.
-PROHIBIDO cifras nuevas de flete y PROHIBIDO arreglo lineas.
+PROHIBIDO cifras nuevas de flete y PROHIBIDO arreglo lineas (salvo si el usuario pide un estimado verbal: entonces cifras solo en el chat, no en JSON).
 Pregunta solo lo que falte: ciudad vacía, país, cajas/empaque, puerto marítimo. No preguntes peso real si kgVol > 0.
 Si puedes opinar, una frase de modalidad y cierra con:
 {"modalidadSugerida":"aerea","motivo":"una frase"}
@@ -13890,30 +13913,322 @@ function logCostosAplicarFilas_() {
     return n;
 }
 
+/**
+ * Anclas Destino para [Estimado IA] — reglas duras:
+ * - Mismo país (nunca otro).
+ * - Misma modalidad (nunca aérea↔FCL/LCL/…).
+ * - Una sola ciudad de referencia (no sumar varias).
+ * Prioridad: 1) misma ciudad+modalidad  2) otra ciudad del mismo país+modalidad.
+ * Si no hay ancla válida → no estimar.
+ */
+function logIaPickFilasDestinoAncla_(eK) {
+    const t = typeof logTarAsegurar_ === "function" ? logTarAsegurar_() : null;
+    if (!t || !eK) return { filas: [], etiqueta: "", calidad: "" };
+    const pais = eK.destinoPais || eK.destinoCodigo;
+    if (!pais) return { filas: [], etiqueta: "", calidad: "" };
+    const ciudad = String(eK.destinoCiudad || "").trim();
+    const mod = String(eK.modalidad || "").toLowerCase();
+    if (!mod) return { filas: [], etiqueta: "", calidad: "" };
+
+    let pool = (t.destino || []).slice();
+    /* Semillas solo si la cotización es de ESA modalidad (no cruzar). */
+    if (mod === "aerea" && logTarMismoPais_(pais, "US") && typeof logTarSemillaMiami_ === "function") {
+        const hay = pool.some(function (f) {
+            return logTarMismoPais_(pais, f.pais) && logTarSi_("Miami", f.ciudad)
+                && String(f.modalidad || "").toLowerCase() === "aerea";
+        });
+        if (!hay) pool = pool.concat(logTarSemillaMiami_());
+    }
+    if (mod === "aerea" && logTarMismoPais_(pais, "PR") && typeof logTarSemillaSanJuan_ === "function") {
+        const hay = pool.some(function (f) {
+            return logTarMismoPais_(pais, f.pais) && logTarSi_("San Juan", f.ciudad)
+                && String(f.modalidad || "").toLowerCase() === "aerea";
+        });
+        if (!hay) pool = pool.concat(logTarSemillaSanJuan_());
+    }
+
+    const pref = pool.filter(function (f) {
+        return f.preferida === "S" || f.preferida === true || f.preferida == null || f.preferida === "";
+    });
+    /* Mismo país + misma modalidad únicamente. */
+    const all = (pref.length ? pref : pool).filter(function (f) {
+        if (!logTarMismoPais_(pais, f.pais)) return false;
+        const fm = String(f.modalidad || "").toLowerCase();
+        return fm === mod || fm === "todas";
+    });
+    if (!all.length) return { filas: [], etiqueta: "", calidad: "" };
+
+    const porCiudad_ = function (lista) {
+        const map = {};
+        lista.forEach(function (f) {
+            const key = logTarNorm_(f.ciudad) || "_";
+            if (!map[key]) map[key] = { nombre: f.ciudad || "?", filas: [] };
+            map[key].filas.push(f);
+        });
+        return map;
+    };
+    const mejorCiudad_ = function (mapa, excluirNorm) {
+        let best = null;
+        Object.keys(mapa).forEach(function (k) {
+            if (excluirNorm && k === excluirNorm) return;
+            const g = mapa[k];
+            if (!best || g.filas.length > best.filas.length
+                || (g.filas.length === best.filas.length && String(g.nombre) < String(best.nombre))) {
+                best = g;
+            }
+        });
+        return best;
+    };
+
+    if (ciudad) {
+        const exactas = all.filter(function (f) { return logTarSi_(ciudad, f.ciudad); });
+        if (exactas.length) {
+            return { filas: exactas, etiqueta: ciudad + " · " + mod, calidad: "exacta" };
+        }
+    }
+    const mapa = porCiudad_(all);
+    const otra = mejorCiudad_(mapa, ciudad ? logTarNorm_(ciudad) : "");
+    if (otra && otra.filas.length) {
+        return {
+            filas: otra.filas,
+            etiqueta: otra.nombre + " · " + mod + " (misma modalidad y país)",
+            calidad: "misma_modalidad"
+        };
+    }
+    return { filas: [], etiqueta: "", calidad: "" };
+}
+
+/** Liquida filas Destino de ancla con el cubicaje/valor actuales (para [Estimado IA]). */
+function logIaLiquidarDestinoAnclas_(filas, ctx, notas) {
+    notas = notas || [];
+    if (!filas || !filas.length) return { suma: 0, uso: 0 };
+    const montos = {};
+    let suma = 0;
+    let uso = 0;
+    filas.forEach(function (f) {
+        if (f.forma === "variable" && f.baseVar === "cargos") return;
+        const r = logTarLiquidarFila_(f, ctx);
+        if (r.skip) return;
+        if (r.faltaTrm || r.falta) {
+            notas.push(r.falta || "Falta TRM para un cargo de destino (estimado).");
+            return;
+        }
+        const key = logTarNorm_(f.concepto);
+        montos[key] = (montos[key] || 0) + r.usd;
+        suma += r.usd;
+        uso += 1;
+        notas.push(logTarNotaDestino_(f, logTarDetalleDestino_(f)));
+    });
+    filas.forEach(function (f) {
+        if (!(f.forma === "variable" && f.baseVar === "cargos")) return;
+        const b = logTarCargosBase_(f, montos);
+        if (b.falta) { notas.push(b.falta); return; }
+        const pct = Number(f.precio);
+        if (!isFinite(pct)) return;
+        let usd = logTarConMinimo_(b.base * pct / 100, f);
+        if (usd == null) return;
+        suma += usd;
+        uso += 1;
+        notas.push(logTarNotaDestino_(f, pct + "% sobre " + (f.baseCargos || "cargos")));
+    });
+    return { suma: suma, uso: uso };
+}
+
+/**
+ * Si Destino quedó vacío tras catálogo + Gemini, completa con anclas de Ajustes
+ * (p. ej. Miami aérea cuando la cotización es FCL) marcado [Estimado IA].
+ */
+function logIaCompletarDestinoEstimado_() {
+    if (!logEsCotizacionExterior_()) return 0;
+    const e = logEnv_();
+    if (!e) return 0;
+    if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    const claves = escs.length ? escs.map(function (x) { return x.id; }) : [""];
+    const escUi = escs.length ? (logEnvEscSel_ || (escs[0] && escs[0].id) || "") : "";
+    const ln = (e.lineas || []).find(function (x) { return x.tipo === "destino"; });
+    if (!ln) return 0;
+    let n = 0;
+    claves.forEach(function (k) {
+        if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return;
+        const eK = logEnvParaTarifa_(k);
+        const tipos = logEnvTiposActivos_(eK.modalidad, eK.incoterm, true);
+        if (tipos.indexOf("destino") < 0) return;
+        const fu = logEscFuente_(ln, k || "");
+        const va = logEscValor_(ln, k || "");
+        /* No pisar catálogo ni valor tipado a mano. Sí recalcular un [Estimado IA] previo. */
+        if (fu === "[Catálogo]" && va != null) return;
+        if (va != null && Number(va) > 0 && fu && fu !== "[Estimado IA]") return;
+        const pick = logIaPickFilasDestinoAncla_(eK);
+        if (!pick.filas.length) return;
+        if (pick.calidad !== "exacta" && pick.calidad !== "misma_modalidad") return;
+        const cub = typeof logCubicajeTotal_ === "function" ? logCubicajeTotal_("es", k) : { m3: 0, pesoKg: 0, kgVol: 0 };
+        const valor = typeof logTarValorMercancia_ === "function" ? logTarValorMercancia_(k) : 0;
+        const ctx = logTarCtx_(e, cub, valor, k);
+        const notas = [];
+        const r = logIaLiquidarDestinoAnclas_(pick.filas, ctx, notas);
+        if (!(r.uso > 0) || !(r.suma > 0)) return;
+        const st = k ? (e.porEsc[k] || (e.porEsc[k] = logEnvEscSemilla_(e))) : null;
+        const nota = ("Estimado IA desde " + pick.etiqueta + ". " + notas.slice(0, 4).join("; ")).slice(0, 240);
+        const escribeLn = !k || k === escUi;
+        logEscEscribirCosto_(st, escribeLn ? ln : null, "destino", Math.round(r.suma * 100) / 100, "[Estimado IA]", nota);
+        if (!escribeLn && st) {
+            st.valores[ln.id] = Math.round(r.suma * 100) / 100;
+            st.fuentes[ln.id] = "[Estimado IA]";
+            st.notas[ln.id] = nota;
+            const kt = logEscKeyTipo_("destino");
+            if (kt) {
+                st.valores[kt] = Math.round(r.suma * 100) / 100;
+                st.fuentes[kt] = "[Estimado IA]";
+                st.notas[kt] = nota;
+            }
+        }
+        n += 1;
+    });
+    return n;
+}
+
+/** Texto de anclas Destino (cargos) para el diagnóstico. */
+function logIaAnclasDestinoTxt_(eK, limite) {
+    limite = limite || 8;
+    const pick = logIaPickFilasDestinoAncla_(eK);
+    if (!pick.filas.length) return [];
+    const out = [];
+    pick.filas.forEach(function (f) {
+        if (out.length >= limite) return;
+        const mon = f.moneda || "USD";
+        const det = f.forma === "variable"
+            ? (logTarDetalleDestino_(f) + " " + mon)
+            : ((f.precio != null && f.precio !== "" ? f.precio + " " + mon : ""));
+        out.push((f.ciudad || "?") + " · " + (f.modalidad || "?") + " · " + (f.concepto || "Cargo")
+            + (det ? " → " + det : "")
+            + (f.proveedor ? " · " + f.proveedor : "")
+            + (f.fecha ? " (" + f.fecha + ")" : ""));
+    });
+    if (pick.etiqueta) out.unshift("Base de ancla: " + pick.etiqueta);
+    return out;
+}
+
+/**
+ * Anclas del catálogo (mismo país, otra ciudad/puerto) para aproximar un destino sin tarifa.
+ * Solo texto para el diagnóstico / prompt; no inventa montos.
+ */
+function logIaAnclasFleteTxt_(eK, limite) {
+    limite = limite || 5;
+    const t = typeof logTarAsegurar_ === "function" ? logTarAsegurar_() : null;
+    if (!t || !eK) return [];
+    const pais = eK.destinoPais || eK.destinoCodigo;
+    if (!pais) return [];
+    const mod = String(eK.modalidad || "").toLowerCase();
+    const ciudad = String(eK.destinoCiudad || "").trim();
+    const puerto = String(eK.destinoPuerto || eK.destinoCiudad || "").trim();
+    const out = [];
+    const push_ = function (txt) {
+        if (txt && out.indexOf(txt) < 0) out.push(txt);
+    };
+    /* Solo la misma modalidad y el mismo país. */
+    if (mod === "aerea" || mod === "courier") {
+        logTarPreferidas_(t.aereo).forEach(function (f) {
+            if (out.length >= limite) return;
+            if (!logTarMismoPais_(pais, f.pais)) return;
+            if (ciudad && logTarSi_(ciudad, f.ciudad)) return;
+            const mon = f.moneda || "USD";
+            const bits = [];
+            if (f.minimo != null && f.minimo !== "") bits.push("mín " + f.minimo + " " + mon);
+            ["r45", "r100", "r300", "r500", "r1000"].forEach(function (k) {
+                if (f[k] != null && f[k] !== "") bits.push(k.replace(/^r/, "+") + " " + f[k]);
+            });
+            push_((f.ciudad || "?") + (f.aerolinea ? " · " + f.aerolinea : "") + (f.proveedor ? " · " + f.proveedor : "")
+                + (bits.length ? " → " + bits.join(", ") : "")
+                + (f.fecha ? " (" + f.fecha + ")" : ""));
+        });
+    } else if (mod === "lcl") {
+        logTarPreferidas_(t.lcl).forEach(function (f) {
+            if (out.length >= limite) return;
+            if (!logTarMismoPais_(pais, f.pais)) return;
+            if (puerto && logTarSi_(puerto, f.puerto)) return;
+            push_((f.puerto || "?") + (f.naviera ? " · " + f.naviera : "") + (f.proveedor ? " · " + f.proveedor : "")
+                + (f.precio != null && f.precio !== "" ? (" → " + f.precio + " " + (f.moneda || "USD") + "/w/m") : "")
+                + (f.fecha ? " (" + f.fecha + ")" : ""));
+        });
+    } else if (mod === "fcl") {
+        logTarPreferidas_(t.fcl).forEach(function (f) {
+            if (out.length >= limite) return;
+            if (!logTarMismoPais_(pais, f.pais)) return;
+            if (puerto && logTarSi_(puerto, f.puerto)) return;
+            push_((f.puerto || "?") + " · " + (f.equipo || "?")
+                + (f.naviera ? " · " + f.naviera : "")
+                + (f.precio != null && f.precio !== "" ? (" → " + f.precio + " " + (f.moneda || "USD")) : "")
+                + (f.fecha ? " (" + f.fecha + ")" : ""));
+        });
+    }
+    return out;
+}
+
+/**
+ * Escribe solo huecos: no pisa [Catálogo] ni Aranceles.
+ * Persiste [Estimado IA] en global y en cada opción activa.
+ */
 function logIaEscribirLineas_(obj) {
     const lista = obj && Array.isArray(obj.lineas) ? obj.lineas : [];
     const e = logEnv_();
+    if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    const escs = typeof logEscList_ === "function" ? logEscList_() : [];
+    const claves = escs.length ? escs.map(function (x) { return x.id; }) : [""];
+    const escUi = escs.length ? (logEnvEscSel_ || (escs[0] && escs[0].id) || "") : "";
     let n = 0;
     lista.forEach(function (item) {
         const tipo = String(item && item.tipo || "").trim();
-        const ln = e.lineas.find(function (x) { return x.tipo === tipo && x.tipo !== "libre"; });
+        if (!tipo || tipo === "libre" || tipo === "servicio" || tipo === "extra") return;
+        const ln = (e.lineas || []).find(function (x) { return x.tipo === tipo; });
         if (!ln) return;
-        if ((tipo === "duties" || tipo === "taxes") && ln.fuente === "Aranceles") return;
+        if ((tipo === "duties" || tipo === "taxes") && (ln.fuente === "Aranceles" || logEscFuente_(ln, escUi) === "Aranceles")) return;
         const valor = Number(item.valor);
         const pct = Number(item.pct);
-        let puso = false;
-        if (item.valor != null && item.valor !== "" && isFinite(valor)) {
-            ln.valor = valor;
-            puso = true;
-        }
-        if ((tipo === "duties" || tipo === "taxes") && item.pct != null && item.pct !== "" && isFinite(pct)) {
-            ln.pct = pct;
-            if (item.valor == null || item.valor === "") ln.valor = null;
-            puso = true;
-        }
-        if (!puso) return;
-        ln.fuente = "[Estimado IA]";
-        n += 1;
+        const tieneValor = item.valor != null && item.valor !== "" && isFinite(valor);
+        const tienePct = (tipo === "duties" || tipo === "taxes")
+            && item.pct != null && item.pct !== "" && isFinite(pct);
+        if (!tieneValor && !tienePct) return;
+        const notasIa = String((item && item.notas) || item.fuenteDetalle || "").trim().slice(0, 240);
+        let pusoAlguna = false;
+        claves.forEach(function (k) {
+            if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return;
+            const fu = logEscFuente_(ln, k || "");
+            const va = logEscValor_(ln, k || "");
+            if (fu === "[Catálogo]" && va != null) return;
+            if (fu === "Aranceles") return;
+            const st = k
+                ? (e.porEsc[k] || (e.porEsc[k] = logEnvEscSemilla_(e)))
+                : null;
+            const escribeLn = !k || k === escUi;
+            if (tienePct && (tipo === "duties" || tipo === "taxes")) {
+                if (st) {
+                    st.pcts[ln.id] = pct;
+                    const kt = logEscKeyTipo_(tipo);
+                    if (kt) st.pcts[kt] = pct;
+                    delete st.valores[ln.id];
+                    if (kt) delete st.valores[kt];
+                    st.fuentes[ln.id] = "[Estimado IA]";
+                    if (kt) st.fuentes[kt] = "[Estimado IA]";
+                }
+                if (escribeLn) {
+                    ln.pct = pct;
+                    if (!tieneValor) ln.valor = null;
+                    else ln.valor = valor;
+                    ln.fuente = "[Estimado IA]";
+                    if (notasIa) ln.notas = notasIa;
+                }
+            } else if (tieneValor) {
+                logEscEscribirCosto_(st, escribeLn ? ln : null, tipo, valor, "[Estimado IA]", notasIa || (escribeLn ? (ln.notas || "") : ""));
+                if (!escribeLn && st && ln && ln.id) {
+                    st.valores[ln.id] = valor;
+                    st.fuentes[ln.id] = "[Estimado IA]";
+                    if (notasIa) st.notas[ln.id] = notasIa;
+                }
+            } else return;
+            pusoAlguna = true;
+        });
+        if (pusoAlguna) n += 1;
     });
     return n;
 }
@@ -14015,6 +14330,25 @@ function logIaDiagnostico_() {
             else if (faltas.length) lineas.push("· " + nombre + ": " + faltas[0]);
             else if (tipo === "flete_principal" || tipo === "destino") lineas.push("· " + nombre + ": no hay tarifa preferida para " + (ciudad || "esta ciudad") + ".");
             else lineas.push("· " + nombre + ": no hay tarifa preferida en Ajustes.");
+            if (!r.uso && tipo === "destino") {
+                const anclasD = logIaAnclasDestinoTxt_(eK, 8);
+                if (anclasD.length) {
+                    lineas.push("  HUECO Destino: sin tarifa " + (eK.modalidad || "") + " para esta ciudad.");
+                    lineas.push("  Anclas válidas (mismo país + misma modalidad; no cruzar modo ni país):");
+                    anclasD.forEach(function (a) { lineas.push("  · " + a); });
+                    lineas.push("  Al Generar se puede completar Destino [Estimado IA] solo con esas anclas.");
+                } else {
+                    lineas.push("  HUECO Destino: no hay cargos Destino en Ajustes para este país y modalidad "
+                        + (eK.modalidad || "") + ". No se estima (prohibido usar otra modalidad u otro país).");
+                }
+            } else if (!r.uso && (tipo === "flete_principal" || tipo === "origen")) {
+                const anclas = logIaAnclasFleteTxt_(eK, 5);
+                if (anclas.length) {
+                    lineas.push("  Anclas mismo país (Ajustes, otras ciudades/puertos) para aproximar:");
+                    anclas.forEach(function (a) { lineas.push("  · " + a); });
+                    lineas.push("  Si estimas con estas anclas + fuente citada, marca fuente [Estimado IA].");
+                }
+            }
         });
         const pesoTxt = (Math.round(ctx.kg * 100) / 100).toLocaleString("es-CO");
         const pesoDe = !(Number(cub.pesoKg) > 0) && Number(cub.kgVol) > 0 ? " (volumétricos)" : "";
@@ -14051,7 +14385,7 @@ function logIaDiagnostico_() {
         if (typeof logCostosAjustarSugerencia_ === "function") logCostosAjustarSugerencia_();
     }
     bloques.push("");
-    bloques.push("Siguiente paso: pulsa Generar datos logísticos. Eso escribe en la ficha los costos del catálogo y liquida Duties/Taxes con las partidas. El margen de logística se suma después en la cotización. La modalidad no cambia sola.");
+    bloques.push("Siguiente paso: pulsa Generar datos logísticos. Eso escribe primero el catálogo (Ajustes) y, si faltan tarifas de ciudad/puerto, puede completar huecos como [Estimado IA] (borde ámbar) usando anclas del mismo país o fuente citada. Duties/Taxes salen del arancel. El margen de logística se suma después. La modalidad no cambia sola.");
     const texto = bloques.filter(function (x, i) { return x !== "" || (bloques[i - 1] && bloques[i - 1] !== ""); }).join("\n").replace(/\n{3,}/g, "\n\n");
     logIa.diagnostico = texto;
     return texto;
@@ -14077,6 +14411,8 @@ async function logIaAplicarLocal_() {
         exwNota = " La opción activa está en EXW: no hay filas de costo logístico que mostrar. Cambia el Incoterm si quieres ver origen, flete, destino, Duties y Taxes.";
     }
     const cat = logCostosAplicarFilas_();
+    /* Hueco Destino (p. ej. FCL sin tarifa; ancla Miami aérea) → [Estimado IA]. */
+    const nDest = typeof logIaCompletarDestinoEstimado_ === "function" ? logIaCompletarDestinoEstimado_() : 0;
     /* Duties/Taxes: cargar catálogo si hace falta y liquidar con partidas. */
     if (logEsCotizacionExterior_() && !logAranceles.filas && !logAranceles.pedido) {
         try { await logCargarAranceles_(); } catch (err) { /* sin catálogo no se liquidan */ }
@@ -14108,7 +14444,7 @@ async function logIaAplicarLocal_() {
     if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
     /* Costos regenerados: liberar pendiente en TODAS las opciones liquidadas (no solo la UI). */
     const escOk = (logCostosAplicarFilas_._escOk || []).slice();
-    if (cat > 0 || escOk.length || exwNota) {
+    if (cat > 0 || nDest > 0 || escOk.length || exwNota) {
         if (typeof logisticaLimpiarCostosPendiente_ === "function") {
             logisticaLimpiarCostosPendiente_({
                 escIds: escOk.length ? escOk : logCostosClavesOpciones_()
@@ -14118,11 +14454,14 @@ async function logIaAplicarLocal_() {
     const caja = document.getElementById("logEnvLineas");
     if (caja && caja.scrollIntoView) caja.scrollIntoView({ block: "nearest" });
     const extra = (window.logTarAvisos || []).join(" ");
-    const cuerpo = cat
-        ? "Listo. Escribí " + cat + " costo" + (cat === 1 ? "" : "s") + " del catálogo en la ficha de Costos logísticos."
+    const partesCuerpo = [];
+    if (cat) partesCuerpo.push(cat + " costo" + (cat === 1 ? "" : "s") + " del catálogo");
+    if (nDest) partesCuerpo.push("Destino [Estimado IA] por anclas de Ajustes");
+    const cuerpo = partesCuerpo.length
+        ? ("Listo. Escribí " + partesCuerpo.join(" y ") + " en la ficha de Costos logísticos.")
         : ("No pude escribir costos del catálogo en las filas abiertas." + exwNota);
     const nota = cuerpo + arancelTxt +
-        (cat ? " La cotización les suma el margen de logística (Duties y Taxes no llevan margen)." : "") +
+        (cat || nDest ? " La cotización les suma el margen de logística (Duties y Taxes no llevan margen)." : "") +
         " La modalidad no se cambió." +
         (extra ? " " + extra : "");
     logIa.historial.push({ role: "model", text: cuerpo + (arancelTxt ? arancelTxt : "") });
@@ -14130,6 +14469,7 @@ async function logIaAplicarLocal_() {
     logIa.fase = "datos";
     logIaPintar_();
 }
+window.logIaCompletarDestinoEstimado_ = logIaCompletarDestinoEstimado_;
 
 async function logIaConsultar_(modo, textoUsuario) {
     if (logIa.ocupado) return;
@@ -14193,16 +14533,29 @@ async function logIaConsultar_(modo, textoUsuario) {
         logCostosAjustarSugerencia_();
         let nota = "";
         if (modo === "generar") {
-            const n = logIaEscribirLineas_(json);
+            /* 1) Catálogo. 2) JSON Gemini en huecos. 3) Destino desde anclas si sigue vacío. */
             const cat = logCostosAplicarFilas_();
-            if (n || cat) {
+            const n = logIaEscribirLineas_(json);
+            const nDest = logIaCompletarDestinoEstimado_();
+            if (n || cat || nDest) {
                 logMarcarSucio_();
+                if (typeof logisticaLimpiarCostosPendiente_ === "function") {
+                    try {
+                        logisticaLimpiarCostosPendiente_({
+                            escIds: (logCostosAplicarFilas_._escOk && logCostosAplicarFilas_._escOk.length)
+                                ? logCostosAplicarFilas_._escOk
+                                : null
+                        });
+                    } catch (eLim) { /* noop */ }
+                }
                 logisticaPintarEnv_(true);
                 logisticaRefrescarTabla_();
                 const extra = (window.logTarAvisos || []).join(" ");
-                nota = cat
-                    ? "Apliqué " + cat + " concepto" + (cat === 1 ? "" : "s") + " del catálogo. La modalidad no se cambió." + (extra ? " " + extra : "")
-                    : "Escribí " + n + " fila" + (n === 1 ? "" : "s") + " como estimado. La modalidad no se cambió." + (extra ? " " + extra : "");
+                const partes = [];
+                if (cat) partes.push(cat + " del catálogo (Ajustes)");
+                if (n) partes.push(n + " estimado" + (n === 1 ? "" : "s") + " del modelo");
+                if (nDest) partes.push("Destino por anclas [Estimado IA]");
+                nota = "Apliqué " + partes.join(" · ") + ". La modalidad no se cambió." + (extra ? " " + extra : "");
             } else {
                 const extra = (window.logTarAvisos || []).join(" ");
                 nota = extra || "No escribí cifras. Revisa lo que falta y vuelve a generar.";
