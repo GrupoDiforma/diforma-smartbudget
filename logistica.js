@@ -4456,25 +4456,60 @@ function logCostosNombreOp_(escId) {
 
 /**
  * ¿Esta opción (o el global) debe llevar costos regenerados para poder exportar?
- * EXW / sin filas de envío → no exige. Resto sí.
+ * - Nacional → no (no se calculan envíos internacionales).
+ * - Exportación + EXW (por opción) → no (entrega en puerta de la empresa).
+ * - Sin filas de envío según Incoterm → no.
+ * Con opciones: se valida el Incoterm de CADA opción (logEnvVistaEsc_).
  */
 function logCostosOpcionExigeFirma_(escId) {
     try {
         if (escId && typeof logEnvActivo_ === "function" && !logEnvActivo_(escId)) return false;
-        if (typeof logEsCotizacionExterior_ === "function" && !logEsCotizacionExterior_()) return false;
+        const exterior = typeof logEsCotizacionExterior_ === "function" && logEsCotizacionExterior_();
+        if (!exterior) return false;
         const vista = typeof logEnvVistaEsc_ === "function" ? logEnvVistaEsc_(escId || "") : (logEnv_() || {});
         const inc = String((vista && vista.incoterm) || "").toUpperCase();
+        if (inc === "EXW") return false;
         const mod = String((vista && vista.modalidad) || "");
         const tipos = typeof logEnvTiposActivos_ === "function"
             ? logEnvTiposActivos_(mod, inc, true)
             : [];
         if (!tipos.length) return false;
-        if (inc === "EXW") return false;
         return true;
     } catch (eEx) {
         return true;
     }
 }
+
+/** ¿Alguna opción (o el global) exige costos logísticos regenerables? */
+function logCostosHayAlgunaQueExige_() {
+    return logCostosClavesOpciones_().some(function (k) {
+        return logCostosOpcionExigeFirma_(k);
+    });
+}
+
+/**
+ * Nacional / EXW (u opción sin filas de envío): apaga flags viejos de «falta Generar»
+ * para que no bloqueen PDF/Excel ni el badge del Simulador 3D.
+ */
+function logCostosLimpiarFlagsSiNoExige_() {
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return;
+    if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    logCostosClavesOpciones_().forEach(function (k) {
+        if (logCostosOpcionExigeFirma_(k)) return;
+        if (k) {
+            if (!e.porEsc[k]) return;
+            e.porEsc[k].logCostosPendiente = false;
+        } else {
+            e.logCostosPendiente = false;
+        }
+    });
+    logCostosSincronizarFlagGlobal_();
+    if (!logCostosHayAlgunaQueExige_()) logRecalcPendiente_ = false;
+}
+window.logCostosHayAlgunaQueExige_ = logCostosHayAlgunaQueExige_;
+window.logCostosLimpiarFlagsSiNoExige_ = logCostosLimpiarFlagsSiNoExige_;
+window.logCostosOpcionExigeFirma_ = logCostosOpcionExigeFirma_;
 
 /** ¿La opción tiene montos propios en porEsc (no heredados de otra opción)? */
 function logCostosOpcionTieneValoresPropios_(escId) {
@@ -4575,18 +4610,18 @@ function logCostosOpcionesPendientes_() {
 }
 
 function logCostosHayPendienteEnAlgunaOpcion_() {
+    if (!logCostosHayAlgunaQueExige_()) return false;
     if (logRecalcPendiente_) return true;
-    const e = typeof logEnv_ === "function" ? logEnv_() : null;
-    if (e && e.logCostosPendiente) return true;
     return logCostosOpcionesPendientes_().length > 0;
 }
 
 function logCostosSincronizarFlagGlobal_() {
     const e = typeof logEnv_ === "function" ? logEnv_() : null;
     if (!e) return;
-    /* Con opciones: OR de porEsc. Sin opciones (modo única): el flag vive en env global. */
+    /* Solo cuentan opciones que EXIGEN costos (no Nacional / EXW). */
     e.logCostosPendiente = logCostosClavesOpciones_().some(function (k) {
         if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return false;
+        if (!logCostosOpcionExigeFirma_(k)) return false;
         const st = k ? (e.porEsc && e.porEsc[k]) : e;
         return !!(st && st.logCostosPendiente);
     });
@@ -4617,8 +4652,11 @@ function logisticaSim3dExportOk_() {
                     + "Pulsa «Aplicar a Logística» antes de exportar PDF o Excel."
             };
         }
+        try { logCostosLimpiarFlagsSiNoExige_(); } catch (eCl) { /* noop */ }
+        /* Nacional y Exportación EXW (por opción) no exigen Generar: no bloquean. */
+        if (!logCostosHayAlgunaQueExige_()) return { ok: true };
         const pend = logCostosOpcionesPendientes_();
-        if (pend.length || logRecalcPendiente_ || (env && env.logCostosPendiente)) {
+        if (pend.length || logRecalcPendiente_) {
             const nombres = pend.map(function (p) { return p.nombre; }).filter(Boolean);
             const lista = nombres.length
                 ? (" Falta regenerar: " + nombres.join(", ") + ".")
@@ -4652,10 +4690,20 @@ function logisticaMarcarCostosPendientePorCub_(escId, opts) {
     const e = typeof logEnv_ === "function" ? logEnv_() : null;
     if (!e) return;
     if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    /* Nacional / solo-EXW: no marcar pendiente ni subir epoch. */
+    if (!logCostosHayAlgunaQueExige_()) {
+        logCostosLimpiarFlagsSiNoExige_();
+        return;
+    }
     logCostosBumpEpoch_();
     delete e.costosEpochOk;
-    /* Invalidar todas las opciones: Generar las vuelve a alinear en bloque. */
+    /* Invalidar solo opciones que exigen costos (no EXW ni apagadas). */
     logCostosClavesOpciones_().forEach(function (k) {
+        if (!logCostosOpcionExigeFirma_(k)) {
+            if (k && e.porEsc[k]) e.porEsc[k].logCostosPendiente = false;
+            else if (!k) e.logCostosPendiente = false;
+            return;
+        }
         if (k) {
             if (!e.porEsc[k]) e.porEsc[k] = logEnvEscSemilla_(e);
             e.porEsc[k].logCostosPendiente = true;
@@ -4666,12 +4714,11 @@ function logisticaMarcarCostosPendientePorCub_(escId, opts) {
             delete e.costosFirma;
         }
     });
-    if (escId && e.porEsc[escId]) {
+    if (escId && e.porEsc[escId] && logCostosOpcionExigeFirma_(escId)) {
         e.porEsc[escId].logCostosPendiente = true;
         e.porEsc[escId].costosEpoch = 0;
         delete e.porEsc[escId].costosFirma;
     }
-    e.logCostosPendiente = true;
     logCostosSincronizarFlagGlobal_();
     logRecalcPendiente_ = true;
     if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
@@ -4695,11 +4742,28 @@ function logisticaInvalidarCostosTrasSim3d_() {
     const e = typeof logEnv_ === "function" ? logEnv_() : null;
     if (!e) return;
     if (!e.porEsc || typeof e.porEsc !== "object") e.porEsc = {};
+    const claves = logCostosClavesOpciones_();
+    const clavesExigen = claves.filter(function (k) { return logCostosOpcionExigeFirma_(k); });
+    /* Nacional o todas EXW: aplica m³/kg sin exigir Generar ni bloquear export. */
+    if (!clavesExigen.length) {
+        logCostosLimpiarFlagsSiNoExige_();
+        if (typeof window.slPintarBadgeSim3dPendiente === "function") {
+            try { window.slPintarBadgeSim3dPendiente(); } catch (eBd0) { /* noop */ }
+        }
+        if (typeof logExportActualizarUiGate_ === "function") {
+            try { logExportActualizarUiGate_(); } catch (eG0) { /* noop */ }
+        }
+        return;
+    }
     logCostosBumpEpoch_();
     delete e.costosEpochOk;
-    const claves = logCostosClavesOpciones_();
     claves.forEach(function (k) {
         if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return;
+        if (!logCostosOpcionExigeFirma_(k)) {
+            if (k && e.porEsc[k]) e.porEsc[k].logCostosPendiente = false;
+            else if (!k) e.logCostosPendiente = false;
+            return;
+        }
         if (k) {
             if (!e.porEsc[k]) e.porEsc[k] = logEnvEscSemilla_(e);
             e.porEsc[k].logCostosPendiente = true;
@@ -4710,13 +4774,13 @@ function logisticaInvalidarCostosTrasSim3d_() {
             delete e.costosFirma;
         }
     });
-    e.logCostosPendiente = true;
-    const nOp = claves.filter(Boolean).length;
+    logCostosSincronizarFlagGlobal_();
+    const nOp = clavesExigen.filter(Boolean).length;
     const msg = "Se aplicó el Simulador 3D (nuevo embalaje / m³ / kg)"
-        + (nOp > 1 ? (" a " + nOp + " opciones") : "")
+        + (nOp > 1 ? (" a " + nOp + " opciones con costos logísticos") : "")
         + ". Borré los costos de catálogo. Pulsa Análisis costos logísticos y luego Generar datos logísticos "
         + "antes de PDF o Excel"
-        + (nOp > 1 ? " (cubre todas las opciones)." : ".");
+        + (nOp > 1 ? " (cubre las opciones que no son EXW)." : ".");
     try {
         logBorrarCalculoLog_(false, {
             notaHistorial: msg,
@@ -4818,6 +4882,7 @@ window.logisticaInvalidarCostosTrasSim3d_ = logisticaInvalidarCostosTrasSim3d_;
 window.logisticaLimpiarCostosPendiente_ = logisticaLimpiarCostosPendiente_;
 window.logCostosOpcionesPendientes_ = logCostosOpcionesPendientes_;
 window.logCostosHayPendienteEnAlgunaOpcion_ = logCostosHayPendienteEnAlgunaOpcion_;
+window.logCostosSincronizarFlagGlobal_ = logCostosSincronizarFlagGlobal_;
 
 /** Une chequeos previos a exportar cotización (versión Costos + sync 3D). Fallo cerrado. */
 function logisticaExportCotizacionOk_() {
@@ -11077,9 +11142,12 @@ function logAplicarFaltasAnalisis_() {
 function logPintarRecalcAviso_() {
     const el = document.getElementById("logRecalcAviso");
     if (!el) return;
-    const pendOps = typeof logCostosOpcionesPendientes_ === "function" ? logCostosOpcionesPendientes_() : [];
-    const env = typeof logEnv_ === "function" ? logEnv_() : null;
-    const porSim3d = !!(env && env.logCostosPendiente) || pendOps.length > 0;
+    try { logCostosLimpiarFlagsSiNoExige_(); } catch (eClAv) { /* noop */ }
+    const pendOps = (typeof logCostosHayAlgunaQueExige_ === "function" && logCostosHayAlgunaQueExige_()
+        && typeof logCostosOpcionesPendientes_ === "function")
+        ? logCostosOpcionesPendientes_()
+        : [];
+    const porSim3d = pendOps.length > 0;
     if (!logRecalcPendiente_ && !porSim3d) {
         el.textContent = "";
         el.classList.add("d-none");

@@ -2330,16 +2330,21 @@
         var pendCostos = false;
         var nOpPend = 0;
         try {
+            if (typeof window.logCostosLimpiarFlagsSiNoExige_ === "function") {
+                try { window.logCostosLimpiarFlagsSiNoExige_(); } catch (eCl) { /* noop */ }
+            }
             if (typeof logEnv_ === "function") {
                 var env = logEnv_();
                 pendApply = !!(env && env.sim3dPendiente);
-                pendCostos = !!(env && env.logCostosPendiente);
             }
-            if (typeof window.logCostosOpcionesPendientes_ === "function") {
+            /* Nacional / EXW (por opción) no exigen Generar → sin badge «Falta costos». */
+            var exige = typeof window.logCostosHayAlgunaQueExige_ !== "function"
+                || !!window.logCostosHayAlgunaQueExige_();
+            if (exige && typeof window.logCostosOpcionesPendientes_ === "function") {
                 var ops = window.logCostosOpcionesPendientes_() || [];
                 nOpPend = ops.length;
                 if (nOpPend) pendCostos = true;
-            } else if (typeof window.logCostosHayPendienteEnAlgunaOpcion_ === "function") {
+            } else if (exige && typeof window.logCostosHayPendienteEnAlgunaOpcion_ === "function") {
                 pendCostos = !!window.logCostosHayPendienteEnAlgunaOpcion_();
             }
         } catch (eB) { /* noop */ }
@@ -2450,6 +2455,9 @@
                 ghost: !!met.ghost,
                 nota: nota
             };
+            var exigeOp = typeof window.logCostosOpcionExigeFirma_ === "function"
+                ? !!window.logCostosOpcionExigeFirma_(esc.logEscId || "")
+                : true;
             if (esc.logEscId) {
                 if (!env.porEsc[esc.logEscId]) {
                     env.porEsc[esc.logEscId] = (typeof logEnvEscSemilla_ === "function")
@@ -2464,9 +2472,13 @@
                 st.cubPeso = met.kg > 0 ? met.kg : null;
                 st.cubKgVol = kgVol;
                 st.sim3d = packSim;
-                /* Esta opción cambió m³/kg → costos logísticos quedan viejos hasta Generar. */
-                st.logCostosPendiente = true;
-                delete st.costosFirma;
+                /* Solo opciones que exigen flete (no Nacional / EXW) quedan pendientes de Generar. */
+                if (exigeOp) {
+                    st.logCostosPendiente = true;
+                    delete st.costosFirma;
+                } else {
+                    st.logCostosPendiente = false;
+                }
                 /* No borrar sim3dImg: la captura al PDF es manual y se conserva. */
             } else {
                 env.contenedores = mix;
@@ -2475,15 +2487,23 @@
                 env.cubPeso = met.kg > 0 ? met.kg : null;
                 env.cubKgVol = kgVol;
                 env.sim3d = packSim;
-                env.logCostosPendiente = true;
-                delete env.costosFirma;
+                if (exigeOp) {
+                    env.logCostosPendiente = true;
+                    delete env.costosFirma;
+                } else {
+                    env.logCostosPendiente = false;
+                }
             }
         });
-        env.logCostosPendiente = true;
+        if (typeof window.logCostosSincronizarFlagGlobal_ === "function") {
+            try { window.logCostosSincronizarFlagGlobal_(); } catch (eSg) { /* noop */ }
+        } else if (typeof window.logCostosLimpiarFlagsSiNoExige_ === "function") {
+            try { window.logCostosLimpiarFlagsSiNoExige_(); } catch (eCl2) { /* noop */ }
+        }
 
         if (typeof window.slPersistirEnEnv === "function") window.slPersistirEnEnv();
         limpiarSim3dPendiente_();
-        /* m³/kg ya en Envío; invalidar fletes viejos y bloquear PDF/Excel hasta Generar. */
+        /* m³/kg ya en Envío; invalidar fletes solo si alguna opción exige costos. */
         if (typeof window.logisticaInvalidarCostosTrasSim3d_ === "function") {
             try { window.logisticaInvalidarCostosTrasSim3d_(); } catch (eInv) { /* noop */ }
         }
@@ -2492,7 +2512,15 @@
         if (typeof logisticaPintarFilas_ === "function") logisticaPintarFilas_();
         if (typeof logisticaActualizarVista === "function") logisticaActualizarVista();
         pintarBadgeSim3dPendiente_();
-        toast_("Envío actualizado (m³ / kg / mix). Ve a Logística → Análisis costos logísticos → Generar datos logísticos. PDF/Excel siguen bloqueados hasta entonces.");
+        var hayExige = typeof window.logCostosHayAlgunaQueExige_ === "function"
+            && !!window.logCostosHayAlgunaQueExige_();
+        var hayPend = typeof window.logCostosHayPendienteEnAlgunaOpcion_ === "function"
+            && !!window.logCostosHayPendienteEnAlgunaOpcion_();
+        if (hayExige && hayPend) {
+            toast_("Envío actualizado (m³ / kg / mix). Ve a Logística → Análisis costos logísticos → Generar datos logísticos. PDF/Excel siguen bloqueados hasta entonces.");
+        } else {
+            toast_("Envío actualizado (m³ / kg / mix). Nacional / EXW no requieren generar costos logísticos; PDF y Excel quedan habilitados.");
+        }
     }
 
     /**
