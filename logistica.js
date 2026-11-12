@@ -571,6 +571,19 @@ function logisticaDatosDoc_(idioma) {
             const auto = demo ? "17999-A-V1" : (logCodigoPrimeraFila_() || (p.codigo + (p.version ? "-" + p.version : "")) || "");
             /* Consolidado: el # del encabezado sigue siempre la 1.ª fila (no el cab guardado ni el de Costos). */
             if (logTipoDoc_(idioma) === "CONS") return auto;
+            /*
+             * QUOT/COT: si cab.codigo quedó de una versión anterior (p. ej. …-V1) y la 1.ª fila
+             * ya es …-V2, el título debe seguir la fila (igual que badge / nombre de archivo).
+             * Solo se suelta el override cuando es el mismo proyecto base; un código distinto a mano se respeta.
+             */
+            if (auto && ov && Object.prototype.hasOwnProperty.call(ov, "codigo")) {
+                const baseOv = logCodigoProyectoBase_(ov.codigo);
+                const baseAu = logCodigoProyectoBase_(auto);
+                if (baseOv && baseAu && logNormCod_(baseOv) === logNormCod_(baseAu)
+                    && logNormCod_(ov.codigo) !== logNormCod_(auto)) {
+                    delete ov.codigo;
+                }
+            }
             return pick("codigo", auto);
         })(),
         firmaNombre: pick("firmaNombre", demo ? f.nombre : (com.nombre || (sigue ? p.comercial : "") || "")),
@@ -958,6 +971,10 @@ function logisticaActualizarPresupuestoDesdeCostos_() {
     logComisionSincronizarDesdeCostos_({ forzar: true });
     logMarcarSucio_();
     logisticaRefrescarTabla_();
+    /* Duties/Taxes salen del EXW de productos: hay que redibujar Costos Logísticos. */
+    if (typeof logisticaPintarEnv_ === "function") {
+        try { logisticaPintarEnv_(true); } catch (eEnv) { /* la hoja de precios ya quedó */ }
+    }
     if (typeof mostrarNotificacion !== "function") return;
     const extraOtras = otras ? (" " + otras + " de otro proyecto no se tocaron.") : "";
     if (ok && !sinPrecio) {
@@ -4516,6 +4533,31 @@ window.logCostosHayAlgunaQueExige_ = logCostosHayAlgunaQueExige_;
 window.logCostosLimpiarFlagsSiNoExige_ = logCostosLimpiarFlagsSiNoExige_;
 window.logCostosOpcionExigeFirma_ = logCostosOpcionExigeFirma_;
 
+/** Hay monto numérico en la fila/opción (cualquier origen). */
+function logEscTieneMonto_(ln, escId) {
+    if (!ln) return false;
+    const va = logEscValor_(ln, escId || "");
+    return va != null && isFinite(Number(va));
+}
+
+/**
+ * Costo tipado a mano / cotización de proveedor en ESA opción.
+ * Criterio: hay monto y la fuente NO es de sistema ([Catálogo], [Estimado IA], Aranceles).
+ * → Generar/Análisis no lo pisa.
+ * Lo que sí se sobrescribe al regenerar: [Catálogo] y [Estimado IA] (p. ej. cambió caja/peso).
+ */
+function logEscEsCostoManual_(ln, escId) {
+    if (!logEscTieneMonto_(ln, escId)) return false;
+    const fu = String(logEscFuente_(ln, escId || "") || "");
+    return fu !== "[Catálogo]" && fu !== "[Estimado IA]" && fu !== "Aranceles";
+}
+
+/** Generado por Análisis/Generar (Ajustes o anclas IA): se puede recalcular. */
+function logEscEsCostoDeSistema_(ln, escId) {
+    const fu = String(logEscFuente_(ln, escId || "") || "");
+    return fu === "[Catálogo]" || fu === "[Estimado IA]";
+}
+
 /** ¿La opción tiene montos propios en porEsc (no heredados de otra opción)? */
 function logCostosOpcionTieneValoresPropios_(escId) {
     const e = typeof logEnv_ === "function" ? logEnv_() : null;
@@ -4581,8 +4623,13 @@ function logCostosOpcionesPendientes_() {
             : (pendFlag || desfaseFirma || !(parseInt(e.costosEpochOk, 10) === epochG));
         const sinValores = !logCostosOpcionTieneValoresPropios_(k);
 
+        /*
+         * Snapshot 3D vs cubicaje: solo importa si la firma aún no está alineada.
+         * Si costosFirma === actual, Generar/Confirmar ya aceptó el m³/kg vigente;
+         * un sim3d viejo no debe dejar PDF/Excel bloqueados para siempre.
+         */
         let desfaseSim3d = false;
-        if (st && st.sim3d) {
+        if (desfaseFirma && st && st.sim3d) {
             const sm = Number(st.sim3d.m3);
             const sk = Number(st.sim3d.kg);
             const cub = logCostosCubEfectivo_(k);
@@ -4616,7 +4663,8 @@ function logCostosOpcionesPendientes_() {
 
 function logCostosHayPendienteEnAlgunaOpcion_() {
     if (!logCostosHayAlgunaQueExige_()) return false;
-    if (logRecalcPendiente_) return true;
+    /* Firma/epoch/valores mandan. logRecalcPendiente_ es solo aviso UI;
+     * si se consulta aquí, Generar nunca podía apagarlo (bloqueo circular de PDF). */
     return logCostosOpcionesPendientes_().length > 0;
 }
 
@@ -4659,23 +4707,34 @@ function logisticaSim3dExportOk_() {
         }
         try { logCostosLimpiarFlagsSiNoExige_(); } catch (eCl) { /* noop */ }
         /* Nacional y Exportación EXW (por opción) no exigen Generar: no bloquean. */
-        if (!logCostosHayAlgunaQueExige_()) return { ok: true };
-        const pend = logCostosOpcionesPendientes_();
-        if (pend.length || logRecalcPendiente_) {
-            const nombres = pend.map(function (p) { return p.nombre; }).filter(Boolean);
-            const lista = nombres.length
-                ? (" Falta regenerar: " + nombres.join(", ") + ".")
-                : "";
-            return {
-                ok: false,
-                mensaje: (hayOps
-                    ? ("No se puede exportar: hay opciones sin Generar datos logísticos tras cambio de embalaje/m³/peso/modalidad." + lista)
-                    : "No se puede exportar: faltan costos logísticos regenerados (m³/peso/modalidad).")
-                    + " En Logística: «Análisis costos logísticos» → «Generar datos logísticos»"
-                    + (hayOps ? " (un Generar actualiza todas las opciones de la cotización)." : ".")
-            };
+        if (!logCostosHayAlgunaQueExige_()) {
+            logRecalcPendiente_ = false;
+            return { ok: true };
         }
-        return { ok: true };
+        const pend = logCostosOpcionesPendientes_();
+        if (!pend.length) {
+            logRecalcPendiente_ = false;
+            return { ok: true };
+        }
+        const nombres = pend.map(function (p) { return p.nombre; }).filter(Boolean);
+        const lista = nombres.length ? (" Falta: " + nombres.join(", ") + ".") : "";
+        const detalle = pend.map(function (p) {
+            const bits = [];
+            if (p.pendiente) bits.push("pendiente");
+            if (p.desfaseFirma) bits.push("firma");
+            if (p.desfaseEpoch) bits.push("epoch");
+            if (p.sinValores) bits.push("sin montos");
+            if (p.desfaseSim3d) bits.push("3D");
+            return (p.nombre || "?") + (bits.length ? " (" + bits.join(", ") + ")" : "");
+        }).join("; ");
+        return {
+            ok: false,
+            mensaje: (hayOps
+                ? ("No se puede exportar: costos logísticos desfasados." + lista)
+                : "No se puede exportar: faltan costos logísticos alineados (m³/peso/modalidad).")
+                + " Usa «Generar datos logísticos» (recalcula catálogo) o «Confirmar costos actuales» (si tipaste a mano)."
+                + (detalle ? " Detalle: " + detalle + "." : "")
+        };
     } catch (eS3) {
         return {
             ok: false,
@@ -4726,6 +4785,14 @@ function logisticaMarcarCostosPendientePorCub_(escId, opts) {
     }
     logCostosSincronizarFlagGlobal_();
     logRecalcPendiente_ = true;
+    /* Vaciar solo [Catálogo]/[Estimado IA] para que Generar los recalcule; lo tipado a mano se conserva. */
+    try {
+        logBorrarCalculoLog_(false, {
+            silencio: true,
+            notaHistorial: "Cambió m³ / peso / modalidad. Se borraron costos de catálogo; los digitados a mano se conservan.",
+            toast: ""
+        });
+    } catch (eBorCub) { /* noop */ }
     if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
     if (!opts.silencio && typeof logPintarRecalcAviso_ === "function") {
         try { logPintarRecalcAviso_(); } catch (eAv) { /* noop */ }
@@ -4851,6 +4918,11 @@ function logisticaLimpiarCostosPendiente_(opts) {
             st.logCostosPendiente = false;
             st.costosFirma = logCostosFirmaEsc_(k);
             st.costosEpoch = epochG;
+            /* Alinear snapshot 3D al cubicaje confirmado (evita bloqueo eterno PDF). */
+            const cubK = logCostosCubEfectivo_(k);
+            if (!st.sim3d || typeof st.sim3d !== "object") st.sim3d = {};
+            st.sim3d.m3 = cubK.m3;
+            st.sim3d.kg = cubK.pesoKg;
         } else {
             if (exige && !logCostosOpcionTieneValoresPropios_("")) {
                 e.logCostosPendiente = true;
@@ -4861,11 +4933,15 @@ function logisticaLimpiarCostosPendiente_(opts) {
             e.logCostosPendiente = false;
             e.costosFirma = logCostosFirmaEsc_("");
             e.costosEpochOk = epochG;
+            const cubG = logCostosCubEfectivo_("");
+            if (!e.sim3d || typeof e.sim3d !== "object") e.sim3d = {};
+            e.sim3d.m3 = cubG.m3;
+            e.sim3d.kg = cubG.pesoKg;
         }
     });
     logCostosSincronizarFlagGlobal_();
-    /* Solo apaga el aviso global si ya no queda ninguna opción pendiente. */
-    if (!logCostosHayPendienteEnAlgunaOpcion_()) {
+    /* Apaga aviso global si ya no hay desfase real (firma/epoch/valores). */
+    if (!logCostosOpcionesPendientes_().length) {
         logRecalcPendiente_ = false;
         const btnA = document.getElementById("btnLogIaAnalisis");
         if (btnA) {
@@ -4888,6 +4964,75 @@ window.logisticaLimpiarCostosPendiente_ = logisticaLimpiarCostosPendiente_;
 window.logCostosOpcionesPendientes_ = logCostosOpcionesPendientes_;
 window.logCostosHayPendienteEnAlgunaOpcion_ = logCostosHayPendienteEnAlgunaOpcion_;
 window.logCostosSincronizarFlagGlobal_ = logCostosSincronizarFlagGlobal_;
+
+/**
+ * Desbloquea PDF/Excel sin recalcular desde Ajustes.
+ * Útil cuando los costos vienen de cotización de proveedor (digitados a mano).
+ */
+function logisticaConfirmarCostosActuales_() {
+    try { if (typeof logisticaLeerEnvUi_ === "function") logisticaLeerEnvUi_(); } catch (eL) { /* ok */ }
+    if (typeof window.slSim3dHayPendiente === "function" && window.slSim3dHayPendiente()) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("El Simulador 3D tiene cambios sin aplicar. Pulsa «Aplicar a Logística» antes de confirmar.", "warning");
+        }
+        return false;
+    }
+    const env = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (env && env.sim3dPendiente) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("El Simulador 3D tiene cambios sin aplicar. Pulsa «Aplicar a Logística» antes de confirmar.", "warning");
+        }
+        return false;
+    }
+    try { logCostosLimpiarFlagsSiNoExige_(); } catch (eCl) { /* noop */ }
+    if (!logCostosHayAlgunaQueExige_()) {
+        if (typeof logExportActualizarUiGate_ === "function") logExportActualizarUiGate_();
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Esta cotización no exige costos logísticos regenerados (Nacional o EXW). Ya puedes exportar.", "info");
+        }
+        return true;
+    }
+    const faltan = logCostosClavesOpciones_().filter(function (k) {
+        if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return false;
+        if (!logCostosOpcionExigeFirma_(k)) return false;
+        return !logCostosOpcionTieneValoresPropios_(k);
+    });
+    if (faltan.length) {
+        const noms = faltan.map(function (k) { return logCostosNombreOp_(k) || k || "Cotización"; });
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Faltan montos de envío en: " + noms.join(", ") + ". Complétalos o usa Generar para rellenar huecos desde Ajustes.", "warning");
+        }
+        return false;
+    }
+    logisticaLimpiarCostosPendiente_({ escIds: logCostosClavesOpciones_() });
+    logRecalcPendiente_ = false;
+    /* Por si quedó algún flag viejo de 3D ya aplicado al cubicaje. */
+    if (env) env.sim3dPendiente = false;
+    if (typeof logPintarRecalcAviso_ === "function") {
+        try { logPintarRecalcAviso_(); } catch (eAv) { /* noop */ }
+    }
+    if (typeof logExportActualizarUiGate_ === "function") {
+        try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
+    }
+    if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
+    const chk = typeof logisticaExportCotizacionOk_ === "function" ? logisticaExportCotizacionOk_() : { ok: true };
+    if (typeof mostrarNotificacion === "function") {
+        if (chk && chk.ok) {
+            mostrarNotificacion("Costos actuales confirmados. PDF y Excel desbloqueados.", "success");
+        } else {
+            mostrarNotificacion((chk && chk.mensaje) || "Confirmé costos, pero el export sigue bloqueado. Revisa el aviso en rojo.", "warning");
+        }
+    }
+    if (logIa && logIa.historial) {
+        logIa.historial.push({
+            role: "nota",
+            text: "Se confirmaron los costos digitados a mano. No se recalcularon desde Ajustes. PDF/Excel alineados."
+        });
+        if (typeof logIaPintar_ === "function") logIaPintar_();
+    }
+    return true;
+}
+window.logisticaConfirmarCostosActuales_ = logisticaConfirmarCostosActuales_;
 
 /** Une chequeos previos a exportar cotización (versión Costos + sync 3D). Fallo cerrado. */
 function logisticaExportCotizacionOk_() {
@@ -5692,14 +5837,31 @@ function logHayCalculoLog_() {
 function logBorrarCalculoLog_(resetCont, opts) {
     opts = opts || {};
     const e = logEnv_();
+    const esFuenteCat_ = function (fu) {
+        return fu === "[Catálogo]" || fu === "[Estimado IA]";
+    };
     (e.lineas || []).forEach(function (ln) {
-        const esCat = ln.fuente === "[Catálogo]" || ln.fuente === "[Estimado IA]";
+        const kt = logEscKeyTipo_(ln.tipo);
+        const esCat = esFuenteCat_(ln.fuente);
         let esCatEsc = false;
         if (e.porEsc) Object.keys(e.porEsc).forEach(function (k) {
             const st = e.porEsc[k];
-            if (st.fuentes && (st.fuentes[ln.id] === "[Catálogo]" || st.fuentes[ln.id] === "[Estimado IA]")) {
-                esCatEsc = true;
-                if (esCat || esCatEsc) { delete st.valores[ln.id]; delete st.fuentes[ln.id]; delete st.notas[ln.id]; }
+            if (!st) return;
+            const fuId = st.fuentes ? st.fuentes[ln.id] : "";
+            const fuTipo = (kt && st.fuentes) ? st.fuentes[kt] : "";
+            if (!esFuenteCat_(fuId) && !esFuenteCat_(fuTipo)) return;
+            esCatEsc = true;
+            if (st.valores) {
+                delete st.valores[ln.id];
+                if (kt) delete st.valores[kt];
+            }
+            if (st.fuentes) {
+                delete st.fuentes[ln.id];
+                if (kt) delete st.fuentes[kt];
+            }
+            if (st.notas) {
+                delete st.notas[ln.id];
+                if (kt) delete st.notas[kt];
             }
         });
         if (!esCat && !esCatEsc) return;
@@ -6534,11 +6696,11 @@ function logExportActualizarUiGate_() {
         }
     } else if (!bloqMedia) {
         chk = { ok: false, mensaje: "Falta el validador de export. Recarga la página." };
+    } else {
+        chk = { ok: false, mensaje: "Espera a que terminen Odoo y las fotos / Vista 3D…" };
     }
     const bloq = bloqMedia || !chk.ok;
-    const tipBloq = bloqMedia
-        ? "Espera a que terminen Odoo y las fotos / Vista 3D…"
-        : (chk.mensaje || "Regenera costos logísticos de TODAS las opciones antes de exportar.");
+    const tipBloq = chk.mensaje || "Regenera o confirma costos logísticos antes de exportar.";
     [
         { id: "btnLogPDF", tipOk: "Descargar cotización en PDF" },
         { id: "btnLogExcel", tipOk: "Exporta presupuesto + cotización en la plantilla Excel (COT/QUOT). Requiere presupuesto abierto en Costos." }
@@ -6548,10 +6710,44 @@ function logExportActualizarUiGate_() {
         if (!b.dataset.tip0) b.dataset.tip0 = b.getAttribute("title") || it.tipOk;
         b.disabled = bloq;
         b.setAttribute("title", bloq ? tipBloq : (b.dataset.tip0 || it.tipOk));
+        /* pointer-events permite ver title aunque el botón esté disabled (algunos navegadores lo ignoran). */
+        b.style.pointerEvents = "auto";
         b.classList.toggle("disabled", bloq);
         if (bloq) b.setAttribute("aria-disabled", "true");
         else b.removeAttribute("aria-disabled");
+        /* Envolver: el title del disabled a menudo no sale; el wrap sí. */
+        let wrap = b.parentElement;
+        if (!wrap || !wrap.classList.contains("log-export-wrap")) {
+            wrap = document.createElement("span");
+            wrap.className = "log-export-wrap d-inline-block";
+            b.parentNode.insertBefore(wrap, b);
+            wrap.appendChild(b);
+        }
+        wrap.title = bloq ? tipBloq : "";
+        wrap.style.cursor = bloq ? "not-allowed" : "";
     });
+    /* Motivo visible: disabled no muestra tooltip de forma fiable. */
+    let ban = document.getElementById("logExportBloqueo");
+    if (!ban) {
+        const bar = document.getElementById("logCargaBar");
+        ban = document.createElement("p");
+        ban.id = "logExportBloqueo";
+        ban.className = "small text-danger mb-1 d-none";
+        if (bar && bar.parentNode) bar.parentNode.insertBefore(ban, bar.nextSibling);
+        else {
+            const top = document.querySelector(".log-top-file");
+            if (top && top.parentNode) top.parentNode.appendChild(ban);
+        }
+    }
+    if (ban) {
+        if (bloq && tipBloq) {
+            ban.textContent = "PDF/Excel bloqueados: " + tipBloq;
+            ban.classList.remove("d-none");
+        } else {
+            ban.textContent = "";
+            ban.classList.add("d-none");
+        }
+    }
 }
 
 window.logisticaExportacionesBloqueadas_ = logisticaExportacionesBloqueadas_;
@@ -8075,6 +8271,10 @@ function logProgramarHojaPrecio_() {
     logPrecioHojaTimer_ = setTimeout(function () {
         logPrecioHojaTimer_ = 0;
         logisticaActualizarVista({ sinFilas: true });
+        /* EXW de productos cambió → Duties/Taxes deben recalcularse en el panel. */
+        if (typeof logisticaPintarEnv_ === "function") {
+            try { logisticaPintarEnv_(true); } catch (eEnv) { /* ok */ }
+        }
     }, 180);
 }
 
@@ -8320,6 +8520,9 @@ function logisticaAccionFila_(ev) {
             if (!logQuedanPreciosFijos_(fila)) delete fila.puFijo;
         } else { return; }
         logisticaRefrescarTabla_();
+        if (typeof logisticaPintarEnv_ === "function") {
+            try { logisticaPintarEnv_(true); } catch (eEnv) { /* ok */ }
+        }
         return;
     }
     if (acc === "sim3d-lay") {
@@ -10706,9 +10909,10 @@ function logisticaLeerEnvUi_() {
                 const nuevo = t === "" ? null : Number(String(t).replace(",", "."));
                 pctNuevo = nuevo != null && isFinite(nuevo) ? nuevo : null;
             }
-            /* Costo pintado desde el % (data-auto-val): no tratarlo como edición manual ni guardarlo como valor fijo. */
+            /* Costo pintado desde el % (data-auto-val): no tratarlo como edición manual ni guardarlo como valor fijo.
+             * Con opciones suele quedar un valor viejo en ln.valor / porEsc; si el input sigue el auto, no candar. */
             const autoAttr = val ? val.getAttribute("data-auto-val") : null;
-            const esAuto = arancel && ln.valor == null && autoAttr != null && autoAttr !== "" &&
+            const esAuto = arancel && !ln.arancelManual && pctNuevo != null && autoAttr != null && autoAttr !== "" &&
                 valorNuevo != null && Math.abs(Number(autoAttr) - valorNuevo) < 0.02;
             /* Varios servicios/extras no comparten clave por tipo (cada uno va por id). */
             const kt = (logEsServicio_(ln) || logEsExtraEnvio_(ln)) ? "" : logEscKeyTipo_(ln.tipo);
@@ -10731,6 +10935,11 @@ function logisticaLeerEnvUi_() {
                 });
             } else if (arancel && esAuto) {
                 /* Costo solo visual desde el %: no guardar valor fijo ni marcar manual. */
+                ln.valor = null;
+                if (stSel) {
+                    delete stSel.valores[ln.id];
+                    if (kt) delete stSel.valores[kt];
+                }
             } else if (arancel && val && valorNuevo !== ln.valor) {
                 ln.fuente = "";
                 ln.arancelManual = true;
@@ -11164,21 +11373,33 @@ function logPintarRecalcAviso_() {
         && typeof logCostosOpcionesPendientes_ === "function")
         ? logCostosOpcionesPendientes_()
         : [];
-    const porSim3d = pendOps.length > 0;
-    if (!logRecalcPendiente_ && !porSim3d) {
+    const porFirma = pendOps.length > 0;
+    if (!logRecalcPendiente_ && !porFirma) {
         el.textContent = "";
         el.classList.add("d-none");
+        if (typeof logExportActualizarUiGate_ === "function") {
+            try { logExportActualizarUiGate_(); } catch (eG0) { /* noop */ }
+        }
         return;
     }
     const nombres = pendOps.map(function (p) { return p.nombre; }).filter(Boolean);
     const lista = nombres.length ? (" Opciones: " + nombres.join(", ") + ".") : "";
     const hayOps = !!(typeof logEscList_ === "function" && logEscList_().length);
-    el.textContent = porSim3d
-        ? ("El embalaje / m³ / kg cambió (Simulador 3D u override). Borré costos de catálogo."
+    const conMontos = porFirma && pendOps.every(function (p) { return !p.sinValores; });
+    if (porFirma && conMontos) {
+        el.textContent = "PDF/Excel bloqueados: la firma de costos no está alineada."
             + lista
-            + " Pulsa Análisis → Generar datos logísticos. PDF/Excel bloqueados"
-            + (hayOps ? " hasta regenerar todas las opciones." : " hasta regenerar."))
-        : "Cambió un dato de Costos que mueve esta logística (medidas, empaque, cantidad o precio). Borré el cálculo de este borrador. Pulsa Análisis costos logísticos para calcularlo de nuevo.";
+            + " Si tipaste a mano (proveedor), pulsa «Confirmar costos actuales»."
+            + " Si deben salir de Ajustes, pulsa Análisis → Generar datos logísticos"
+            + (hayOps ? " (todas las opciones)." : ".");
+    } else if (porFirma) {
+        el.textContent = "El embalaje / m³ / kg cambió o faltan montos."
+            + lista
+            + " Completa costos o pulsa Análisis → Generar. PDF/Excel bloqueados"
+            + (hayOps ? " hasta alinear todas las opciones." : " hasta alinear.");
+    } else {
+        el.textContent = "Cambió un dato de Costos que mueve esta logística (medidas, empaque, cantidad o precio). Borré el cálculo de catálogo de este borrador. Pulsa Análisis costos logísticos para calcularlo de nuevo.";
+    }
     el.classList.remove("d-none");
     if (typeof logExportActualizarUiGate_ === "function") {
         try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
@@ -12548,10 +12769,14 @@ function logIaPintar_() {
     if (inp) inp.disabled = !!logIa.ocupado;
     if (btnG) {
         btnG.disabled = !!logIa.ocupado || !logIa.analizado;
-        btnG.title = logIa.analizado ? "Llena las filas del envío con el catálogo." : "Se enciende después del análisis.";
+        btnG.title = logIa.analizado
+            ? "Recalcula costos de Ajustes ([Catálogo]/[Estimado IA]). No pisa tipado a mano por opción."
+            : "Se enciende después del análisis.";
         btnG.classList.toggle("btn-diforma-blue", !!logIa.analizado);
         btnG.classList.toggle("btn-outline-secondary", !logIa.analizado);
     }
+    const btnConf = document.getElementById("btnLogConfirmarCostos");
+    if (btnConf) btnConf.disabled = !!logIa.ocupado;
     const sug = document.getElementById("logIaSugerencia");
     if (!sug) return;
     const et = logIaEtiquetaMod_(logIa.sugerencia);
@@ -13836,6 +14061,9 @@ function logCostosAplicarFilas_() {
         let nOp = 0;
         tiposK.forEach(function (tipo) {
             if (tipo === "duties" || tipo === "taxes" || tipo === "libre" || tipo === "servicio" || tipo === "extra") return;
+            const lnPrev = (envLive.lineas || []).find(function (x) { return x.tipo === tipo; });
+            /* Tipado a mano en esta opción: no tocar. Catálogo/IA vacío o de sistema: sí recalcular. */
+            if (logEscEsCostoManual_(lnPrev, k)) return;
             const notas = [];
             const r = logTarAplicarTipo_(tipo, eK, ctx, notas);
             notas.forEach(function (t) {
@@ -13860,7 +14088,8 @@ function logCostosAplicarFilas_() {
             nOp += 1;
         });
         bagPorOp[k || "_"] = bag;
-        if (nOp > 0) escOk.push(k);
+        /* Catálogo escribió algo, o ya hay montos propios (p. ej. tipados a mano / proveedor). */
+        if (nOp > 0 || logCostosOpcionTieneValoresPropios_(k)) escOk.push(k);
     });
     /* Escribir sobre el env actual (misma referencia que verá la ficha). */
     const env = logEnv_();
@@ -13891,6 +14120,8 @@ function logCostosAplicarFilas_() {
             }
             /* Siempre persistir en st de ESTA opción; ln.valor solo si es la pestaña activa. */
             if (b.ok) {
+                /* No pisar tipado a mano; sí sobrescribir [Catálogo]/[Estimado IA] o huecos. */
+                if (logEscEsCostoManual_(ln, k || "")) return;
                 if (escribeLn) logEscEscribirCosto_(st, ln, tipo, b.valor, b.fuente, b.notas);
                 else {
                     logEscEscribirCosto_(st, null, tipo, b.valor, b.fuente, b.notas);
@@ -14055,10 +14286,9 @@ function logIaCompletarDestinoEstimado_() {
         const tipos = logEnvTiposActivos_(eK.modalidad, eK.incoterm, true);
         if (tipos.indexOf("destino") < 0) return;
         const fu = logEscFuente_(ln, k || "");
-        const va = logEscValor_(ln, k || "");
-        /* No pisar catálogo ni valor tipado a mano. Sí recalcular un [Estimado IA] previo. */
-        if (fu === "[Catálogo]" && va != null) return;
-        if (va != null && Number(va) > 0 && fu && fu !== "[Estimado IA]") return;
+        /* No pisar tipado a mano ni [Catálogo] con valor. Sí recalcular [Estimado IA] o huecos. */
+        if (logEscEsCostoManual_(ln, k)) return;
+        if (fu === "[Catálogo]" && logEscTieneMonto_(ln, k)) return;
         const pick = logIaPickFilasDestinoAncla_(eK);
         if (!pick.filas.length) return;
         if (pick.calidad !== "exacta" && pick.calidad !== "misma_modalidad") return;
@@ -14166,7 +14396,7 @@ function logIaAnclasFleteTxt_(eK, limite) {
 }
 
 /**
- * Escribe solo huecos: no pisa [Catálogo] ni Aranceles.
+ * Escribe solo huecos: no pisa montos ya escritos ni Aranceles.
  * Persiste [Estimado IA] en global y en cada opción activa.
  */
 function logIaEscribirLineas_(obj) {
@@ -14194,9 +14424,10 @@ function logIaEscribirLineas_(obj) {
         claves.forEach(function (k) {
             if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return;
             const fu = logEscFuente_(ln, k || "");
-            const va = logEscValor_(ln, k || "");
-            if (fu === "[Catálogo]" && va != null) return;
             if (fu === "Aranceles") return;
+            /* No pisar tipado a mano ni [Catálogo]. Sí huecos o refrescar [Estimado IA]. */
+            if (logEscEsCostoManual_(ln, k)) return;
+            if (fu === "[Catálogo]" && logEscTieneMonto_(ln, k)) return;
             const st = k
                 ? (e.porEsc[k] || (e.porEsc[k] = logEnvEscSemilla_(e)))
                 : null;
@@ -14442,13 +14673,22 @@ async function logIaAplicarLocal_() {
     if (typeof logMarcarSucio_ === "function") logMarcarSucio_();
     if (typeof logisticaPintarEnv_ === "function") logisticaPintarEnv_(true);
     if (typeof logisticaRefrescarTabla_ === "function") logisticaRefrescarTabla_();
-    /* Costos regenerados: liberar pendiente en TODAS las opciones liquidadas (no solo la UI). */
+    /* Liberar pendiente: opciones liquidadas por catálogo/huecos + las que ya tenían montos propios. */
     const escOk = (logCostosAplicarFilas_._escOk || []).slice();
-    if (cat > 0 || nDest > 0 || escOk.length || exwNota) {
+    const escConMonto = logCostosClavesOpciones_().filter(function (k) {
+        if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return false;
+        if (!logCostosOpcionExigeFirma_(k)) return true; /* EXW / sin filas: marcar OK */
+        return escOk.indexOf(k) >= 0 || logCostosOpcionTieneValoresPropios_(k);
+    });
+    if (cat > 0 || nDest > 0 || escConMonto.length || exwNota) {
         if (typeof logisticaLimpiarCostosPendiente_ === "function") {
             logisticaLimpiarCostosPendiente_({
-                escIds: escOk.length ? escOk : logCostosClavesOpciones_()
+                escIds: escConMonto.length ? escConMonto : logCostosClavesOpciones_()
             });
+        }
+        logRecalcPendiente_ = false;
+        if (typeof logExportActualizarUiGate_ === "function") {
+            try { logExportActualizarUiGate_(); } catch (eG) { /* noop */ }
         }
     }
     const caja = document.getElementById("logEnvLineas");
@@ -14457,11 +14697,17 @@ async function logIaAplicarLocal_() {
     const partesCuerpo = [];
     if (cat) partesCuerpo.push(cat + " costo" + (cat === 1 ? "" : "s") + " del catálogo");
     if (nDest) partesCuerpo.push("Destino [Estimado IA] por anclas de Ajustes");
+    const conservoManual = !cat && !nDest && escOk.length && logCostosClavesOpciones_().some(function (k) {
+        return logCostosOpcionTieneValoresPropios_(k);
+    });
     const cuerpo = partesCuerpo.length
         ? ("Listo. Escribí " + partesCuerpo.join(" y ") + " en la ficha de Costos logísticos.")
-        : ("No pude escribir costos del catálogo en las filas abiertas." + exwNota);
+        : (conservoManual
+            ? ("Listo. Conservé los costos digitados a mano (cotización de proveedor) y alineé la cotización para PDF/Excel." + exwNota)
+            : ("No pude escribir costos del catálogo en las filas abiertas." + exwNota));
     const nota = cuerpo + arancelTxt +
         (cat || nDest ? " La cotización les suma el margen de logística (Duties y Taxes no llevan margen)." : "") +
+        (conservoManual ? " Los montos tipados no se tocaron; solo se actualizó la firma de costos." : "") +
         " La modalidad no se cambió." +
         (extra ? " " + extra : "");
     logIa.historial.push({ role: "model", text: cuerpo + (arancelTxt ? arancelTxt : "") });
@@ -14544,15 +14790,17 @@ async function logIaConsultar_(modo, textoUsuario) {
             const cat = logCostosAplicarFilas_();
             const n = logIaEscribirLineas_(json);
             const nDest = logIaCompletarDestinoEstimado_();
-            if (n || cat || nDest) {
+            if (n || cat || nDest || (logCostosAplicarFilas_._escOk && logCostosAplicarFilas_._escOk.length)) {
                 logMarcarSucio_();
                 if (typeof logisticaLimpiarCostosPendiente_ === "function") {
                     try {
-                        logisticaLimpiarCostosPendiente_({
-                            escIds: (logCostosAplicarFilas_._escOk && logCostosAplicarFilas_._escOk.length)
-                                ? logCostosAplicarFilas_._escOk
-                                : null
+                        const escOkG = (logCostosAplicarFilas_._escOk || []).slice();
+                        const escAll = logCostosClavesOpciones_().filter(function (k) {
+                            if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return false;
+                            if (!logCostosOpcionExigeFirma_(k)) return true;
+                            return escOkG.indexOf(k) >= 0 || logCostosOpcionTieneValoresPropios_(k);
                         });
+                        logisticaLimpiarCostosPendiente_({ escIds: escAll.length ? escAll : null });
                     } catch (eLim) { /* noop */ }
                 }
                 logisticaPintarEnv_(true);
@@ -14658,6 +14906,8 @@ function logisticaInitIa_() {
         logIaConsultar_("entrevista", t);
     });
     if (btnG) btnG.addEventListener("click", function () { logIaConsultar_("generar", ""); });
+    const btnConf = document.getElementById("btnLogConfirmarCostos");
+    if (btnConf) btnConf.addEventListener("click", function () { logisticaConfirmarCostosActuales_(); });
     if (inp) inp.addEventListener("keydown", function (ev) {
         if (ev.key === "Enter" && !ev.shiftKey) {
             ev.preventDefault();
@@ -14935,6 +15185,9 @@ function logisticaInit() {
                     clearTimeout(logPrecioHojaTimer_);
                     logPrecioHojaTimer_ = 0;
                     logisticaActualizarVista({ sinFilas: true });
+                    if (typeof logisticaPintarEnv_ === "function") {
+                        try { logisticaPintarEnv_(true); } catch (eEnv) { /* ok */ }
+                    }
                 }
                 return;
             }

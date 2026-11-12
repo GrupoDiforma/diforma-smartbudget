@@ -344,14 +344,14 @@
                   <div class="form-check"><input class="form-check-input" type="checkbox" id="logTotChk" checked><label class="form-check-label" for="logTotChk">Mostrar total al final</label></div>
                 </div>
               </div>
-              <button type="button" id="btnLogPresupuesto" class="btn btn-sm btn-outline-secondary" title="Trae a esta cotización la ficha y los precios del presupuesto abierto en Costos (mismo proyecto). Descongela filas del historial y descarta precios editados a mano en esas filas."><i class="bi bi-arrow-repeat me-1"></i>Actualiza Presupuesto</button>
+              <button type="button" id="btnLogPresupuesto" class="btn btn-sm btn-outline-secondary" title="Trae ficha y precios del presupuesto abierto en Costos (mismo proyecto). No borra las opciones ni el envío armado; sí refresca Duties/Taxes al cambiar el EXW. Conserva textos editados a mano en la hoja; descarta precios unitarios tipados a mano en esas filas."><i class="bi bi-arrow-repeat me-1"></i>Actualiza Presupuesto</button>
               <button type="button" id="btnLogReset" class="btn btn-sm btn-outline-secondary" title="Vuelve a los anchos y altos por defecto"><i class="bi bi-arrow-counterclockwise me-1"></i>Restablecer diseño</button>
               <button type="button" id="btnLogImgs" class="btn btn-sm btn-outline-secondary" title="Vuelve a bajar de Drive las fotos de esta cotización. Úsalo si la hoja o el PDF salieron sin imagen."><i class="bi bi-image me-1"></i>Recargar imágenes</button>
               </div>
               <div class="log-top-file">
               <button type="button" id="btnLogHistorial" class="btn btn-sm btn-outline-primary" title="Cotizaciones guardadas: abrir y editar"><i class="bi bi-clock-history me-1"></i>Guardadas</button>
               <button type="button" id="btnLogGuardar" class="btn btn-sm btn-primary" title="Guardar esta cotización en el historial"><i class="bi bi-save me-1"></i>Guardar</button>
-              <button type="button" id="btnLogExcel" class="btn btn-sm btn-outline-secondary bg-white" title="Exporta presupuesto + cotización en la plantilla Excel (COT/QUOT). Requiere presupuesto abierto en Costos." onclick="exportarLogisticaExcel()"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
+              <button type="button" id="btnLogExcel" class="btn btn-sm btn-success" title="Exporta presupuesto + cotización en la plantilla Excel (COT/QUOT). Requiere presupuesto abierto en Costos." onclick="exportarLogisticaExcel()"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
               <button type="button" id="btnLogPDF" class="btn btn-sm btn-diforma-blue"><i class="bi bi-download me-1"></i>PDF</button>
               </div>
               </div>
@@ -539,10 +539,11 @@
                     </div>
                   </div>
                   <div id="logOpcTabsIa" class="log-opc-tabs d-none mb-2"></div>
-                  <p class="text-muted small mb-2">El análisis y Generar los hace la app con las tarifas de Ajustes: escribe el costo y la cotización le suma el margen. Gemini queda en el chat para sugerir la modalidad, explicar un hueco y responder si cambias contenedores o embarques. Con Opciones, el contexto sigue la opción activa de las pestañas.</p>
+                  <p class="text-muted small mb-2">Análisis / Generar actualizan costos de <b>Ajustes</b> ([Catálogo] / [Estimado IA]) si cambian cajas o peso. <b>No pisan</b> montos tipados a mano por opción (cotización de proveedor). Esos puedes confirmarlos con <b>Confirmar costos actuales</b> para PDF/Excel. Si editas un monto de catálogo a mano, deja de ser de sistema y ya no se sobrescribe.</p>
                   <div class="d-flex flex-wrap gap-2 mb-2">
                     <button type="button" id="btnLogIaAnalisis" class="btn btn-sm btn-diforma-blue">Análisis costos logísticos</button>
-                    <button type="button" id="btnLogIaGenerar" class="btn btn-sm btn-outline-secondary" disabled title="Se enciende después del análisis.">Generar datos logísticos</button>
+                    <button type="button" id="btnLogIaGenerar" class="btn btn-sm btn-outline-secondary" disabled title="Se enciende después del análisis. Recalcula [Catálogo]/[Estimado IA]; no pisa tipado a mano por opción.">Generar datos logísticos</button>
+                    <button type="button" id="btnLogConfirmarCostos" class="btn btn-sm btn-outline-primary" title="Alinea la firma con los montos ya tipados (proveedor) y desbloquea PDF/Excel sin recalcular desde Ajustes.">Confirmar costos actuales</button>
                   </div>
                   <div id="logIaFaltan" class="log-faltan d-none"></div>
                   <div id="logRecalcAviso" class="log-recalc d-none"></div>
@@ -2071,7 +2072,7 @@
   <script src="connectors.js?v=1.0.53"></script>
   <script src="ia-core.js?v=1.0.52"></script>
   <script src="export-excel.js?v=1.0.73"></script>
-  <script src="logistica.js?v=1.0.287"></script>
+  <script src="logistica.js?v=1.0.289"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
