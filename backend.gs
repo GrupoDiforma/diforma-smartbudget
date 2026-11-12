@@ -2262,8 +2262,8 @@ function extraerPreciosPdfGemini_(file) {
     generationConfig: { temperature: 0.1 }
   };
   var r = ejecutarGeminiDinamico(apiKey, payload, false, "catalogo");
-  var txt = "";
-  try { txt = r.data.candidates[0].content.parts[0].text || ""; } catch (e) { throw new Error("Gemini no devolvió texto del PDF."); }
+  var txt = textoCandidatoGemini_(r && r.data);
+  if (!txt) throw new Error("Gemini no devolvió texto del PDF.");
   var m = txt.match(/\[[\s\S]*\]/);
   if (!m) return [];
   var arr = JSON.parse(m[0]);
@@ -2873,7 +2873,7 @@ function obtenerCatalogoMaestro() {
 // ==========================================
 function obtenerModelosDinamicos(apiKey) {
   var cache = CacheService.getScriptCache();
-  var cachedModels = cache.get("GEMINI_MODELS_V41");
+  var cachedModels = cache.get("GEMINI_MODELS_V42");
   if (cachedModels) return JSON.parse(cachedModels);
   var res = UrlFetchApp.fetch("https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey, { muteHttpExceptions: true });
   if (res.getResponseCode() === 200) {
@@ -2886,7 +2886,7 @@ function obtenerModelosDinamicos(apiKey) {
         }
       }
     }
-    cache.put("GEMINI_MODELS_V41", JSON.stringify(available), 21600);
+    cache.put("GEMINI_MODELS_V42", JSON.stringify(available), 21600);
     return available;
   }
   return [];
@@ -2895,17 +2895,75 @@ function obtenerModelosDinamicos(apiKey) {
 function ordenarModelosPorPotencia(modelos) {
   return modelos.sort(function(a, b) {
     function puntaje(m) {
+      var s = String(m || "").toLowerCase();
       var p = 0;
-      var vm = m.match(/\d+\.\d+/);
-      if (vm) p += parseFloat(vm[0]) * 1000;
-      if (m.indexOf("thinking") !== -1) p += 500;
-      if (m.indexOf("exp") !== -1 || m.indexOf("latest") !== -1) p += 100;
-      if (m.indexOf("vision") !== -1) p -= 200;
-      if (m.indexOf("8b") !== -1) p -= 300;
+      /* gemini-3-pro y gemini-2.5-pro (entero o decimal). */
+      var vm = s.match(/gemini-(\d+)(?:\.(\d+))?/);
+      if (vm) p += (parseInt(vm[1], 10) || 0) * 1000 + (parseInt(vm[2], 10) || 0) * 10;
+      if (s.indexOf("thinking") !== -1) p += 500;
+      /* Preferir estable sobre preview/exp cuando la gen es similar. */
+      if (s.indexOf("exp") !== -1 || s.indexOf("preview") !== -1 || s.indexOf("latest") !== -1) p -= 50;
+      if (s.indexOf("vision") !== -1) p -= 200;
+      if (s.indexOf("8b") !== -1) p -= 300;
       return p;
     }
     return puntaje(b) - puntaje(a);
   });
+}
+
+/** Texto usable del candidato (salta partes thought:true de Pro/thinking). */
+function textoCandidatoGemini_(jsonRes) {
+  try {
+    var cands = jsonRes && jsonRes.candidates;
+    if (!cands || !cands.length) return "";
+    var parts = (cands[0].content && cands[0].content.parts) || [];
+    var utiles = [];
+    var i;
+    for (i = 0; i < parts.length; i++) {
+      if (!parts[i] || parts[i].thought === true) continue;
+      if (parts[i].text) utiles.push(String(parts[i].text));
+    }
+    if (utiles.length) return utiles.join("\n").trim();
+    for (i = 0; i < parts.length; i++) {
+      if (parts[i] && parts[i].text) utiles.push(String(parts[i].text));
+    }
+    return utiles.join("\n").trim();
+  } catch (e) { return ""; }
+}
+
+/**
+ * Pro/thinking cuenta thoughts dentro de maxOutputTokens.
+ * Sin tope alto el default (~8192) se gasta en pensar y la app recibe texto vacío.
+ */
+function prepararPayloadGemini_(payload, forzarPro, modelo) {
+  var body = JSON.parse(JSON.stringify(payload || {}));
+  var gc = body.generationConfig || {};
+  var esPro = esModeloProChat_(modelo);
+  if (gc.maxOutputTokens == null) gc.maxOutputTokens = (forzarPro || esPro) ? 65536 : 16384;
+  /* thinkingConfig solo en modelos Pro; Flash de respaldo no lo admite igual. */
+  if (!gc.thinkingConfig && esPro) {
+    var gen = genModeloGemini_(modelo);
+    if (gen >= 3) gc.thinkingConfig = { thinkingLevel: "LOW" };
+    else gc.thinkingConfig = { thinkingBudget: 2048 };
+  }
+  body.generationConfig = gc;
+  return body;
+}
+
+function esModeloProChat_(m) {
+  var s = String(m || "").toLowerCase();
+  if (s.indexOf("pro") === -1) return false;
+  if (s.indexOf("flash") !== -1) return false;
+  if (/embed|tts|image|imagen|veo|robotics|computer|aqa|dialog|audio|live/.test(s)) return false;
+  return true;
+}
+
+function esModeloFlashChat_(m) {
+  var s = String(m || "").toLowerCase();
+  if (s.indexOf("flash") === -1) return false;
+  if (s.indexOf("thinking") !== -1) return false;
+  if (/embed|tts|image|imagen|veo|robotics|computer|aqa|dialog|audio|live/.test(s)) return false;
+  return true;
 }
 
 function periodoUsoGemini_() {
@@ -3322,36 +3380,66 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro, modulo) {
   var c = [];
   var tm = forzarPro ? "PRO" : "FLASH";
   if (modelos && modelos.length > 0) {
-    if (tm === "PRO") c = ordenarModelosPorPotencia(modelos.filter(function(m) { return m.indexOf("pro") !== -1 || m.indexOf("thinking") !== -1; }));
-    else c = ordenarModelosPorPotencia(modelos.filter(function(m) { return m.indexOf("flash") !== -1 && m.indexOf("thinking") === -1; }));
+    if (tm === "PRO") c = ordenarModelosPorPotencia(modelos.filter(esModeloProChat_));
+    else c = ordenarModelosPorPotencia(modelos.filter(esModeloFlashChat_));
   }
-  c = c.filter(function (m) { return String(m).indexOf("thinking") === -1; }).slice(0, tm === "PRO" ? 1 : 2);
-  if (c.length === 0) c = (tm === "PRO") ? ["gemini-2.5-pro"] : ["gemini-2.0-flash", "gemini-2.5-flash"];
+  c = c.slice(0, 2);
+  if (c.length === 0) c = (tm === "PRO") ? ["gemini-2.5-pro", "gemini-2.0-flash"] : ["gemini-2.0-flash", "gemini-2.5-flash"];
   var jsonRes = null;
   var me = "";
   var err = [];
   for (var i = 0; i < c.length; i++) {
     try {
+      var body = prepararPayloadGemini_(payload, !!forzarPro, c[i]);
       var r = UrlFetchApp.fetch("https://generativelanguage.googleapis.com/v1beta/models/" + c[i] + ":generateContent?key=" + apiKey, {
         method: "post",
         contentType: "application/json",
-        payload: JSON.stringify(payload),
+        payload: JSON.stringify(body),
         muteHttpExceptions: true
       });
       var rp = JSON.parse(r.getContentText());
-      if (!rp.error) { jsonRes = rp; me = c[i]; break; }
-      else { err.push(c[i] + ": " + rp.error.message); }
+      if (rp.error) {
+        err.push(c[i] + ": " + rp.error.message);
+        continue;
+      }
+      var texto = textoCandidatoGemini_(rp);
+      if (!texto) {
+        var fr = "";
+        try { fr = String((rp.candidates && rp.candidates[0] && rp.candidates[0].finishReason) || ""); } catch (eFr) {}
+        var umVacio = (rp.usageMetadata) || {};
+        var pens = Number(umVacio.thoughtsTokenCount) || 0;
+        err.push(c[i] + ": respuesta vacía" + (fr ? " (" + fr + ")" : "") + (pens ? ", pensó " + pens + " tokens" : ""));
+        /* Registra el gasto de thinking aunque no haya texto útil. */
+        registrarUsoGemini_({
+          llamada: true,
+          tokensIn: umVacio.promptTokenCount || 0,
+          tokensOut: (Number(umVacio.candidatesTokenCount) || 0) + pens,
+          tokensPensados: pens,
+          tokensTotalReportado: umVacio.totalTokenCount || 0,
+          modelo: c[i],
+          modulo: modulo || "costos",
+          ok: false,
+          error: "Respuesta vacía de Gemini PRO (thinking agotó la salida o solo devolvió thought)."
+        });
+        continue;
+      }
+      jsonRes = rp;
+      me = c[i];
+      break;
     } catch (e) { err.push(c[i] + " err: " + e.message); }
   }
   if (!jsonRes) {
     var joined = err.join("\n");
     registrarUsoGemini_({ error: joined, modulo: modulo || "costos" });
     var cupo = esErrorCupoGemini_(joined);
+    var vacioPro = /respuesta vacía/i.test(joined);
     return {
       exito: false,
       mensaje: cupo
         ? "Gemini se quedó sin cupo o crédito. Recarga el saldo en Google AI Studio y reintenta."
-        : ("Servidor Gemini sin modelos.\n" + joined),
+        : (vacioPro
+          ? "Gemini PRO pensó pero no devolvió texto útil. Reintenta o apaga PRO (Flash) un momento.\n" + joined
+          : ("Servidor Gemini sin modelos.\n" + joined)),
       cupoAgotado: cupo,
       uso: payloadUsoGemini_()
     };

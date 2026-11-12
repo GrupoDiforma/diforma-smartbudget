@@ -14527,7 +14527,14 @@ async function logIaConsultar_(modo, textoUsuario) {
         }, { timeoutMs: pro ? 180000 : 120000 });
         if (typeof pintarUsoGemini === "function") pintarUsoGemini(resp && resp.uso);
         if (!resp || !resp.exito) throw new Error((resp && resp.mensaje) || "Sin respuesta.");
-        const bruto = (resp.data && resp.data.candidates && resp.data.candidates[0] && resp.data.candidates[0].content && resp.data.candidates[0].content.parts && resp.data.candidates[0].content.parts[0].text) || "";
+        const bruto = (typeof textoGemini === "function")
+            ? textoGemini(resp)
+            : ((resp.data && resp.data.candidates && resp.data.candidates[0] && resp.data.candidates[0].content && resp.data.candidates[0].content.parts || [])
+                .filter(function (p) { return p && p.text && p.thought !== true; })
+                .map(function (p) { return p.text; }).join("\n").trim());
+        if (!bruto) throw new Error(pro
+            ? "Gemini PRO no devolvió texto. Reintenta o apaga PRO un momento."
+            : "Gemini no devolvió texto. Reintenta.");
         const json = logIaLeerJson_(bruto);
         logIaTomarSugerencia_(json);
         logCostosAjustarSugerencia_();

@@ -1392,7 +1392,11 @@ async function refinarMapaConGemini(analisis, textoHoja) {
             analisis.origen = "heuristica";
             return analisis;
         }
-        const raw = data?.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const raw = (typeof textoGemini === "function")
+            ? textoGemini(data)
+            : (data?.data?.candidates?.[0]?.content?.parts || [])
+                .filter(function (p) { return p && p.text && p.thought !== true; })
+                .map(function (p) { return p.text; }).join("\n").trim();
         const parsed = extraerJsonMapa(raw);
         if (!parsed) return Object.assign({}, analisis, { origen: "heuristica" });
         const merge = Object.assign({}, analisis.mapa, parsed);

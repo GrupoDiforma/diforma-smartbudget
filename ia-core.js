@@ -195,7 +195,12 @@ window.pintarHistorialChatIA = function(chat, fase) {
 };
 
 function textoGemini(data) {
-    return data?.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parts = data?.data?.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts) || !parts.length) return "";
+    /* Pro/thinking: parts[0] suele ser thought; el texto útil viene después. */
+    const utiles = parts.filter(function (p) { return p && p.text && p.thought !== true; }).map(function (p) { return p.text; });
+    if (utiles.length) return utiles.join("\n").trim();
+    return parts.map(function (p) { return (p && p.text) || ""; }).filter(Boolean).join("\n").trim();
 }
 
 function extraerObjetoJsonIA(texto) {
@@ -1089,6 +1094,7 @@ window.procesarPlanoIA = async function() {
         const data = await llamarGeminiConImagenes(promptTexto, 240000, { forzarPro: false });
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
+        if (!texto) throw new Error("Gemini no devolvió texto. Reintenta Analizar archivos.");
         const sinJson = textoSinJson(texto, extraerCotizacionIA(texto));
         window.historialChatIA.push({ role: 'model', text: sinJson });
         pintarMensaje('model', sinJson.replace(/\n/g, '<br>'), data.modeloUsado);
@@ -1145,11 +1151,15 @@ window.enviarMensajeChat = async function() {
                 : "");
         /* Con archivos (o página citada) reenviar vision; el chat de texto solo no ve el PDF. */
         const hayArchivos = archivosActivosIA_().length > 0;
+        const pro = geminiProActivo();
         const data = (hayArchivos || paginasMsg.length)
-            ? await llamarGeminiConImagenes(promptTexto, 120000)
-            : await llamarGeminiChat(promptTexto, 90000);
+            ? await llamarGeminiConImagenes(promptTexto, pro ? 240000 : 120000)
+            : await llamarGeminiChat(promptTexto, pro ? 180000 : 90000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
+        if (!texto) throw new Error(pro
+            ? "Gemini PRO no devolvió texto. Reintenta o apaga PRO un momento."
+            : "Gemini no devolvió texto. Reintenta.");
         const cotizacion = extraerCotizacionIA(texto);
         if (cotizacion && Array.isArray(cotizacion.items) && cotizacion.items.length && modo === "ajustes" && quiereMatriz) {
             esperaIATexto_("Aplicando la matriz…");
@@ -1256,11 +1266,15 @@ ${JSON.stringify({
     cliente: document.getElementById("cliente")?.value || "",
     items: (typeof itemsPresupuesto !== "undefined" ? itemsPresupuesto.map(function (i) { return i.nombre; }) : [])
 })}`;
+        const pro = geminiProActivo();
         const data = hayArchivos
-            ? await llamarGeminiConImagenes(promptTexto, 120000)
-            : await llamarGeminiChat(promptTexto, 90000);
+            ? await llamarGeminiConImagenes(promptTexto, pro ? 240000 : 120000)
+            : await llamarGeminiChat(promptTexto, pro ? 180000 : 90000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
+        if (!texto) throw new Error(pro
+            ? "Gemini PRO no devolvió texto. Reintenta o apaga PRO un momento."
+            : "Gemini no devolvió texto. Reintenta.");
         const cotizacion = extraerCotizacionIA(texto);
         let notaPartida = "";
         if (cotizacion && cotizacion.ficha && typeof aplicarFichaComercial === "function") {
@@ -1343,11 +1357,15 @@ Materiales (tubos, ángulos, láminas, alambre, perfiles): busca en el catálogo
 
 === HISTORIAL ===
 ${historialComoTexto()}`;
+        const pro = geminiProActivo();
         const data = hayArchivos
-            ? await llamarGeminiConImagenes(promptTexto, 300000)
-            : await llamarGeminiChat(promptTexto, 240000);
+            ? await llamarGeminiConImagenes(promptTexto, pro ? 360000 : 300000)
+            : await llamarGeminiChat(promptTexto, pro ? 300000 : 240000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
+        if (!texto) throw new Error(pro
+            ? "Gemini PRO no devolvió texto (suele pasar si se gasta todo en thinking). Reintenta Generar matriz o apaga PRO un momento."
+            : "Gemini no devolvió texto. Reintenta Generar matriz.");
         const cotizacion = extraerCotizacionIA(texto);
         if (cotizacion) {
             esperaIATexto_("Aplicando la matriz…");
