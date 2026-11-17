@@ -18,10 +18,10 @@ var _umsDesdeMaestro = [];
 var UMS_MATRIZ_MIN = ["UND", "m2", "Juego"];
 var UMS_CATALOGO_BASE = ["Unidades", "UND", "Metros", "kg", "Hojas", "m2", "Litros", "Juego", "LAMINA", "ROLLO", "Rollox50mts", "—"];
 var UMS_MATRIZ_DEFAULT = [
-    { um: "UND", um_catalogo: "Unidades", factor: 1, regla: "1 UND = 1 pieza en Odoo (Unidades). Perfiles/tubos: 1 UND = tira de 6 m → cantidad = ceil(metros×1,10/6). Láminas: 1 UND = 1 placa, nunca Hojas." },
-    { um: "Metros", um_catalogo: "Metros", factor: 1, regla: "1 = 1 metro lineal. cantidad = metros + merma." },
+    { um: "UND", um_catalogo: "Unidades", factor: 1, regla: "1 UND = 1 placa/tira/pieza de compra (catálogo). Lámina/tubo: cantidad = fracción (neto+merma)/tamaño_comercial; costoUnitario = COP de 1 UND. No uses 1 UND si solo consumes una fracción." },
+    { um: "Metros", um_catalogo: "Metros", factor: 1, regla: "Metros lineales. Preferir UND fraccionaria si el maestro vende tira. Pintura/procesos no aplica." },
     { um: "kg", um_catalogo: "kg", factor: 1, regla: "1 = 1 kilogramo." },
-    { um: "m2", um_catalogo: "m2", factor: 1, regla: "Precio por m² (pintura, impresión, área). Si el maestro vende la lámina en UND, no cambies la UM: calcula cuántas placas salen del m² requerido." },
+    { um: "m2", um_catalogo: "m2", factor: 1, regla: "Área de PROCESO (pintura, impresión). NO para costear compra de placa/lámina/tubo (eso va en UND fraccionaria)." },
     { um: "Juego", um_catalogo: "Unidades", factor: 1, regla: "1 Juego = 1 kit. Odoo lo compra en Unidades." },
     { um: "Cml", um_catalogo: "Metros", factor: 0.01, regla: "1 Cml = 1 cm lineal de corte (mesa/router). 100 Cml = 1 Metro." }
 ];

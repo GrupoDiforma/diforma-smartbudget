@@ -2932,19 +2932,28 @@ function textoCandidatoGemini_(jsonRes) {
 }
 
 /**
- * Pro/thinking cuenta thoughts dentro de maxOutputTokens.
- * Sin tope alto el default (~8192) se gasta en pensar y la app recibe texto vacío.
+ * Pro/Flash 3.x cuentan thoughts dentro de maxOutputTokens.
+ * Sin tope alto + thinking bajo: latencia enorme o texto vacío (MAX_TOKENS en thought).
+ * Solo uno de thinkingLevel / thinkingBudget (la API rechaza ambos).
  */
 function prepararPayloadGemini_(payload, forzarPro, modelo) {
   var body = JSON.parse(JSON.stringify(payload || {}));
   var gc = body.generationConfig || {};
   var esPro = esModeloProChat_(modelo);
+  var esFlash = esModeloFlashChat_(modelo);
+  var gen = genModeloGemini_(modelo);
+  var s = String(modelo || "").toLowerCase();
   if (gc.maxOutputTokens == null) gc.maxOutputTokens = (forzarPro || esPro) ? 65536 : 16384;
-  /* thinkingConfig solo en modelos Pro; Flash de respaldo no lo admite igual. */
-  if (!gc.thinkingConfig && esPro) {
-    var gen = genModeloGemini_(modelo);
-    if (gen >= 3) gc.thinkingConfig = { thinkingLevel: "LOW" };
-    else gc.thinkingConfig = { thinkingBudget: 2048 };
+  if (!gc.thinkingConfig) {
+    if (esPro) {
+      if (gen >= 3) gc.thinkingConfig = { thinkingLevel: "LOW" };
+      else gc.thinkingConfig = { thinkingBudget: 1024 };
+    } else if (esFlash && gen >= 3) {
+      /* 3.8-flash: low/medium/high. 3-flash / lite: admiten minimal → menos latencia. */
+      var minimalOk = /flash-lite|3-flash-preview|3\.1-flash-lite|3\.5-flash-lite|3\.6-flash/.test(s)
+        && s.indexOf("3.8-flash") === -1;
+      gc.thinkingConfig = { thinkingLevel: minimalOk ? "MINIMAL" : "LOW" };
+    }
   }
   body.generationConfig = gc;
   return body;
@@ -3385,6 +3394,13 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro, modulo) {
   }
   c = c.slice(0, 2);
   if (c.length === 0) c = (tm === "PRO") ? ["gemini-2.5-pro", "gemini-2.0-flash"] : ["gemini-2.0-flash", "gemini-2.5-flash"];
+  /* Si PRO solo devolvió thought/vacío, un intento Flash evita “sin resultados” en la UI. */
+  if (forzarPro && modelos && modelos.length) {
+    var flashFb = ordenarModelosPorPotencia(modelos.filter(esModeloFlashChat_)).slice(0, 1);
+    for (var fi = 0; fi < flashFb.length; fi++) {
+      if (c.indexOf(flashFb[fi]) < 0) c.push(flashFb[fi]);
+    }
+  }
   var jsonRes = null;
   var me = "";
   var err = [];
@@ -3419,7 +3435,7 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro, modulo) {
           modelo: c[i],
           modulo: modulo || "costos",
           ok: false,
-          error: "Respuesta vacía de Gemini PRO (thinking agotó la salida o solo devolvió thought)."
+          error: "Respuesta vacía de Gemini (thinking agotó la salida o solo devolvió thought)."
         });
         continue;
       }
@@ -3438,7 +3454,7 @@ function ejecutarGeminiDinamico(apiKey, payload, forzarPro, modulo) {
       mensaje: cupo
         ? "Gemini se quedó sin cupo o crédito. Recarga el saldo en Google AI Studio y reintenta."
         : (vacioPro
-          ? "Gemini PRO pensó pero no devolvió texto útil. Reintenta o apaga PRO (Flash) un momento.\n" + joined
+          ? "Gemini pensó pero no devolvió texto útil (suele ser thinking). Reintenta; si persiste, apaga PRO un momento.\n" + joined
           : ("Servidor Gemini sin modelos.\n" + joined)),
       cupoAgotado: cupo,
       uso: payloadUsoGemini_()

@@ -2601,6 +2601,11 @@ html, body { overflow-x: hidden; }
     white-space: nowrap;
 }
 .gemini-uso.crit #geminiUsoTxt { color: var(--diforma-red); font-weight: 600; }
+.ver-chip-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+}
 .ver-chip {
     border: 1px solid var(--sb-line);
     background: #fff;
@@ -2610,11 +2615,41 @@ html, body { overflow-x: hidden; }
     padding: 2px 10px;
     line-height: 1.4;
 }
+.ver-chip-wrap:has(.ver-chip-del) .ver-chip {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: 0;
+}
 .ver-chip:hover { border-color: var(--diforma-blue); color: var(--diforma-blue); }
 .ver-chip.is-on {
     background: var(--diforma-blue);
     color: #fff;
     border-color: var(--diforma-blue);
+}
+.ver-chip-del {
+    border: 1px solid var(--sb-line);
+    border-left: 1px solid rgba(0,0,0,.08);
+    background: #fff;
+    color: #64748b;
+    border-radius: 0 999px 999px 0;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 2px 8px 3px;
+    min-width: 1.5rem;
+}
+.ver-chip-del:hover {
+    background: #fef2f2;
+    border-color: #dc2626;
+    color: #dc2626;
+}
+.ver-chip-wrap.is-on .ver-chip-del {
+    background: var(--diforma-blue);
+    border-color: var(--diforma-blue);
+    color: #fff;
+}
+.ver-chip-wrap.is-on .ver-chip-del:hover {
+    background: #b91c1c;
+    border-color: #b91c1c;
 }
 .ver-switch {
     display: inline-flex;

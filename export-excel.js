@@ -2426,7 +2426,8 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
     const feeCom = (typeof logDescuentoActivo_ === "function" && logDescuentoActivo_(escId))
         ? 0
         : Math.max(0, Number(com.fee) || 0);
-    const denCom = 100 + pctCom + feeCom;
+    /* Complemento Excel: venta = base / (1 − % − fee) → base = venta × (100 − % − fee) / 100. */
+    const denCom = 100 - pctCom - feeCom;
     try {
         const i2 = ws.getCell(2, 9);
         i2.value = pctCom / 100;
@@ -2461,7 +2462,7 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
         const unitShow = it ? (Number(it.unit) || 0) : 0;
         /* Precio base (sin comisión de venta): al cambiar I2, E recalcula el precio de cotización. */
         const base = it && denCom > 0
-            ? Math.round(unitShow * 100 / denCom * 100) / 100
+            ? Math.round(unitShow * denCom) / 100
             : unitShow;
         const esCont = it && it.span === 0;
         /* Continuación de rango: no vaciar B/C (si ya hay merge, ExcelJS borra también el maestro). */
@@ -2477,9 +2478,9 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
         ws.getCell(r, 9).value = base;
         if (it) {
             excelCotPrecioBaseLabel_(ws, r, esEn);
-            const feeBit = feeCom > 0 ? ("+" + (feeCom / 100)) : "";
+            const feeBit = feeCom > 0 ? ("-" + (feeCom / 100)) : "";
             ws.getCell(r, 5).value = {
-                formula: "IF(I" + r + "=0,0,ROUND(I" + r + "*(1+$I$2" + feeBit + "),2))"
+                formula: "IF(OR(I" + r + "=0,1-$I$2" + feeBit + "<=0),0,ROUND(I" + r + "/(1-$I$2" + feeBit + "),2))"
             };
         } else {
             ws.getCell(r, 5).value = 0;
@@ -2525,13 +2526,10 @@ function excelCotRellenarUnaHoja_(wb, ws, ctx, escId, avisos, itemsPre) {
     excelCotTituloFila_(ws, R.totalProd, titProd);
     ws.getCell(R.totalProd, 6).value = { formula: "SUM(F" + R.itemStart + ":F" + R.itemEnd + ")" };
     ws.getCell(R.totalProd, 7).value = { formula: "IF(" + granRef + "=0,0,F" + R.totalProd + "/" + granRef + ")" };
-    /* Comisión incluida en el precio: F × % / (100+%[+fee]), igual que Logística. */
-    {
-        const feeDen = feeCom > 0 ? ("+" + (feeCom / 100)) : "";
-        ws.getCell(R.totalProd, 9).value = {
-            formula: "IF(OR(F" + R.totalProd + "=0,1+$I$2" + feeDen + "=0),0,F" + R.totalProd + "*$I$2/(1+$I$2" + feeDen + "))"
-        };
-    }
+    /* Comisión incluida: con ÷(1−%) es exactamente F × I2 (margen sobre el precio de venta). */
+    ws.getCell(R.totalProd, 9).value = {
+        formula: "IF(F" + R.totalProd + "=0,0,F" + R.totalProd + "*$I$2)"
+    };
 
     const logLblOpts = {
         bold: false, size: 10, height: 15, align: "right",

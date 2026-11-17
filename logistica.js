@@ -7365,18 +7365,17 @@ function logComisionFactor_(fila) {
     if (!fila || logEsTextoFila_(fila) || logEsEnvio_(fila)) return 1;
     const c = logComisionDeEsc_(fila.escId || logOpcionUiSel_ || "");
     const o = logComisionOrigen_(fila);
-    const den = 100 + (Number(o.pct) || 0) + (Number(o.fee) || 0);
+    /* Misma base que el Excel: precio ∝ 1/(100−%−fee) → factor = (100−origen)/(100−nuevo). */
+    const den = 100 - (Number(o.pct) || 0) - (Number(o.fee) || 0);
     const feeEnPrecio = logDescuentoActivo_(fila.escId) ? 0 : (Number(o.fee) || 0);
-    const num = 100 + (Number(c.pct) || 0) + feeEnPrecio;
-    if (!(den > 0)) return 1;
-    return num / den;
+    const num = 100 - (Number(c.pct) || 0) - feeEnPrecio;
+    if (!(den > 0) || !(num > 0)) return 1;
+    return den / num;
 }
 
-/** El precio de venta ya trae la comisión encima del precio sin ella: valor = subtotal × % / (100 + % + fee). */
-function logComisionValor_(base, pct, fee) {
-    const den = 100 + (Number(pct) || 0) + (Number(fee) || 0);
-    if (!(den > 0)) return 0;
-    return (Number(base) || 0) * (Number(pct) || 0) / den;
+/** El precio de venta ya trae la comisión: con ÷(1−%) el valor incluido es exactamente subtotal × % (el fee no diluye). */
+function logComisionValor_(base, pct, _fee) {
+    return (Number(base) || 0) * (Number(pct) || 0) / 100;
 }
 
 /** Línea de descuento o recargo. Apagada, el Fee libre sigue dentro del precio. */
@@ -14770,7 +14769,7 @@ async function logIaConsultar_(modo, textoUsuario) {
             modulo: "logistica",
             forzarPro: pro,
             promptText: logIaPrompt_(modo)
-        }, { timeoutMs: pro ? 180000 : 120000 });
+        }, { timeoutMs: pro ? 300000 : 240000 });
         if (typeof pintarUsoGemini === "function") pintarUsoGemini(resp && resp.uso);
         if (!resp || !resp.exito) throw new Error((resp && resp.mensaje) || "Sin respuesta.");
         const bruto = (typeof textoGemini === "function")

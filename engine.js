@@ -135,7 +135,13 @@ function calcularPrecioLote_(items, lt, ctx, opts) {
     }
 
     let pFinUnitario = pVtaF + pVtaC;
-    pFinUnitario += (pFinUnitario * pctCom / 100) + (pFinUnitario * feeExtra / 100);
+    /* Comisión/fee como el Excel oficial: venta = base / (1 − %), no ×(1+%). Así el % es margen sobre el precio de venta. */
+    const cargaCom = pctCom + feeExtra;
+    if (cargaCom !== 0) {
+        pFinUnitario = (cargaCom < 100)
+            ? (pFinUnitario / (1 - cargaCom / 100))
+            : (pFinUnitario * 1.5);
+    }
     const pTotalGlobal = pFinUnitario * lt.q;
     return { uFab, uCom, totalFabLote, totalComLote, pImpF, pIndF, pIndC, pUtF, pUtC, vImpF, vIndF, subFab, pVtaF, vIndC, subCom, pVtaC, pFinUnitario, pTotalGlobal, nCandado };
 }
@@ -918,7 +924,11 @@ function liberarCandados() {
 
 window.aplicarRangosDesdeIA = function(rangos) {
     let qs = Array.isArray(rangos) ? rangos.map(Number).filter(q => q > 0) : [];
-    if (!qs.length) qs = [1, 50, 100];
+    /* Sin rangos del JSON: preferir lo dicho en el chat; el 1/50/100 solo si nadie fijó Q. */
+    if (!qs.length && typeof extraerRangosDesdeHistorial_ === "function") {
+        qs = extraerRangosDesdeHistorial_() || [];
+    }
+    if (!qs.length) qs = [1];
     qs = [...new Set(qs)].sort((a, b) => a - b);
     lotesSimulacion = qs.map(q => ({ id: 'l_' + q, q: q, econPct: 0 }));
 };

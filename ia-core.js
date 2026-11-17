@@ -21,17 +21,22 @@ FUENTES DE PRECIO (prioridad estricta)
 Híbrido: si no hay match claro de catálogo, etiqueta [Estimado IA] o [Manual]. No inventes que consultaste Drive u Odoo.
 
 FLUJO
-Fase 1 — Entrevista: describe en breve cómo fabricarías el mueble. Pregunta rangos si no vienen en el PDF. Si no los definen, usa 1, 50 y 100. ESPERA. PROHIBIDO generar JSON o matriz hasta que el sistema te ponga en FASE 2.
+Fase 1 — Entrevista: describe en breve cómo fabricarías el mueble. Pregunta rangos/Q si no vienen en el PDF ni en el chat. Si el analista dice una Q concreta (ej. «5 unidades», «cotizar 5»), ESA es la Q: no inventes 1/50/100. Solo si no definen ninguna Q, usa 1, 50 y 100. ESPERA. PROHIBIDO generar JSON o matriz hasta que el sistema te ponga en FASE 2.
 Fase 2 — Costeo: solo cuando el analista pulse "Generar matriz".
 Fase 3 — Ajustes: el mismo chat puede corregir ítems ya listados.
 
-REGLA A — campo nombre (no existe "descripcion"): título corto + " — " + cuenta con cifras. El analista audita el costeo leyendo el nombre.
-- Tubos: Tc vs Tr. Suma de tramos + 10% merma = metros; cuántas tiras de 6 m y qué sobra.
-- Alambre: retículas; longitud / 6 m.
-- Láminas planas (PS, acrílico, MDF): rectángulo envolvente en cm y m².
-- PS termoformado: la holgura NO es un mm fijo. Desarrolla la lámina según altura y forma (planta + paredes/tiro + pestaña de sujeción/refile). Escribe esa cuenta en el nombre.
-- Impresión: fila aparte, m² exactos.
-El campo "fuente" va aparte. No pongas la etiqueta de fuente dentro de "nombre".
+REGLA A — POLÍTICA DE MATERIAL (todos los proyectos, siempre)
+Grupo Diforma compra lámina, tubo, perfil, etc. en UND del catálogo (placa, tira 6 m…). La matriz debe costear en esa misma UM comercial.
+Concepto: cantidad = FRACCIÓN de UND (+ merma), costoUnitario = COP de 1 UND del maestro (como se compra).
+1) Calcula consumo neto (m² o metros de desarrollo).
+2) Suma merma/yield (tubos ~10%; láminas ~10–18%).
+3) Convierte a fracción de la medida comercial: cantidad_UND = (neto+merma) / tamaño_comercial (m²_placa o 6 m de tira). Redondea a 2–3 decimales.
+4) um = UND. costoUnitario = precio catálogo de 1 placa/tira. Total = cantidad_UND × COP_UND.
+5) En el nombre escribe la cuenta en m²/metros (auditoría). PROHIBIDO cantidad=1 UND si el consumo es fracción (ej. 0,20 m² → ~0,09 UND de placa 120×180, no 1 UND).
+6) PROHIBIDO costear esas compras en m2/Metros con COP/m² inventado: baja el costo bajo la realidad de compra.
+7) Pintura/impresión sí van en m2 (tarifas de proceso). Material de placa/tira: siempre UND fraccionaria.
+8) Si con la Q el desperdicio sería muy alto o conviene a medida/nesting y no está claro: PREGUNTA en entrevista antes de Generar matriz.
+Campo nombre: título + " — " + cuenta con cifras. fuente aparte.
 
 REGLA B — procesos y mano de obra
 - Corte CNC: detalla qué cobras. Corte recto de metal NO va aparte: va en Mano de obra Externa.
@@ -233,7 +238,10 @@ function extraerCotizacionIA(texto) {
     const arr = raw.match(/\[[\s\S]*\]/);
     if (arr) {
         const p = tryParse(arr[0]);
-        if (Array.isArray(p)) return { rangos: [1, 50, 100], items: p };
+        if (Array.isArray(p)) {
+            const rq = (typeof extraerRangosDesdeHistorial_ === "function") ? extraerRangosDesdeHistorial_() : [];
+            return { rangos: rq.length ? rq : [1], items: p };
+        }
     }
     return null;
 }
@@ -316,6 +324,72 @@ function avisarEmpaqueVsPieza_() {
     }
 }
 
+/**
+ * Q / rangos que el analista dijo en el chat (manda sobre el default 1/50/100 del prompt).
+ * Toma el último mensaje de usuario con cantidades claras.
+ */
+function extraerRangosDesdeHistorial_() {
+    const hist = window.historialChatIA || [];
+    let hallado = [];
+    for (let i = hist.length - 1; i >= 0; i--) {
+        const h = hist[i];
+        if (!h || h.role !== "user") continue;
+        const t = String(h.text || "");
+        if (/generar\s+matriz/i.test(t) && t.length < 40) continue;
+        const bracket = t.match(/rangos?\s*[:=]?\s*\[([^\]]+)\]/i);
+        if (bracket) {
+            const qs = bracket[1].split(/[,;\s]+/).map(Number).filter(function (n) { return n > 0 && n < 100000; });
+            if (qs.length) { hallado = qs; break; }
+        }
+        const lista = t.match(/\b(\d{1,5})\s*(?:,|y|&)\s*(\d{1,5})(?:\s*(?:,|y|&)\s*(\d{1,5}))?/i);
+        if (lista && /rango|escala|lote|q\b/i.test(t)) {
+            const qs = [lista[1], lista[2], lista[3]].map(Number).filter(function (n) { return n > 0; });
+            if (qs.length >= 2) { hallado = qs; break; }
+        }
+        const uno = t.match(/(?:cotizar|cotizaci[oó]n|pedido|cantidad(?:es)?|solo|para)\s+(\d{1,5})\s*(?:unidades?|und\.?|u\.?|piezas?|muebles?|exhibitors?|displays?)?\b/i)
+            || t.match(/\b(\d{1,5})\s*(?:unidades?|und\.?)\b/i)
+            || t.match(/\bQ\s*[=: ]\s*(\d{1,5})\b/i);
+        if (uno) {
+            const n = Number(uno[1]);
+            if (n > 0 && n < 100000) { hallado = [n]; break; }
+        }
+    }
+    return [...new Set(hallado)].sort(function (a, b) { return a - b; });
+}
+
+function esTrioClasicoRangos_(rangos) {
+    const qs = (Array.isArray(rangos) ? rangos : []).map(Number).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; });
+    return qs.length === 3 && qs[0] === 1 && qs[1] === 50 && qs[2] === 100;
+}
+
+/** Rangos efectivos: chat del analista > JSON Gemini (si no es el trio plantilla) > UI > [1]. */
+function resolverRangosCotizacion_(rangosIa) {
+    const delChat = extraerRangosDesdeHistorial_();
+    if (delChat.length) return delChat; /* «5 unidades» manda aunque Gemini ponga 1/50/100. */
+    const delUi = (typeof lotesSimulacion !== "undefined" && Array.isArray(lotesSimulacion))
+        ? lotesSimulacion.map(function (l) { return Number(l.q); }).filter(function (n) { return n > 0; })
+        : [];
+    const delIa = Array.isArray(rangosIa) ? rangosIa.map(Number).filter(function (n) { return n > 0; }) : [];
+    if (delIa.length && !esTrioClasicoRangos_(delIa)) return delIa;
+    if (delUi.length && !esTrioClasicoRangos_(delUi)) return delUi;
+    if (delIa.length) return delIa;
+    if (delUi.length) return delUi;
+    return [1];
+}
+
+function bloqueRangosObligatoriosParaPrompt_() {
+    const qs = extraerRangosDesdeHistorial_();
+    const ui = (typeof lotesSimulacion !== "undefined" && Array.isArray(lotesSimulacion))
+        ? lotesSimulacion.map(function (l) { return Number(l.q); }).filter(function (n) { return n > 0; })
+        : [];
+    const usar = qs.length ? qs : (ui.length && !esTrioClasicoRangos_(ui) ? ui : []);
+    if (!usar.length) {
+        return "RANGOS: el analista aún no fijó una Q. Si tampoco está en el PDF, usa [1, 50, 100]. Si dijo una sola cantidad (ej. 5 unidades), rangos = [esa cantidad] — PROHIBIDO inventar 50 y 100.";
+    }
+    return "RANGOS OBLIGATORIOS DEL ANALISTA: " + JSON.stringify(usar) +
+        ". El campo JSON \"rangos\" DEBE ser exactamente esos números. PROHIBIDO sustituirlos por [1,50,100] u otros.";
+}
+
 async function aplicarCotizacionEnUI(cotizacion) {
     if (!cotizacion) return false;
     let ok = false;
@@ -328,12 +402,17 @@ async function aplicarCotizacionEnUI(cotizacion) {
         ok = true;
     }
     if (Array.isArray(cotizacion.items)) {
-        if (typeof window.aplicarRangosDesdeIA === 'function') window.aplicarRangosDesdeIA(cotizacion.rangos);
+        const rangos = resolverRangosCotizacion_(cotizacion.rangos);
+        if (typeof window.aplicarRangosDesdeIA === "function") window.aplicarRangosDesdeIA(rangos);
         await enriquecerItemsConCatalogo(cotizacion.items);
         window.reemplazarMatrizDesdeIA(cotizacion.items);
         window.faseIA = 'matriz';
         ok = true;
         avisarCubicacionCorta_();
+        if (esTrioClasicoRangos_(cotizacion.rangos) && rangos.length && !esTrioClasicoRangos_(rangos)
+            && typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Rangos corregidos a Q " + rangos.join(", ") + " (lo que pediste en el chat; Gemini había puesto 1/50/100).", "info");
+        }
     }
     return ok;
 }
@@ -381,22 +460,23 @@ function bloqueCubicacionMuebleParaPrompt() {
             "=== DESPIECE DE MUEBLE (obligatorio si no es un panel suelto) ===",
             "Antes de costear, lista CADA parte visible u oculta: laterales, fondo, cuerpo, entrepaños/bandejas, zócalo, tapa, divisiones, pestañas de ensamble.",
             "Cartonplast: NO uses un solo rectángulo envolvente. Área = suma de L×W de cada parte. Cml = suma de 2×(L+W) de cada parte + hendidos/pestañas.",
-            "Placa típica 122×244 cm (2,98 m²). cantidad en UND = ceil(m² con merma / 2,98). PROHIBIDO 1 placa o 0,x m² para un mueble de piso."
+            "Mueble de piso grande: despiece en m² + ~18% merma → fracción UND de placa 122×244 (≈2,98 m²). Recortes POP: misma lógica (0,xx UND), nunca 1 UND ni costeo en m2 de compra."
         ].join("\n");
     }
     const lineasPartes = d.parts.map(function (x) {
         return "- " + x.n + " " + x.nom + " " + x.L + "×" + x.W + " " + um + " → " + (x.n * 2 * (x.L + x.W)) + " Cml, " + (x.n * (x.L / 100) * (x.W / 100)).toFixed(2) + " m²";
     });
+    const fracMin = Math.max(1, d.placas);
     return [
         "=== DESPIECE MÍNIMO (mueble / exhibidor / cartonplast) ===",
         "Medidas ficha: " + d.a + " × " + d.p + " × " + d.h + " " + um + ". Entrepaños/bandejas: " + d.nEst + " (ajusta solo si el render muestra otra cantidad).",
         "Lista y costea TODAS estas partes. PROHIBIDO un único rectángulo " + d.a + "×" + d.h + ".",
         lineasPartes.join("\n"),
         "Área neta mínima ≈ " + d.m2.toFixed(2) + " m². Con merma/yield 18% ≈ " + d.merma.toFixed(2) + " m².",
-        "Placa 122×244 = 2,98 m² → mínimo " + d.placas + " UND de cartonplast (nunca 1 ni fracción de placa para este mueble).",
+        "Cartonplast: um=UND, cantidad ≥ " + fracMin + " (placas 122×244); costoUnitario = COP de 1 placa. Cuenta m² en el nombre.",
         "Cml mínimo (perímetros + 20% pestañas/hendidos de ensamble): " + d.cml + " Cml.",
-        "Si tu lámina o tu mesa de corte quedan por debajo, está MAL: sube, no bajes.",
-        "nombre lámina: «Cartonplast — 2 lat " + d.p + "×" + d.h + " + fondo " + d.a + "×" + d.h + " + " + d.nEst + " bandejas " + d.a + "×" + d.p + " + zócalo " + d.a + "×" + d.zH + " = " + d.merma.toFixed(2) + " m² → " + d.placas + " placas 122×244».",
+        "Si tu lámina o tu mesa de corte quedan por debajo del área/Cml mínimo, está MAL: sube, no bajes.",
+        "nombre lámina: «Cartonplast — … = " + d.merma.toFixed(2) + " m² → " + fracMin + " UND placa 122×244».",
         "nombre corte: «Mesa de corte — laterales + fondo + bandejas + zócalo + tapa = " + d.cml + " Cml» (o más)."
     ].join("\n");
 }
@@ -477,6 +557,26 @@ function briefGrupalTexto_() {
     return otro ? compactarChatParaBrief_(otro.historialChat) : "";
 }
 
+/** Cómo costeó materiales otra pieza del grupo (evita redondear a 1 placa/tira en la siguiente). */
+function resumenCubicacionHermanas_(elems, activoId) {
+    const out = [];
+    (elems || []).forEach(function (e) {
+        if (!e || e.id === activoId) return;
+        const mats = (e.matrizItems || []).filter(function (it) {
+            return /l[aá]mina|acr[ií]lico|tubo|perfil|cartonplast|mdf|\bps\b|cr\b/i.test(it.nombre || "");
+        }).slice(0, 6);
+        if (!mats.length) return;
+        const bits = mats.map(function (it) {
+            const um = String(it.um || "?");
+            const c = Number(it.cantidad) || 0;
+            const corto = String(it.nombre || "").split(/\s[—–\-]\s/)[0].slice(0, 42);
+            return corto + " → " + c + " " + um;
+        });
+        out.push("- " + (e.nombre || "Pieza") + ": " + bits.join("; "));
+    });
+    return out;
+}
+
 function bloqueGrupalParaPrompt() {
     if (typeof esPresupuestoGrupal !== "function" || !esPresupuestoGrupal()) {
         return "=== TIPO DE PRESUPUESTO ===\nINDIVIDUAL: una sola pieza. Costea solo eso. No preguntes si vienen más elementos.";
@@ -510,6 +610,12 @@ function bloqueGrupalParaPrompt() {
         lineas.push("No preguntes «¿son varias piezas?», «¿esto es un stand?» ni «¿vienen más elementos?».");
     } else {
         lineas.push("Otras piezas ya existen. Pregunta solo lo de ESTA pieza. No reinicies una entrevista de campaña.");
+    }
+    const hermanas = resumenCubicacionHermanas_(elems, activo && activo.id);
+    if (hermanas.length) {
+        lineas.push("=== CUBICACIÓN YA USADA EN HERMANAS (mismo criterio; NO copies ítems) ===");
+        lineas.push("Si hermanas costearon lámina/acrílico/tubo en UND con cantidad 0,xx (fracción de placa/tira + merma), ESTA pieza igual. PROHIBIDO qty=1 UND o pasar a m2/Metros solo por ser cilíndrico.");
+        lineas.push.apply(lineas, hermanas);
     }
     return lineas.join("\n");
 }
@@ -681,6 +787,91 @@ function mejorFilaCatalogo(nombre, indice, umItem) {
     return best;
 }
 
+/** m² de placa a partir de «120 x 180 cm», «122×244», etc. */
+function areaPlacaM2DesdeTexto_(txt) {
+    const s = String(txt || "");
+    const m = s.match(/(\d+[.,]?\d*)\s*[x×*]\s*(\d+[.,]?\d*)\s*(cm|mm|m\b)?/i);
+    if (!m) return 0;
+    let a = parseFloat(String(m[1]).replace(",", "."));
+    let b = parseFloat(String(m[2]).replace(",", "."));
+    if (!(a > 0 && b > 0)) return 0;
+    const u = String(m[3] || "").toLowerCase();
+    if (u === "mm") { a /= 1000; b /= 1000; }
+    else if (u === "m") { /* ya metros */ }
+    else if (u === "cm" || (!u && a >= 40 && b >= 40)) { a /= 100; b /= 100; }
+    return a * b;
+}
+
+function metrosTiraDesdeTexto_(txt) {
+    const s = String(txt || "");
+    const m = s.match(/(\d+[.,]?\d*)\s*m(?:t|ts|etro)?s?\b/i);
+    if (m) {
+        const n = parseFloat(String(m[1]).replace(",", "."));
+        if (n >= 3 && n <= 12) return n;
+    }
+    if (/x\s*6\b|6\s*m/i.test(s)) return 6;
+    return 6;
+}
+
+/**
+ * Alinea compra real Diforma: um=UND, cantidad=fracción de placa/tira, costoUnitario=COP de 1 UND.
+ * Corrige qty=1 UND o costeos erróneos en m2/Metros para lámina/tubo.
+ */
+function normalizarCubicacionFraccionItems_(items) {
+    if (!items || !items.length) return items;
+    items.forEach(function (it) {
+        if (!it || it.candado) return;
+        const nom = String(it.nombre || "");
+        if (/pintura|impresi[oó]n|mesa de corte|\bcml\b/i.test(nom)) return;
+        const um = String(it.um || "");
+        const cant = Number(it.cantidad) || 0;
+        const cop = Number(it.costoUnitario) || 0;
+
+        const mTubo = nom.match(/\+\s*\d+%\s*=\s*([\d.,]+)\s*m\b/i)
+            || nom.match(/=\s*([\d.,]+)\s*m\b(?=[^\d]*?(?:→|->|tira))/i)
+            || nom.match(/=\s*([\d.,]+)\s*m\b/i);
+        const esTubo = /tubo|perfil|tc\b|tr\b|tira|aro/i.test(nom);
+        if (esTubo && mTubo) {
+            const mNet = parseFloat(String(mTubo[1]).replace(",", "."));
+            const L = metrosTiraDesdeTexto_(nom) || 6;
+            if (mNet > 0 && mNet < L) {
+                const frac = Math.round((mNet / L) * 1000) / 1000;
+                if (/^(metros|m)$/i.test(um)) {
+                    if (cop > 0 && cop < 80000) it.costoUnitario = Math.round(cop * L);
+                    it.um = "UND";
+                    it.cantidad = frac;
+                } else if (/^und/i.test(um) && cant >= 0.99) {
+                    it.cantidad = frac;
+                }
+                return;
+            }
+        }
+
+        const mLam = nom.match(/\+\s*\d+%\s*=\s*([\d.,]+)\s*m\s*2\b/i)
+            || nom.match(/=\s*([\d.,]+)\s*m\s*2\b/i)
+            || nom.match(/=\s*([\d.,]+)\s*m²/i)
+            || nom.match(/([\d.,]+)\s*m2\b/i);
+        const esLam = /l[aá]mina|acr[ií]lico|cartonplast|mdf|\bps\b|cr\b|placa|corrugado/i.test(nom);
+        if (esLam && mLam) {
+            let m2 = parseFloat(String(mLam[1]).replace(",", "."));
+            if (!(m2 > 0)) return;
+            if (!/\+\s*\d+%/i.test(nom) && m2 < 1.5) m2 = Math.round(m2 * 1.15 * 1000) / 1000;
+            const area = areaPlacaM2DesdeTexto_(nom) || 2.16;
+            if (!(area > 0.05) || m2 >= area * 0.98) return;
+            const frac = Math.max(0.01, Math.round((m2 / area) * 1000) / 1000);
+            if (/^(m2|m²)$/i.test(um)) {
+                /* Recuperar COP de placa si el unitario parece COP/m². */
+                if (cop > 0 && cop < 200000) it.costoUnitario = Math.round(cop * area);
+                it.um = "UND";
+                it.cantidad = frac;
+            } else if (/^und/i.test(um) && cant >= 0.99) {
+                it.cantidad = frac;
+            }
+        }
+    });
+    return items;
+}
+
 async function enriquecerItemsConCatalogo(items) {
     if (!items || !items.length) return items;
     const tarifas = (typeof listaTarifasFijas === "function") ? listaTarifasFijas() : [];
@@ -703,7 +894,10 @@ async function enriquecerItemsConCatalogo(items) {
         if (/mano\s*de\s*obra/i.test(it.nombre || "")) return false;
         return true;
     });
-    if (!pendientes.length) return items;
+    if (!pendientes.length) {
+        normalizarCubicacionFraccionItems_(items);
+        return items;
+    }
     const indice = await buscarCatalogoPorTokens(pendientes);
     let cruzados = 0;
     let corregidos = 0;
@@ -711,9 +905,31 @@ async function enriquecerItemsConCatalogo(items) {
         const hit = mejorFilaCatalogo(it.nombre, indice, it.um);
         if (hit && Number(hit.costo_cop) > 0) {
             const prev = Number(it.costoUnitario) || 0;
+            const umItem = String(it.um || "");
+            const umHit = String(hit.um || "");
             it.fuente = "[Matriz Drive]";
-            it.costoUnitario = Number(hit.costo_cop);
-            if (hit.um) it.um = hit.um;
+            /*
+             * Lámina/tubo se compran en UND: si la IA puso m2/Metros, pasar a fracción UND
+             * y usar el COP de 1 UND del maestro (como Rec Alto/Bajo).
+             */
+            const esCompraUnd = /und|unidad|lamina/i.test(umHit);
+            const esMatCompra = /l[aá]mina|acr[ií]lico|tubo|perfil|cartonplast|mdf|\bps\b|cr\b|placa|corrugado/i.test(it.nombre || "");
+            if (esCompraUnd && esMatCompra && /^(m2|m²)$/i.test(umItem)) {
+                const area = areaPlacaM2DesdeTexto_(hit.nombre) || areaPlacaM2DesdeTexto_(it.nombre) || 2.16;
+                const m2 = Number(it.cantidad) || 0;
+                it.um = "UND";
+                it.cantidad = area > 0 ? Math.max(0.01, Math.round((m2 / area) * 1000) / 1000) : it.cantidad;
+                it.costoUnitario = Number(hit.costo_cop);
+            } else if (esCompraUnd && esMatCompra && /^(metros|m)$/i.test(umItem)) {
+                const L = metrosTiraDesdeTexto_(hit.nombre) || metrosTiraDesdeTexto_(it.nombre) || 6;
+                const m = Number(it.cantidad) || 0;
+                it.um = "UND";
+                it.cantidad = L > 0 ? Math.max(0.01, Math.round((m / L) * 1000) / 1000) : it.cantidad;
+                it.costoUnitario = Number(hit.costo_cop);
+            } else {
+                it.costoUnitario = Number(hit.costo_cop);
+                if (hit.um) it.um = hit.um;
+            }
             cruzados++;
             if (prev > 0 && Math.abs(prev - it.costoUnitario) / Math.max(it.costoUnitario, 1) > 0.15) corregidos++;
             return;
@@ -722,6 +938,7 @@ async function enriquecerItemsConCatalogo(items) {
         if (!/estimado|manual|tarifa|odoo/i.test(it.fuente || "")) it.fuente = "[Estimado IA]";
         else if (!it.fuente) it.fuente = "[Estimado IA]";
     });
+    normalizarCubicacionFraccionItems_(items);
     if (cruzados && typeof mostrarNotificacion === "function") {
         let msg = cruzados + " ítem(s) cruzados con Catalogo_Maestro.";
         if (corregidos) msg += " " + corregidos + " con precio distinto al que puso la IA.";
@@ -743,26 +960,35 @@ function instruccionesFase(modo) {
 IDIOMA DEL CHAT: SIEMPRE español. El analista es de Diforma. Aunque el Brief, el PDF o la ficha vayan en inglés, preguntas, resúmenes y aclaraciones van en español. El idioma Odoo (es/en) SOLO aplica a ficha.titulo y ficha.descripcion (texto para el cliente).
 EVIDENCIA: PDF/render + chat del analista mandan sobre el Lead de Odoo. Locale (idioma/sistema/país) sí sale de Odoo. Medidas, materiales y und. por caja NO se copian del Brief.
 Las fases las controla la app: entrevista hasta que el analista pulse Generar matriz; entonces JSON. No uses herramientas inventadas ni busques en Drive archivo por archivo. El catálogo ya viene abajo. campo um = UND (nunca escribas Unidades). campo fuente aparte; no lo metas en nombre.
-NOMBRE AUDITABLE: cada ítem de material/proceso con cubicación lleva en nombre la cuenta (cifras). PROHIBIDO un título solo («Lámina PS Cal.60»). Forma: «título — pieza + extras = bruto → compra».
-Ej. tubo: «Tc 1/2 — 4×0,80 + 4×0,40 = 4,80 m +10% = 5,28 m → 1 tira 6 m (sobra 0,72)».
-Ej. PS termoformado: «PS Cal.60 frente — planta 60,3×7,9 cm; h tiro 3,0 cm; desarrollo paredes 2×3,0; pestaña ~2 cm/lado (relieve bajo, borde abierto) = lámina 64,3×15,9 cm = 0,102 m²».
-TERMOFORMADO — cómo calcular la lámina (no inventes un mm único):
-1) Planta = largo × ancho de la pieza terminada (plano/render).
-2) Desarrollo = suma el tiro/altura en cada lado que baja o se curva (como patrón de chapa; si es L o aleta, desarrolla esa sección).
-3) Pestaña de marco/refile: proporcional a altura y forma (relieve bajo ~1,5–2,5 cm/lado; medio 2,5–4 cm; alto o bajo corte / forma cerrada, más). Declara el cm que usaste.
-4) Lámina bruta = planta + desarrollo + pestañas. cantidad en m² (o placas UND con yield). PROHIBIDO 0,035 UND sin esa cuenta.
-Prioridad: 1) [Tarifa Fija] si el ítem coincide con la lista de tarifas (procesos internos). 2) Catálogo maestro / [Matriz Drive] para materiales. 3) [Estimado IA]. 4) [Manual].
+NOMBRE AUDITABLE: cada ítem de material/proceso con cubicación lleva en nombre la cuenta (cifras). PROHIBIDO un título solo («Lámina PS Cal.60»). Forma: «título — pieza + extras = bruto (+merma)».
+
+=== POLÍTICA GLOBAL DE MATERIAL (manda en TODO proyecto; como Rec Alto/Bajo) ===
+A) Compra real = UND del catálogo (placa, tira 6 m). um de matriz = UND.
+B) cantidad = fracción de esa UND: (consumo_neto + merma) / tamaño_comercial. Ej. 1,60 m² / 2,98 m² placa → ~0,54 UND; 1,41 m / 6 m → ~0,24 UND.
+C) costoUnitario = COP de 1 UND del maestro (precio de compra). Total = fracción × COP_UND.
+D) En el nombre: cuenta en m²/metros + merma (auditoría). PROHIBIDO qty=1 UND si es fracción. PROHIBIDO pasar lámina/tubo a um=m2 o Metros con COP/m²: eso subvalúa vs compra real.
+E) Pintura/impresión: sí um=m2 (proceso). Lámina/tubo/perfil/acrílico/CR/cartonplast: UND fraccionaria.
+F) Desperdicio / a medida: si con la Q sobraría mucho o conviene nesting/a medida y no está claro → pregunta en FASE 1.
+G) Grupal: misma regla en Rec, Cil, etc. La geometría no justifica qty=1 UND ni costeo en m2.
+
+Ej. acrílico OK (estilo Rec): «… = 0,93 m² + merma = 1,05 m² → 0,49 UND placa 120×180», um UND, COP = precio placa.
+Ej. acrílico MAL: um m2 con COP/m²; o qty 1 UND por 0,20 m².
+Ej. tubo OK: «… = 1,41 m → 0,24 UND tira 6 m», um UND, COP = precio tira.
+Ej. tubo MAL: 1 UND tira; o um Metros con COP/m.
+
+TERMOFORMADO: desarrolla planta+tiro+pestaña → m² (+merma) → fracción UND de la placa del calibre. No inventes un mm fijo de holgura.
+
+Prioridad: 1) [Tarifa Fija] 2) Catálogo / [Matriz Drive] 3) [Estimado IA] 4) [Manual].
 
 UNIDADES DE LA MATRIZ (copia el código UM exacto; aplica factor y regla):
 ${um}
 
-CÓMO LEER EL CATÁLOGO: costo_cop es el precio de UNA unidad de la UM del maestro. No mezcles UM matriz con UM Odoo/Drive sin convertir.
-Si el maestro trae UND de perfil 6 m, no pongas Metros con el mismo costo. Láminas en Odoo = UND (placa), nunca Hojas.
+CÓMO LEER EL CATÁLOGO: costo_cop = precio de 1 UND comercial. Para lámina/tubo: deja um=UND, cantidad=fracción, costoUnitario=costo_cop. No conviertas a m2/Metros.
 
 TARIFAS FIJAS (mandan sobre el maestro si el concepto coincide):
 ${tarifas || '(vacío)'}
 
-LÁMINAS (cartonplast, MDF, PS, acrílico, corrugado): el maestro vende PLACAS en UND. costoUnitario = COP de UNA placa del calibre/espesor correcto. cantidad = placas a comprar (ceil de m² netos / m² de la placa + merma). Escribe la cuenta en nombre. PROHIBIDO poner m² con el precio de una placa, o UND con un precio de m² inventado. Cartonplast: usa la fila del maestro con el espesor que se ve (3, 4, 5 mm), no otra lámina barata.
+LÁMINAS/TUBOS: UND fraccionaria + merma. Cartonplast: espesor que se ve (3/4/5 mm).
 
 MESA DE CORTE (Cml): UM = Cml = centímetros lineales de TODOS los cortes, no el perímetro de una silueta. Un mueble = fondo + cuerpo + laterales + bandejas + zócalo + tapas + divisiones. Suma los filos reales de CADA parte. nombre: «Mesa de corte — fondo 2×A+2×B; cuerpo …; bandejas n×(…); zócalo … = N Cml».
 
@@ -782,7 +1008,8 @@ ${bloqueCubicacionMuebleParaPrompt()}
 MODO ACTUAL: FASE 1 ENTREVISTA.
 Responde SIEMPRE en español, breve. Aunque el proyecto sea exportación o el Brief esté en inglés. PROHIBIDO JSON, arrays de ítems o costos. NO desgloses la matriz.
 Aunque el analista dé todos los datos, SOLO continúa el diálogo. El costeo ocurre únicamente en FASE 2.
-Pregunta solo lo no obvio. Incluye rangos si no están en los archivos. Medidas en ${localeProyectoActual && localeProyectoActual().sistema === "imperial" ? "pulgadas (in)" : "centímetros (cm)"}.
+Pregunta solo lo no obvio. Incluye rangos/Q si no están en los archivos ni en el chat. Si el analista ya dio una Q (ej. 5 unidades), no vuelvas a proponer 1/50/100. Medidas en ${localeProyectoActual && localeProyectoActual().sistema === "imperial" ? "pulgadas (in)" : "centímetros (cm)"}.
+MATERIAL / MERMA (obligatorio si aplica): costeas en UND comercial del catálogo con cantidad fraccionaria (no m2 de compra). Si prevés sobrante alto para esa Q, o no sabes si se nesteará / compra a medida / retazo en otras piezas, haz UNA pregunta clara (ej. «¿Fracción de placa estándar + merma, o a medida para bajar desperdicio?»). Si la Q es baja y el recorte es chico, no preguntes: fracción UND + merma.
 Las páginas del PDF llegan como imágenes etiquetadas («página N de M»). Busca medidas y empaque en todas antes de preguntarlas. Si el analista cita una página, priorízala.
 Si ya hay una matriz en pantalla o un historial previo, NO reinicies la entrevista: confirma lo pendiente y pide que pulse Generar matriz.
 Cuando el costeo ya puede salir, invita a pulsar Generar matriz y menciona que, si quiere resultados más confiables, active Gemini PRO antes (la entrevista puede seguir en Flash).`;
@@ -799,9 +1026,11 @@ ${bloqueGrupalParaPrompt()}
 ${bloqueCubicacionMuebleParaPrompt()}
 
 MODO ACTUAL: FASE 2 GENERAR COTIZACIÓN.
-El analista confirmó. Usa rangos que haya dicho; si no hay, [1, 50, 100].
-Primero un párrafo corto EN ESPAÑOL (chat interno). AL FINAL un único JSON (sin markdown) con esta forma:
-{"rangos":[1,50,100],"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":200,"peso":0,"cajas":[{"nombre":"Master","ancho":0,"fondo":0,"alto":0,"unidades":200,"porPieza":0,"peso":0}]}},"items":[{"fuente":"[Estimado IA]","nombre":"PS Cal.60 frente — planta 60,3x7,9; h 3,0; paredes 2x3,0; pestaña 2 cm/lado = 64,3x15,9 cm = 0,102 m2","categoria":"Materias Primas","cantidad":0.102,"um":"m2","costoUnitario":0,"es_global":false}]}
+El analista confirmó.
+${bloqueRangosObligatoriosParaPrompt_()}
+Ej.: si dijo «cotizar 5 unidades», entonces "rangos":[5] — no [1,50,100].
+Primero un párrafo corto EN ESPAÑOL (chat interno). AL FINAL un único JSON (sin markdown) con esta forma (sustituye RANGOS_OK por los rangos obligatorios de arriba):
+{"rangos":RANGOS_OK,"ficha":{"titulo":"...","descripcion":"3 a 4 líneas comerciales","dimensiones":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}"},"empaque":{"ancho":0,"fondo":0,"alto":0,"um":"${umF}","unidades":1,"peso":0,"cajas":[{"nombre":"Master","ancho":0,"fondo":0,"alto":0,"unidades":1,"porPieza":1,"peso":0}]}},"items":[{"fuente":"[Estimado IA]","nombre":"PS Cal.60 frente — planta 60,3x7,9; h 3,0; paredes 2x3,0; pestaña 2 cm/lado = 64,3x15,9 cm = 0,102 m2","categoria":"Materias Primas","cantidad":0.102,"um":"m2","costoUnitario":0,"es_global":false}]}
 nombre de cada ítem: título + cuenta con cifras (pieza, tolerancia, merma, tiras de 6 m). ficha.titulo y ficha.descripcion en ${langF}. descripcion de ficha: 3–4 líneas, tono cotización (qué es, uso, materiales visibles, no receta de costo). La receta de costo va en items.nombre, no en la ficha.
 Medidas de ficha SOLO en ${umF}, tomadas del PDF/render o de lo que confirmó el analista. PROHIBIDO copiar dim_diseno u otras medidas del Lead Odoo.
 empaque: una caja (campos planos ancho/fondo/alto/unidades/peso) O varias si el producto es modular: empaque.cajas:[{nombre,ancho,fondo,alto,unidades,porPieza,peso}]. Caja un poco MAYOR que la pieza si va armada. PROHIBIDO caja más baja que el mueble salvo KD. unidades = productos por esa caja; porPieza = cajas de ese tipo por cada producto (modular). Una de las dos. peso = de UNA caja, kg si cm / lb si in; solo si lo dijeron; si no, 0. PROHIBIDO estimarlo por el render.
@@ -818,6 +1047,7 @@ ${bloqueCubicacionMuebleParaPrompt()}
 MODO ACTUAL: FASE 3 — conversación sobre el proyecto YA costeado.
 Responde SIEMPRE en español, breve. Por defecto SOLO diálogo: aclara dudas, explica ítems, sugiere mejoras. PROHIBIDO enviar JSON de items/rangos si el analista solo pregunta o comenta.
 JSON con {"rangos":[...],"ficha":{...},"items":[...]} SOLO si el analista pide EXPLÍCITAMENTE cambiar la matriz, un ítem, un costo, regenerar o rehacer el costeo. Incluye ficha en ese JSON si también cambian título, texto o medidas. Cada items.nombre debe conservar la cuenta (cifras, merma, tiras 6 m, tolerancia de termoformado).
+${bloqueRangosObligatoriosParaPrompt_()}
 Si solo aclara o discute: texto, sin JSON.
 Si pide cambiar solo ficha/medidas/empaque (sin tocar costos): puedes devolver solo {"ficha":{...}} al final.
 Puede adjuntar archivos extra: úsalos. No pidas recargar la página.
@@ -894,7 +1124,8 @@ async function llamarGeminiConImagenes(promptTexto, timeoutMs, opts) {
 
 async function llamarGeminiChat(promptTexto, timeoutMs) {
     const forzarPro = document.getElementById('togglePro')?.checked || false;
-    const data = await realizarPeticionBD({ action: 'gemini_chat', modulo: 'costos', forzarPro: forzarPro, promptText: promptTexto }, { timeoutMs: timeoutMs || 120000 });
+    /* Flash/PRO 3.x con thinking suelen superar 90–120 s aunque la respuesta sea corta. */
+    const data = await realizarPeticionBD({ action: 'gemini_chat', modulo: 'costos', forzarPro: forzarPro, promptText: promptTexto }, { timeoutMs: timeoutMs || 240000 });
     pintarUsoGemini(data && data.uso);
     return data;
 }
@@ -1153,8 +1384,8 @@ window.enviarMensajeChat = async function() {
         const hayArchivos = archivosActivosIA_().length > 0;
         const pro = geminiProActivo();
         const data = (hayArchivos || paginasMsg.length)
-            ? await llamarGeminiConImagenes(promptTexto, pro ? 240000 : 120000)
-            : await llamarGeminiChat(promptTexto, pro ? 180000 : 90000);
+            ? await llamarGeminiConImagenes(promptTexto, pro ? 360000 : 300000)
+            : await llamarGeminiChat(promptTexto, pro ? 300000 : 240000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         if (!texto) throw new Error(pro
@@ -1268,8 +1499,8 @@ ${JSON.stringify({
 })}`;
         const pro = geminiProActivo();
         const data = hayArchivos
-            ? await llamarGeminiConImagenes(promptTexto, pro ? 240000 : 120000)
-            : await llamarGeminiChat(promptTexto, pro ? 180000 : 90000);
+            ? await llamarGeminiConImagenes(promptTexto, pro ? 360000 : 300000)
+            : await llamarGeminiChat(promptTexto, pro ? 300000 : 240000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         if (!texto) throw new Error(pro
@@ -1359,8 +1590,8 @@ Materiales (tubos, ángulos, láminas, alambre, perfiles): busca en el catálogo
 ${historialComoTexto()}`;
         const pro = geminiProActivo();
         const data = hayArchivos
-            ? await llamarGeminiConImagenes(promptTexto, pro ? 360000 : 300000)
-            : await llamarGeminiChat(promptTexto, pro ? 300000 : 240000);
+            ? await llamarGeminiConImagenes(promptTexto, pro ? 420000 : 360000)
+            : await llamarGeminiChat(promptTexto, pro ? 360000 : 300000);
         if (!data.exito) throw new Error(data.mensaje);
         const texto = textoGemini(data);
         if (!texto) throw new Error(pro

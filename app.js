@@ -935,6 +935,14 @@ function pintarBarraElementos() {
     const inp = document.getElementById("nombreElementoActivo");
     const cur = elems.find(function (e) { return e.id === activa; });
     if (inp) inp.value = cur ? (cur.nombre || "") : "";
+    const btnEl = document.getElementById("btnBorrarElemento");
+    if (btnEl) {
+        const puede = elems.length > 1;
+        btnEl.disabled = !puede;
+        btnEl.title = puede
+            ? ("Borrar el elemento activo («" + ((cur && cur.nombre) || "pieza") + "»)")
+            : "El grupal necesita al menos una pieza";
+    }
     pintarEtiquetasElemento_(cur ? (cur.nombre || "Pieza") : "", true);
     pintarEtiquetaVersion_();
 }
@@ -980,10 +988,16 @@ function pintarEtiquetasElemento_(nombre, on) {
 
 function htmlChipsVersion_() {
     const activa = window.versionActivaId || "V1";
+    const varias = (window.versionesPresupuesto || []).length > 1;
     return (window.versionesPresupuesto || []).map(function (v) {
         const on = v.id === activa ? " is-on" : "";
         const title = String(v.comentario || "Ver " + v.id).replace(/"/g, "&quot;");
-        return '<button type="button" class="ver-chip' + on + '" title="' + title + '" onclick="aplicarVersionEnUI(\'' + v.id + '\')">' + v.id + "</button>";
+        const del = varias
+            ? ('<button type="button" class="ver-chip-del" title="Borrar ' + v.id + '" aria-label="Borrar ' + v.id + '" onclick="eliminarVersionPorId(\'' + v.id + '\')">&times;</button>')
+            : "";
+        return '<span class="ver-chip-wrap' + on + '">' +
+            '<button type="button" class="ver-chip' + on + '" title="' + title + '" onclick="aplicarVersionEnUI(\'' + v.id + '\')">' + v.id + "</button>" +
+            del + "</span>";
     }).join("");
 }
 
@@ -1120,7 +1134,7 @@ function renombrarElementoActivo(nombre) {
     if (typeof programarGuardarSesion === "function") programarGuardarSesion();
 }
 
-function eliminarElementoActivo() {
+async function eliminarElementoActivo() {
     if (!esPresupuestoGrupal()) return;
     snapshotVersionActual();
     const ver = versionActualObj_();
@@ -1128,11 +1142,24 @@ function eliminarElementoActivo() {
         return typeof mostrarNotificacion === "function" && mostrarNotificacion("El grupal necesita al menos una pieza. Cambia a Individual si ya no es grupal.", "warning");
     }
     const id = ver.elementoActivoId;
+    const cur = ver.elementos.find(function (e) { return e.id === id; });
+    const nom = (cur && cur.nombre) ? String(cur.nombre) : "esta pieza";
+    const ok = typeof window.mostrarConfirmacionApp === "function"
+        ? await window.mostrarConfirmacionApp({
+            titulo: "Borrar elemento",
+            subtitulo: nom,
+            mensaje: "Se elimina «" + nom + "» de esta versión (matriz, chat y ficha de esa pieza). Las demás piezas se conservan. ¿Borrar?",
+            peligro: true,
+            okTexto: "Borrar elemento"
+        })
+        : window.confirm("¿Borrar «" + nom + "»?");
+    if (!ok) return;
     ver.elementos = ver.elementos.filter(function (e) { return e.id !== id; });
     const sig = ver.elementos[0];
     cargarElementoEnUI_(sig, ver);
     if (typeof renderizarTablaItems === "function") renderizarTablaItems();
     pintarBarraElementos();
+    if (typeof mostrarNotificacion === "function") mostrarNotificacion("Elemento «" + nom + "» borrado.", "success");
     if (typeof programarGuardarSesion === "function") programarGuardarSesion();
 }
 
@@ -1375,7 +1402,16 @@ function pintarSelectorVersiones() {
     const nota = document.getElementById("comentarioVersionActiva");
     if (!box) return;
     const activa = window.versionActivaId;
+    const varias = (window.versionesPresupuesto || []).length > 1;
     box.innerHTML = htmlChipsVersion_();
+    const btnDel = document.getElementById("btnBorrarVersion");
+    if (btnDel) {
+        btnDel.classList.toggle("d-none", !varias);
+        btnDel.disabled = !varias;
+        btnDel.title = varias
+            ? ("Borrar la versión activa (" + (activa || "V1") + ")")
+            : "Debe quedar al menos una versión";
+    }
     const ver = window.versionesPresupuesto.find(function (v) { return v.id === activa; });
     let extra = ver && ver.comentario ? ver.comentario : "";
     if (esPresupuestoGrupal()) {
@@ -1386,6 +1422,58 @@ function pintarSelectorVersiones() {
     if (nota) nota.textContent = extra;
     pintarEtiquetaVersion_();
 }
+
+/**
+ * Borra una versión del presupuesto (matriz/chat/fichas de esa Vn).
+ * Debe quedar ≥1. Si borra la activa, salta a la última restante.
+ */
+async function eliminarVersionPorId(id) {
+    id = idVersionCanon_(id);
+    asegurarV1_();
+    const lista = window.versionesPresupuesto || [];
+    if (lista.length < 2) {
+        if (typeof mostrarNotificacion === "function") {
+            mostrarNotificacion("Debe quedar al menos una versión.", "warning");
+        }
+        return;
+    }
+    const ver = lista.find(function (v) { return idVersionCanon_(v.id) === id; });
+    if (!ver) return;
+    const nota = ver.comentario ? (" («" + String(ver.comentario) + "»)") : "";
+    const ok = typeof window.mostrarConfirmacionApp === "function"
+        ? await window.mostrarConfirmacionApp({
+            titulo: "Borrar " + id,
+            subtitulo: ver.comentario || ("Versión " + id),
+            mensaje: "Se elimina " + id + nota + " de este presupuesto (matriz, chat y piezas de esa versión). Las demás versiones no se tocan. ¿Borrar?",
+            peligro: true,
+            okTexto: "Borrar versión"
+        })
+        : window.confirm("¿Borrar " + id + "?");
+    if (!ok) return;
+    const activa = idVersionCanon_(window.versionActivaId || "V1");
+    if (activa !== id) snapshotVersionActual();
+    window.versionesPresupuesto = lista.filter(function (v) { return idVersionCanon_(v.id) !== id; });
+    if (!window.versionesPresupuesto.length) {
+        window.versionesPresupuesto = [versionVacia_("V1", "")];
+    }
+    if (activa === id) {
+        const sig = window.versionesPresupuesto[window.versionesPresupuesto.length - 1];
+        aplicarVersionEnUI(sig.id, true);
+    } else {
+        pintarSelectorVersiones();
+        pintarBarraElementos();
+    }
+    if (typeof mostrarNotificacion === "function") mostrarNotificacion(id + " borrada.", "success");
+    if (typeof programarGuardarSesion === "function") programarGuardarSesion();
+}
+
+async function eliminarVersionActiva() {
+    return eliminarVersionPorId(window.versionActivaId || "V1");
+}
+
+window.eliminarVersionPorId = eliminarVersionPorId;
+window.eliminarVersionActivo = eliminarVersionActiva;
+window.eliminarVersionActiva = eliminarVersionActiva;
 
 function abrirModalNuevaVersion() {
     snapshotVersionActual();
