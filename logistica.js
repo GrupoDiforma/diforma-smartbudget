@@ -2410,6 +2410,14 @@ function logEnvNormalizar_(src) {
     /* Contador global: cada invalidación (3D/m³/peso/modalidad) lo sube; Generar alinea por opción. */
     const epG = parseInt(e.costosEpoch, 10);
     d.costosEpoch = isFinite(epG) && epG > 0 ? epG : 1;
+    /*
+     * Candado de export (modo sin opciones): Generar/Confirmar graba costosFirma + costosEpochOk
+     * en el env global. Hay que conservarlos al normalizar (Guardar / leer UI / reabrir);
+     * si se pierden, PDF/Excel se bloquean aunque no haya cambiado la logística.
+     */
+    if (e.costosFirma) d.costosFirma = String(e.costosFirma);
+    const epOk = parseInt(e.costosEpochOk, 10);
+    if (isFinite(epOk) && epOk > 0) d.costosEpochOk = epOk;
     return d;
 }
 
@@ -4681,6 +4689,38 @@ function logCostosSincronizarFlagGlobal_() {
 }
 
 /**
+ * Si hay montos y nadie marcó pendiente real, pero faltan costosFirma / epochOk
+ * (p. ej. un Guardar viejo los borró al normalizar), re-sella el candado sin tocar cifras.
+ * Así editar solo la firma comercial no deja PDF/Excel bloqueados ni avisa al Guardar.
+ */
+function logCostosRepararCandadoHuérfano_() {
+    const e = typeof logEnv_ === "function" ? logEnv_() : null;
+    if (!e) return false;
+    if (typeof window.slSim3dHayPendiente === "function" && window.slSim3dHayPendiente()) return false;
+    if (e.sim3dPendiente) return false;
+    if (!logCostosHayAlgunaQueExige_()) return false;
+    const claves = logCostosClavesOpciones_().filter(function (k) {
+        if (k && typeof logEnvActivo_ === "function" && !logEnvActivo_(k)) return false;
+        return logCostosOpcionExigeFirma_(k);
+    });
+    if (!claves.length) return false;
+    for (let i = 0; i < claves.length; i++) {
+        const k = claves[i];
+        const st = k ? (e.porEsc && e.porEsc[k]) : e;
+        if (st && st.logCostosPendiente) return false;
+        if (!logCostosOpcionTieneValoresPropios_(k)) return false;
+    }
+    if (!logCostosOpcionesPendientes_().length) return false;
+    try {
+        logisticaLimpiarCostosPendiente_({ escIds: claves });
+        logRecalcPendiente_ = false;
+        return true;
+    } catch (eRep) {
+        return false;
+    }
+}
+
+/**
  * Bloquea PDF / Excel si:
  * 1) el Simulador 3D cambió y falta «Aplicar a Logística», o
  * 2) CUALQUIER opción tiene costos logísticos desfasados (epoch/firma/valores).
@@ -4711,6 +4751,7 @@ function logisticaSim3dExportOk_() {
             logRecalcPendiente_ = false;
             return { ok: true };
         }
+        try { logCostosRepararCandadoHuérfano_(); } catch (eHeal) { /* noop */ }
         const pend = logCostosOpcionesPendientes_();
         if (!pend.length) {
             logRecalcPendiente_ = false;
