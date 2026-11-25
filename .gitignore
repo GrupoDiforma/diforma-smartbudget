@@ -1,0 +1,6 @@
+# Dependencias locales (no van a producción)
+node_modules/
+
+# Configuración de herramientas de edición
+.claude/
+.cursor/
